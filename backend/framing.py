@@ -4,7 +4,7 @@ from typing import Literal
 
 from pydantic import BaseModel, ConfigDict, Field, model_validator
 
-FramingMode = Literal["pad", "crop", "split", "follow"]
+FramingMode = Literal["pad", "crop", "split", "follow", "auto"]
 
 
 class SourceRegion(BaseModel):

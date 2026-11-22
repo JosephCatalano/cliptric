@@ -99,7 +99,9 @@ export function NewBatch() {
   const [cleanup, setCleanup] = useState<"off" | "light" | "standard">("off");
   const [normalize, setNormalize] = useState(false);
   const [cropRegion, setCropRegion] = useState<SourceRegion | null>(null);
-  const [framing, setFraming] = useState<"pad" | "crop" | "follow">("pad");
+  const [framing, setFraming] = useState<"pad" | "crop" | "follow" | "auto">(
+    "auto",
+  );
   const [busy, setBusy] = useState<"importing" | "saving" | null>(null);
   const [error, setError] = useState("");
   const [current, setCurrent] = useState<string | null>(null);

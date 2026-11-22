@@ -237,6 +237,20 @@ class AutoPresentation:
         cancel,
         check: Callable[[], None],
     ):
+        samples, faces = self.sample(source, start, end, cancel, check)
+        return plan_frames(
+            samples,
+            faces,
+            recording.width,
+            recording.height,
+            start,
+            end,
+            mode,
+            caption_position,
+            headline_position,
+        )
+
+    def sample(self, source: Path, start: float, end: float, cancel, check: Callable[[], None]):
         cv2.setNumThreads(1)
         cascade = cv2.CascadeClassifier(
             str(Path(cv2.data.haarcascades) / "haarcascade_frontalface_default.xml")
@@ -275,14 +289,4 @@ class AutoPresentation:
                 samples.append((at, frame))
                 faces.append(face_boxes(frame, cascade))
         check()
-        return plan_frames(
-            samples,
-            faces,
-            recording.width,
-            recording.height,
-            start,
-            end,
-            mode,
-            caption_position,
-            headline_position,
-        )
+        return samples, faces

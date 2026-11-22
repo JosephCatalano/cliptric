@@ -256,9 +256,9 @@ class ItemEdit(BaseModel):
         if self.quality.smart_framing and (self.framing == "split" or self.crop_region):
             raise ValueError("Smart framing cannot be combined with manual crop regions.")
         validate_framing(self.framing, self.split_layout, self.crop_region)
-        if self.framing == "follow" and self.quality.smart_framing:
+        if self.framing in {"follow", "auto"} and self.quality.smart_framing:
             raise ValueError(
-                "Auto follow creates its own tracking plan. Clear the staged smart framing first."
+                "Automatic layouts create their own framing plan. Clear staged smart framing first."
             )
         if not 0.1 <= self.end - self.start <= MAX_MEDIA_SECONDS:
             raise ValueError("Exports must be between 0.1 seconds and six hours long.")

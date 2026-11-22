@@ -1,15 +1,20 @@
+import hashlib
+import json
 import logging
 import threading
 from concurrent.futures import Future, ThreadPoolExecutor
 from uuid import uuid4
 
 from .auto_follow import AutoFollow
+from .auto_layout import AutoLayout
 from .captions import CaptionError, write_ass
 from .editing import QualityOptions, mapped_overlays, mapped_words, retained_intervals
 from .files import remove_artifact
 from .headlines import write_headline
+from .layout_models import AutoLayoutPlan
 from .media import Media, MediaError, RenderCancelled
 from .models import Clip, ExportRequest
+from .overlays import layout as text_layout
 from .overlays import resolve_caption_position, write_presentation
 from .storage import Store
 
@@ -24,6 +29,7 @@ class Jobs:
     def __init__(self, store: Store, media: Media):
         self.store, self.media = store, media
         self.follow = AutoFollow(media)
+        self.layout = AutoLayout(media)
         self.pool = ThreadPoolExecutor(max_workers=1, thread_name_prefix="clip-export")
         self.lock = threading.Lock()
         self.active: str | None = None
@@ -48,13 +54,21 @@ class Jobs:
             if self.active is not None:
                 raise ExportBusy("An export is already processing. Wait or cancel it first.")
             clip_id = clip_id or str(uuid4())
+            auto_layout = (
+                self.store.cached_auto_layout(
+                    recording_id, request.start, request.end, self.layout_context(request)
+                )
+                if request.mode == "auto"
+                else None
+            )
+            resolved_mode = auto_layout.mode if auto_layout else request.mode
             follow_plan = (
                 self.store.cached_follow_plan(recording_id, request.start, request.end)
-                if request.mode == "follow"
+                if resolved_mode == "follow"
                 else None
             )
             clip = self.store.create_clip(
-                clip_id, recording_id, request, caption_words, follow_plan
+                clip_id, recording_id, request, caption_words, follow_plan, auto_layout
             )
             self.active = clip_id
             self.cancel_event.clear()
@@ -66,6 +80,95 @@ class Jobs:
                 self.store.update_clip(clip_id, "failed", "Export service is stopping.")
                 raise
             return clip
+
+    @staticmethod
+    def layout_context(clip: Clip | ExportRequest) -> str:
+        value = {
+            "caption": clip.captions.position if clip.captions else None,
+            "headline": {
+                "position": clip.headline.position,
+                "seconds": float(clip.headline.seconds),
+            }
+            if clip.headline
+            else None,
+            "overlays": [
+                {"position": o.position, "start": float(o.start), "end": float(o.end)}
+                for o in clip.overlays
+            ],
+            "removals": [r.model_dump() for r in clip.quality.removals],
+        }
+        return hashlib.sha256(
+            json.dumps(value, sort_keys=True, separators=(",", ":")).encode()
+        ).hexdigest()
+
+    def resolve_layout(self, clip, overlays, duration, root):
+        plan = clip.auto_layout
+        if plan is None:
+            recording = self.store.recording(clip.recording_id)
+            plan = self.layout.analyze(
+                self.store.source_path(clip.recording_id),
+                recording,
+                clip.start,
+                clip.end,
+                self.cancel_event,
+            )
+            plan = plan.model_copy(update={"context": self.layout_context(clip)})
+        follow = clip.follow_plan
+        if plan.mode == "follow" and follow is None:
+            follow = self.store.cached_follow_plan(clip.recording_id, clip.start, clip.end)
+            if follow is None:
+                follow = self.follow.analyze(
+                    self.store.source_path(clip.recording_id),
+                    clip.start,
+                    clip.end,
+                    self.cancel_event,
+                    root,
+                )
+        if plan.mode == "follow" and follow.strategy == "fit":
+            plan = AutoLayoutPlan(
+                start=clip.start,
+                end=clip.end,
+                context=plan.context,
+                mode="pad",
+                summary="Full picture: detailed face tracking could not confirm a safe crop.",
+                warnings=follow.warnings,
+            )
+            follow = None
+        if plan.mode == "split":
+            if clip.headline and clip.headline.position == "auto":
+                plan = plan.model_copy(update={"headline_position": "centre"})
+            try:
+                headline = (
+                    clip.headline.model_copy(update={"position": plan.headline_position})
+                    if clip.headline and plan.headline_position
+                    else clip.headline
+                )
+                position = resolve_caption_position(
+                    clip.captions.position if clip.captions else None,
+                    overlays,
+                    duration,
+                    headline,
+                    True,
+                )
+                text_layout(overlays, duration, headline, position, split=True)
+            except ValueError:
+                plan = AutoLayoutPlan(
+                    start=clip.start,
+                    end=clip.end,
+                    context=plan.context,
+                    mode="pad",
+                    summary="Full picture: the split would collide with your saved text placement.",
+                )
+        with self.lock:
+            if self.cancel_event.is_set():
+                raise RenderCancelled()
+            if clip.auto_layout is None:
+                self.store.save_auto_layout(clip.id, plan)
+            clip.auto_layout = plan
+            if follow and clip.follow_plan is None:
+                self.store.save_follow_plan(clip.id, follow)
+            clip.follow_plan = follow
+        return plan.mode
 
     @staticmethod
     def report_failure(future: Future[None]) -> None:
@@ -97,8 +200,23 @@ class Jobs:
                 if self.cancel_event.is_set():
                     raise RenderCancelled()
                 self.store.update_clip(clip.id, "rendering")
+            kept = retained_intervals(clip.start, clip.end, clip.quality)
+            output_duration = sum(last - first for first, last in kept)
+            overlays = mapped_overlays(clip.overlays, clip.start, kept)
+            headline = clip.headline
             render_options = {}
-            if clip.mode == "follow":
+            effective_mode = (
+                self.resolve_layout(clip, overlays, output_duration, partial.parent)
+                if clip.mode == "auto"
+                else clip.mode
+            )
+            if clip.mode == "auto":
+                render_options["auto_layout"] = clip.auto_layout
+                if headline and clip.auto_layout.headline_position:
+                    headline = headline.model_copy(
+                        update={"position": clip.auto_layout.headline_position}
+                    )
+            if effective_mode == "follow":
                 if clip.follow_plan is None:
                     plan = self.follow.analyze(
                         self.store.source_path(clip.recording_id),
@@ -124,15 +242,12 @@ class Jobs:
                     max_dimension=1920,
                 )
                 render_options["cover_path"] = cover_path
-            kept = retained_intervals(clip.start, clip.end, clip.quality)
-            output_duration = sum(last - first for first, last in kept)
-            overlays = mapped_overlays(clip.overlays, clip.start, kept)
             caption_position = resolve_caption_position(
                 clip.captions.position if clip.captions else None,
                 overlays,
                 output_duration,
-                clip.headline,
-                clip.mode == "split",
+                headline,
+                effective_mode == "split",
             )
             if clip.quality != QualityOptions():
                 render_options["quality"] = clip.quality
@@ -166,14 +281,14 @@ class Jobs:
                     headline_path,
                     overlays,
                     output_duration,
-                    clip.headline,
+                    headline,
                     caption_position,
                 )
                 render_options["headline_path"] = headline_path
-            elif clip.headline is not None:
+            elif headline is not None:
                 write_headline(
                     headline_path,
-                    clip.headline,
+                    headline,
                     output_duration,
                     caption_position,
                 )

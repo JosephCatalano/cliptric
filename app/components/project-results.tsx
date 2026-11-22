@@ -1372,6 +1372,7 @@ function ClipCard({
                     layout={splitLayout}
                     cropRegion={cropRegion}
                     followPlan={item.export?.follow_plan}
+                    autoLayout={item.export?.auto_layout}
                     end={Number(draftEnd)}
                     sourceUrl={
                       project.recording_id
@@ -1458,6 +1459,7 @@ function ClipCard({
                     allowSmart={
                       (framing ?? project.settings.framing) !== "split" &&
                       framing !== "follow" &&
+                      framing !== "auto" &&
                       cropRegion === null
                     }
                     allowedStart={project.settings.analysis_start}

@@ -33,6 +33,7 @@ import {
   defaultSplitLayout,
   type FramingMode,
   type FollowPlan,
+  type AutoLayoutPlan,
   type SourceRegion,
   type SplitLayout,
 } from "../../lib/projects";
@@ -46,6 +47,7 @@ export function FramingEditor({
   layout,
   cropRegion = null,
   followPlan,
+  autoLayout,
   onPlayer,
   end,
   onChange,
@@ -59,6 +61,7 @@ export function FramingEditor({
   layout: SplitLayout | null;
   cropRegion?: SourceRegion | null;
   followPlan?: FollowPlan | null;
+  autoLayout?: AutoLayoutPlan | null;
   onPlayer?: (player: HTMLVideoElement | null) => void;
   end?: number;
   onChange(
@@ -110,13 +113,20 @@ export function FramingEditor({
     followPlan && followPlan.start === rangeStart && followPlan.end === rangeEnd
       ? followPlan
       : null;
+  const decision =
+    autoLayout && autoLayout.start === rangeStart && autoLayout.end === rangeEnd
+      ? autoLayout
+      : null;
+  const viewMode = mode === "auto" ? (decision?.mode ?? "pad") : mode;
   const regionLabel = mode === "crop" ? "portrait crop" : regionName;
 
   useEffect(() => {
     const player = video.current;
     const target = canvas.current;
     if (!player || !target) return;
-    const configuration = layout ?? defaultSplitLayout();
+    const configuration =
+      (mode === "auto" ? decision?.split_layout : layout) ??
+      defaultSplitLayout();
     const context = target.getContext("2d");
     if (!context) return;
     context.clearRect(0, 0, 270, 480);
@@ -169,7 +179,7 @@ export function FramingEditor({
         context.restore();
       };
       context.clearRect(0, 0, 270, 480);
-      if (mode === "follow") {
+      if (viewMode === "follow") {
         panel(
           tracking
             ? followRegion(tracking, player.currentTime)
@@ -178,7 +188,7 @@ export function FramingEditor({
           480,
           !tracking || tracking.strategy === "fit",
         );
-      } else if (mode === "split") {
+      } else if (viewMode === "split") {
         panel(configuration.webcam, 0, 160, false);
         panel(
           configuration.gameplay,
@@ -188,13 +198,13 @@ export function FramingEditor({
         );
       } else {
         panel(
-          mode === "crop"
-            ? (cropRegion ??
+          viewMode === "crop"
+            ? ((mode === "auto" ? decision?.crop_region : cropRegion) ??
                 portraitRegion(player.videoWidth, player.videoHeight))
             : { x: 0, y: 0, width: 1, height: 1 },
           0,
           480,
-          mode === "pad",
+          viewMode === "pad",
         );
       }
     }
@@ -218,7 +228,17 @@ export function FramingEditor({
       player.removeEventListener("seeked", draw);
       player.removeEventListener("loadeddata", draw);
     };
-  }, [mode, layout, cropRegion, tracking, sourceUrl, video, reload]);
+  }, [
+    mode,
+    viewMode,
+    decision,
+    layout,
+    cropRegion,
+    tracking,
+    sourceUrl,
+    video,
+    reload,
+  ]);
 
   useEffect(() => {
     const player = video.current;
@@ -322,9 +342,18 @@ export function FramingEditor({
             const next = event.target.value as FramingMode;
             onChange(
               next,
-              next === "split" ? (layout ?? defaultSplitLayout()) : null,
+              next === "split"
+                ? (layout ?? decision?.split_layout ?? defaultSplitLayout())
+                : null,
               next === "crop"
                 ? (cropRegion ??
+                    decision?.crop_region ??
+                    (decision?.mode === "follow" && tracking
+                      ? followRegion(
+                          tracking,
+                          video.current?.currentTime ?? rangeStart,
+                        )
+                      : null) ??
                     (dimensions.source === sourceUrl
                       ? portraitRegion(dimensions.width, dimensions.height)
                       : null))
@@ -332,6 +361,9 @@ export function FramingEditor({
             );
           }}
         >
+          <NativeSelectOption value="auto">
+            Auto: choose for each clip
+          </NativeSelectOption>
           <NativeSelectOption value="pad">
             Fit video with blur fill
           </NativeSelectOption>
@@ -349,6 +381,26 @@ export function FramingEditor({
         </NativeSelect>
       </Field>
       <>
+        {mode === "auto" ? (
+          <div className="flex flex-col gap-2" role="status">
+            <p>
+              {decision?.summary ??
+                "Chooses webcam + source, webcam focus, face follow or full picture for each generated clip."}
+            </p>
+            {decision ? (
+              decision.warnings.map((warning) => (
+                <p key={warning} className="text-sm text-muted-foreground">
+                  {warning}
+                </p>
+              ))
+            ) : (
+              <p className="text-sm text-muted-foreground">
+                The preview shows the source until generation. Every automatic
+                choice can be changed afterward.
+              </p>
+            )}
+          </div>
+        ) : null}
         {mode === "follow" ? (
           <div className="flex flex-col gap-2" role="status">
             <p>
@@ -524,11 +576,15 @@ export function FramingEditor({
           {sourceUrl ? (
             <div className="flex flex-col gap-2">
               <p>
-                {mode === "follow"
-                  ? tracking
-                    ? "Saved tracking preview. Save changes to render text and other effects."
-                    : "Source preview. Auto follow is applied during clip generation."
-                  : "Live framing preview. Save to render captions and headlines."}
+                {mode === "auto"
+                  ? decision
+                    ? "Saved automatic layout preview. Save changes to render text and other effects."
+                    : "Source preview. Auto chooses after clip generation."
+                  : mode === "follow"
+                    ? tracking
+                      ? "Saved tracking preview. Save changes to render text and other effects."
+                      : "Source preview. Auto follow is applied during clip generation."
+                    : "Live framing preview. Save to render captions and headlines."}
               </p>
               <canvas
                 ref={canvas}

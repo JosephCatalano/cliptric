@@ -18,6 +18,7 @@ from .files import require_space
 from .follow_models import FollowPlan
 from .follow_render import follow_commands, follow_position
 from .framing import SourceRegion, SplitLayout, split_filter, validate_framing
+from .layout_models import AutoLayoutPlan
 
 
 class MediaError(Exception):
@@ -187,9 +188,28 @@ class Media:
         split_layout: SplitLayout | None = None,
         crop_region: SourceRegion | None = None,
         follow_plan: FollowPlan | None = None,
+        auto_layout: AutoLayoutPlan | None = None,
         quality: QualityOptions | None = None,
         cover_path: Path | None = None,
     ) -> MediaInfo:
+        if mode == "auto":
+            if (
+                auto_layout is None
+                or (auto_layout.start, auto_layout.end) != (start, end)
+                or split_layout
+                or crop_region
+                or (quality and quality.smart_framing)
+            ):
+                raise MediaError(
+                    "Auto layout requires a matching decision and no competing manual regions."
+                )
+            mode, split_layout, crop_region = (
+                auto_layout.mode,
+                auto_layout.split_layout,
+                auto_layout.crop_region,
+            )
+        elif auto_layout is not None:
+            raise MediaError("An automatic decision requires Auto layout mode.")
         if (
             mode not in {"pad", "crop", "split", "follow"}
             or not all(math.isfinite(t) for t in (start, end))

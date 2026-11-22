@@ -76,7 +76,7 @@ const defaults: ProjectSettings = {
   },
   emphasis_words: [],
   caption_position: "auto",
-  framing: "pad",
+  framing: "auto",
 };
 
 export function NewProject({

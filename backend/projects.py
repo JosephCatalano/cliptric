@@ -518,10 +518,10 @@ class Projects:
         old_crop = item.crop_region if item.framing is not None else settings.crop_region
         new_crop = request.crop_region if request.framing is not None else settings.crop_region
         new_mode = request.framing or settings.framing
-        if request.quality.smart_framing and (new_mode in {"split", "follow"} or new_crop):
+        if request.quality.smart_framing and (new_mode in {"split", "follow", "auto"} or new_crop):
             raise HTTPException(
                 422,
-                "Smart framing cannot be combined with manual regions or Auto follow.",
+                "Staged smart framing cannot be combined with manual regions or automatic layouts.",
             )
         new_split = request.split_layout if request.framing is not None else settings.split_layout
         expected_headline = (
@@ -1430,9 +1430,11 @@ class Projects:
                 target.crop_region if target.framing is not None else project.settings.crop_region
             )
             current_mode = target.framing or project.settings.framing
-            if current_mode in {"split", "follow"} or manual_crop:
+            if current_mode in {"split", "follow", "auto"} or manual_crop:
                 plan.summary = (
-                    "Auto follow retained; tracking is analyzed per clip."
+                    "Auto layout retained; composition is chosen per clip."
+                    if current_mode == "auto"
+                    else "Auto follow retained; tracking is analyzed per clip."
                     if current_mode == "follow"
                     else "Manual framing preserved; opening cover selected locally."
                 )
@@ -1462,9 +1464,9 @@ class Projects:
                 first <= target.quality.cover_at < last for first, last in kept
             ):
                 target.quality.cover_at = kept[0][0]
-            if target.caption_position == "auto":
+            if target.caption_position == "auto" and current_mode != "auto":
                 target.caption_position = plan.caption_position
-            if target.headline_position == "auto":
+            if target.headline_position == "auto" and current_mode != "auto":
                 target.headline_position = plan.headline_position
 
             def validate_positions():

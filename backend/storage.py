@@ -7,6 +7,7 @@ from typing import Iterator
 
 from .files import remove_artifact
 from .follow_models import FOLLOW_VERSION, FollowPlan
+from .layout_models import LAYOUT_VERSION, AutoLayoutPlan
 from .models import Clip, ExportRequest, Recording, RenderPerformance, SelectionDraft
 
 
@@ -88,6 +89,9 @@ class Store:
                 );
                 CREATE TABLE IF NOT EXISTS clip_framing (
                     clip_id TEXT PRIMARY KEY REFERENCES clips(id), options TEXT NOT NULL
+                );
+                CREATE TABLE IF NOT EXISTS clip_auto_layout (
+                    clip_id TEXT PRIMARY KEY REFERENCES clips(id) ON DELETE CASCADE, payload TEXT NOT NULL
                 );
                 CREATE TABLE IF NOT EXISTS clip_follow (
                     clip_id TEXT PRIMARY KEY REFERENCES clips(id) ON DELETE CASCADE, payload TEXT NOT NULL
@@ -182,6 +186,7 @@ class Store:
         request: ExportRequest,
         caption_words: list[dict] | None = None,
         follow_plan: FollowPlan | None = None,
+        auto_layout: AutoLayoutPlan | None = None,
     ) -> Clip:
         with self.connection() as db:
             db.execute(
@@ -197,8 +202,20 @@ class Store:
                     "INSERT INTO clip_headlines VALUES (?, ?)",
                     (clip_id, request.headline.model_dump_json()),
                 )
+            if auto_layout is not None:
+                if request.mode != "auto" or (auto_layout.start, auto_layout.end) != (
+                    request.start,
+                    request.end,
+                ):
+                    raise ValueError("Auto layout snapshot must match its export interval.")
+                db.execute(
+                    "INSERT INTO clip_auto_layout VALUES (?,?)",
+                    (clip_id, auto_layout.model_dump_json()),
+                )
             if follow_plan is not None:
-                if request.mode != "follow" or (follow_plan.start, follow_plan.end) != (
+                if (
+                    auto_layout.mode if request.mode == "auto" and auto_layout else request.mode
+                ) != "follow" or (follow_plan.start, follow_plan.end) != (
                     request.start,
                     request.end,
                 ):
@@ -244,6 +261,9 @@ class Store:
 
     @staticmethod
     def _clip(db: sqlite3.Connection, row: sqlite3.Row) -> Clip:
+        auto_layout = db.execute(
+            "SELECT payload FROM clip_auto_layout WHERE clip_id=?", (row["id"],)
+        ).fetchone()
         follow = db.execute(
             "SELECT payload FROM clip_follow WHERE clip_id=?", (row["id"],)
         ).fetchone()
@@ -274,6 +294,7 @@ class Store:
                 "posted": bool(row["posted"]),
                 "performance": json.loads(performance[0]) if performance else None,
                 "follow_plan": json.loads(follow[0]) if follow else None,
+                "auto_layout": json.loads(auto_layout[0]) if auto_layout else None,
                 "captions": _caption_snapshot(caption[0] if caption else None),
                 "headline": _headline_snapshot(headline[0] if headline else None),
                 "overlays": json.loads(overlays[0]) if overlays else [],
@@ -290,6 +311,9 @@ class Store:
                     {
                         **dict(row),
                         "posted": bool(row["posted"]),
+                        "auto_layout": json.loads(row["auto_payload"])
+                        if row["auto_payload"]
+                        else None,
                         "follow_plan": json.loads(row["follow_payload"])
                         if row["follow_payload"]
                         else None,
@@ -313,7 +337,8 @@ class Store:
                     }
                 )
                 for row in db.execute(
-                    "SELECT clips.*, clip_follow.payload AS follow_payload, clip_crop.options AS crop_options, clip_performance.payload AS render_performance, COALESCE(clip_posted.posted, 0) AS posted, clip_captions.options AS caption_options, clip_headlines.options AS headline_options, clip_overlays.options AS overlay_options, clip_framing.options AS framing_options, clip_quality.options AS quality_options FROM clips "
+                    "SELECT clips.*, clip_auto_layout.payload AS auto_payload, clip_follow.payload AS follow_payload, clip_crop.options AS crop_options, clip_performance.payload AS render_performance, COALESCE(clip_posted.posted, 0) AS posted, clip_captions.options AS caption_options, clip_headlines.options AS headline_options, clip_overlays.options AS overlay_options, clip_framing.options AS framing_options, clip_quality.options AS quality_options FROM clips "
+                    "LEFT JOIN clip_auto_layout ON clips.id=clip_auto_layout.clip_id "
                     "LEFT JOIN clip_follow ON clips.id=clip_follow.clip_id "
                     "LEFT JOIN clip_crop ON clips.id=clip_crop.clip_id "
                     "LEFT JOIN clip_performance ON clips.id=clip_performance.clip_id "
@@ -335,23 +360,62 @@ class Store:
             ).fetchone()
             if (
                 clip is None
-                or clip["mode"] != "follow"
+                or clip["mode"] not in {"follow", "auto"}
                 or clip["status"] != "rendering"
                 or (clip["start"], clip["end"]) != (plan.start, plan.end)
             ):
                 raise ValueError("Auto follow snapshot does not match an active export.")
+            if clip["mode"] == "auto":
+                decision = db.execute(
+                    "SELECT payload FROM clip_auto_layout WHERE clip_id=?", (clip_id,)
+                ).fetchone()
+                if (
+                    decision is None
+                    or AutoLayoutPlan.model_validate_json(decision[0]).mode != "follow"
+                ):
+                    raise ValueError("Auto follow requires a matching automatic follow decision.")
             db.execute("INSERT INTO clip_follow VALUES (?,?)", (clip_id, plan.model_dump_json()))
 
     def cached_follow_plan(self, recording_id: str, start: float, end: float) -> FollowPlan | None:
         with self.connection() as db:
             row = db.execute(
                 "SELECT clip_follow.payload FROM clip_follow JOIN clips ON clips.id=clip_follow.clip_id "
-                "WHERE clips.recording_id=? AND clips.start=? AND clips.end=? AND clips.mode='follow' "
+                "WHERE clips.recording_id=? AND clips.start=? AND clips.end=? AND clips.mode IN ('follow','auto') "
                 "ORDER BY clips.created_at DESC, clips.id DESC LIMIT 1",
                 (recording_id, start, end),
             ).fetchone()
         plan = FollowPlan.model_validate_json(row[0]) if row else None
         return plan if plan and plan.version == FOLLOW_VERSION else None
+
+    def save_auto_layout(self, clip_id: str, plan: AutoLayoutPlan) -> None:
+        with self.connection() as db:
+            clip = db.execute(
+                "SELECT mode,start,end,status FROM clips WHERE id=?", (clip_id,)
+            ).fetchone()
+            if (
+                clip is None
+                or clip["mode"] != "auto"
+                or clip["status"] != "rendering"
+                or (clip["start"], clip["end"]) != (plan.start, plan.end)
+            ):
+                raise ValueError("Auto layout snapshot does not match an active export.")
+            db.execute(
+                "INSERT INTO clip_auto_layout VALUES (?,?)", (clip_id, plan.model_dump_json())
+            )
+
+    def cached_auto_layout(
+        self, recording_id: str, start: float, end: float, context: str
+    ) -> AutoLayoutPlan | None:
+        with self.connection() as db:
+            rows = db.execute(
+                "SELECT clip_auto_layout.payload FROM clip_auto_layout JOIN clips ON clips.id=clip_auto_layout.clip_id WHERE clips.recording_id=? AND clips.start=? AND clips.end=? AND clips.mode='auto' ORDER BY clips.created_at DESC,clips.id DESC LIMIT 16",
+                (recording_id, start, end),
+            ).fetchall()
+        for row in rows:
+            plan = AutoLayoutPlan.model_validate_json(row[0])
+            if plan.version == LAYOUT_VERSION and plan.context == context:
+                return plan
+        return None
 
     def set_posted(self, clip_id: str, posted: bool, *, db: sqlite3.Connection) -> None:
         db.execute(

@@ -8,6 +8,7 @@ from .editing import QualityOptions, mapped_overlays, retained_intervals
 from .follow_models import FollowPlan
 from .framing import FramingMode, SourceRegion, SplitLayout, validate_framing
 from .headlines import HeadlineOptions
+from .layout_models import AutoLayoutPlan
 from .limits import MAX_MEDIA_SECONDS
 from .overlays import Overlays, layout
 
@@ -51,9 +52,9 @@ class ExportRequest(BaseModel):
     @model_validator(mode="after")
     def valid_interval(self) -> "ExportRequest":
         validate_framing(self.mode, self.split_layout, self.crop_region)
-        if self.mode == "follow" and self.quality.smart_framing:
+        if self.mode in {"follow", "auto"} and self.quality.smart_framing:
             raise ValueError(
-                "Auto follow creates its own tracking plan. Clear the staged smart framing first."
+                "Automatic layouts create their own framing plan. Clear staged smart framing first."
             )
         if self.end <= self.start:
             raise ValueError("End must be later than start.")
@@ -85,6 +86,7 @@ class RenderPerformance(BaseModel):
 
 
 class Clip(BaseModel):
+    auto_layout: AutoLayoutPlan | None = None
     follow_plan: FollowPlan | None = None
     performance: RenderPerformance | None = None
     posted: bool = Field(default=False, strict=True)
@@ -125,9 +127,9 @@ class SelectionDraft(BaseModel):
     @model_validator(mode="after")
     def valid_interval(self) -> "SelectionDraft":
         validate_framing(self.mode, self.split_layout, self.crop_region)
-        if self.mode == "follow" and self.quality.smart_framing:
+        if self.mode in {"follow", "auto"} and self.quality.smart_framing:
             raise ValueError(
-                "Auto follow creates its own tracking plan. Clear the staged smart framing first."
+                "Automatic layouts create their own framing plan. Clear staged smart framing first."
             )
         retained_intervals(self.start, self.end, self.quality)
         if self.quality.smart_framing and (self.mode == "split" or self.crop_region):

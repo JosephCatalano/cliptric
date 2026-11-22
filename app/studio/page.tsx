@@ -68,6 +68,7 @@ import {
   type CaptionCustomization,
   type FramingMode,
   type FollowPlan,
+  type AutoLayoutPlan,
   type SplitLayout,
   type SourceRegion,
 } from "../../lib/projects";
@@ -86,6 +87,7 @@ type Recording = {
   created_at: string;
 };
 type Clip = {
+  auto_layout?: AutoLayoutPlan | null;
   follow_plan?: FollowPlan | null;
   performance?: {
     backend: "cpu" | "nvenc";
@@ -1142,10 +1144,20 @@ export default function Workspace() {
                           mode={mode}
                           layout={splitLayout}
                           cropRegion={cropRegion}
+                          autoLayout={
+                            clips.find(
+                              (clip) =>
+                                clip.mode === "auto" &&
+                                clip.recording_id === selectedId &&
+                                clip.start === rangeStart &&
+                                clip.end === rangeEnd,
+                            )?.auto_layout
+                          }
                           followPlan={
                             clips.find(
                               (clip) =>
-                                clip.mode === "follow" &&
+                                (clip.mode === "follow" ||
+                                  clip.mode === "auto") &&
                                 clip.recording_id === selectedId &&
                                 clip.start === rangeStart &&
                                 clip.end === rangeEnd,
@@ -1253,6 +1265,7 @@ export default function Workspace() {
                             allowSmart={
                               mode !== "split" &&
                               mode !== "follow" &&
+                              mode !== "auto" &&
                               cropRegion === null
                             }
                             disabled={

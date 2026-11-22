@@ -303,6 +303,7 @@ function ReviewItem({
           layout={framing.layout}
           cropRegion={framing.crop}
           followPlan={item.export?.follow_plan}
+          autoLayout={item.export?.auto_layout}
           sourceUrl={
             project.recording_id || item.recording_id
               ? `/api/recordings/${item.recording_id ?? project.recording_id}/media`
