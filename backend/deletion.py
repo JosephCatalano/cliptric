@@ -20,6 +20,7 @@ if TYPE_CHECKING:
     from .jobs import Jobs
     from .projects import Projects
     from .scheduling import Scheduler
+    from .social_publishing import SocialPublisher
     from .storage import Store
     from .tiktok import TikTok
     from .youtube_publishing import YouTubePublishing
@@ -34,7 +35,7 @@ class Deletions:
         projects: Projects,
         jobs: Jobs,
         scheduler: Scheduler,
-        publishers: Sequence[TikTok | YouTubePublishing | Instagram],
+        publishers: Sequence[TikTok | YouTubePublishing | Instagram | SocialPublisher],
     ):
         self.store, self.projects, self.jobs = store, projects, jobs
         # Match scheduler -> publisher ordering and serialize project edits/renders.
@@ -133,6 +134,8 @@ class Deletions:
                         ("tiktok_posts", ("published", "failed")),
                         ("youtube_uploads", ("ready", "failed")),
                         ("instagram_posts", ("published", "failed")),
+                        ("x_posts", ("published", "failed")),
+                        ("facebook_posts", ("published", "failed")),
                     ):
                         placeholders = ",".join("?" for _ in finished)
                         if db.execute(
@@ -147,11 +150,13 @@ class Deletions:
                         "SELECT id,platform,status FROM scheduled_posts WHERE export_id=? AND status IN ('scheduled','dispatching','submitted','unknown')",
                         (identifier,),
                     ):
-                        table, terminal = (
-                            ("tiktok_posts", "published")
-                            if post["platform"] == "tiktok"
-                            else ("youtube_uploads", "ready")
-                        )
+                        table, terminal = {
+                            "tiktok": ("tiktok_posts", "published"),
+                            "youtube": ("youtube_uploads", "ready"),
+                            "instagram": ("instagram_posts", "published"),
+                            "x": ("x_posts", "published"),
+                            "facebook": ("facebook_posts", "published"),
+                        }[post["platform"]]
                         complete = db.execute(
                             f"SELECT 1 FROM {table} WHERE id=? AND status IN (?, 'failed')",
                             (post["id"], terminal),

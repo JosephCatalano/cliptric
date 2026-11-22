@@ -99,7 +99,15 @@ def resolve_caption_position(position, overlays, duration, headline=None, split=
 
 def write_presentation(path: Path, overlays, duration, headline=None, caption_position=None):
     resolved = layout(overlays, duration, headline, caption_position)
-    styles, events = headline_parts(headline, duration, caption_position) if headline else ("", "")
+    # Preserve timed centre overlays instead of covering them with the poster card.
+    profile_cover = not any(
+        position == "centre" and overlay.start < 0.25 for overlay, position in resolved
+    )
+    styles, events = (
+        headline_parts(headline, duration, caption_position, profile_cover=profile_cover)
+        if headline
+        else ("", "")
+    )
     for name, border in (("OverlayBox", 3), ("OverlayOutline", 1)):
         styles += f"Style: {name},Arial,60,&H00FFFFFF,&H00FFFFFF,&H00101010,&H00000000,-1,0,0,0,100,100,0,0,{border},0,0,5,100,100,0,1\n"
     for overlay, position in resolved:

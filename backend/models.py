@@ -72,6 +72,7 @@ class ExportRequest(BaseModel):
 
 
 class Clip(BaseModel):
+    posted: bool = Field(default=False, strict=True)
     quality: QualityOptions = Field(default_factory=QualityOptions)
     overlays: Overlays = Field(default_factory=list)
     id: str

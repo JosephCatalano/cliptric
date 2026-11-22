@@ -1,10 +1,20 @@
-import { InstagramComposer } from "../../../components/instagram-composer";
+import { PublishReview } from "../../../components/publish-review";
 
-export default async function InstagramPage({
+export default async function PublishPage({
   params,
+  searchParams,
 }: {
   params: Promise<{ exportId: string }>;
+  searchParams: Promise<{ at?: string; account_id?: string }>;
 }) {
   const { exportId } = await params;
-  return <InstagramComposer key={exportId} exportId={exportId} />;
+  const { at, account_id } = await searchParams;
+  return (
+    <PublishReview
+      platform="instagram"
+      exportId={exportId}
+      scheduledAt={typeof at === "string" ? at : ""}
+      initialAccount={typeof account_id === "string" ? account_id : ""}
+    />
+  );
 }

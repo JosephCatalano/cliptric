@@ -10,7 +10,7 @@ from .captions import CaptionCustomization, CaptionPreset
 from .editing import QualityOptions, mapped_overlays, retained_intervals
 from .framing import FramingMode, SplitLayout, validate_framing
 from .headlines import HeadlineOptions
-from .highlight_models import EditorialQuality
+from .highlight_models import EditorialQuality, SourceRange
 from .limits import MAX_MEDIA_SECONDS
 from .models import Clip, EmphasisWords
 from .overlays import Overlays, layout
@@ -108,6 +108,7 @@ class ProjectCreate(BaseModel):
 
 
 class ProjectItem(BaseModel):
+    posted: bool = Field(default=False, strict=True)
     presentation_complete: bool = False
     presentation_requested: bool = False
     presentation_summary: str | None = None
@@ -162,6 +163,9 @@ class ProjectItem(BaseModel):
 
 
 class Project(BaseModel):
+    parent_project_id: str | None = None
+    avoid_used_clips: bool = False
+    selection_exclusions: list[SourceRange] = Field(default_factory=list)
     recording_ids: list[str] = Field(default_factory=list)
     generate_titles: bool = False
     id: str
@@ -252,7 +256,26 @@ class ItemEdit(BaseModel):
         return self
 
 
+class MoreClipsRequest(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+    id: UUID
+    max_clips: int = Field(default=3, ge=1, le=20, strict=True)
+    remote_consent: Literal[True]
+
+    @field_validator("remote_consent", mode="before")
+    @classmethod
+    def explicit_consent(cls, value):
+        if value is not True:
+            raise ValueError("Approve transcript sharing and another AI analysis first.")
+        return value
+
+
 class ResumeRequest(BaseModel):
     model_config = ConfigDict(extra="forbid")
     retry_analysis: bool = Field(default=False, strict=True)
     retry_titles: bool = Field(default=False, strict=True)
+
+
+class PostedUpdate(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+    posted: bool = Field(strict=True)

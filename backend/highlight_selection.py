@@ -12,6 +12,7 @@ from .highlight_models import (
     HighlightError,
     HighlightRequest,
     ProposedHighlights,
+    SourceRange,
 )
 from .transcription_models import TranscriptWord
 
@@ -88,6 +89,53 @@ def build_windows(
     return windows
 
 
+def overlaps(start: float, end: float, ranges: list[SourceRange]) -> bool:
+    return any(start < previous.end and end > previous.start for previous in ranges)
+
+
+def merge_ranges(ranges: list[SourceRange]) -> list[SourceRange]:
+    merged: list[SourceRange] = []
+    for interval in sorted(ranges, key=lambda item: (item.start, item.end)):
+        if merged and interval.start <= merged[-1].end:
+            merged[-1] = SourceRange(start=merged[-1].start, end=max(merged[-1].end, interval.end))
+        else:
+            merged.append(interval)
+    return merged
+
+
+def unused_windows(words, duration, request, maximum, *, window_seconds):
+    """Keep original word times, splitting windows at every previously used section."""
+    blocked = merge_ranges(request.excluded_ranges)
+    if not blocked:
+        return build_windows(
+            build_segments(words, duration), maximum, window_seconds=window_seconds
+        )
+    windows, group = [], []
+    index = 0
+
+    def flush():
+        if group and max(word.end for word in group) - group[0].start >= request.min_seconds:
+            windows.extend(
+                build_windows(
+                    build_segments(group, duration),
+                    maximum - len(windows),
+                    window_seconds=window_seconds,
+                )
+            )
+        group.clear()
+
+    for word in words:
+        while index < len(blocked) and word.start >= blocked[index].end:
+            flush()
+            index += 1
+        if index < len(blocked) and word.end > blocked[index].start:
+            flush()
+        else:
+            group.append(word)
+    flush()
+    return windows
+
+
 def window_text(window: list[Segment]) -> str:
     return json.dumps(
         [
@@ -142,6 +190,11 @@ def ground_candidates(
                 request.analysis_end if request.analysis_end is not None else duration,
                 window[last + 1].start if last + 1 < len(window) else duration,
             )
+            for blocked in request.excluded_ranges:
+                if blocked.end <= start:
+                    before = max(before, blocked.end)
+                if blocked.start >= end:
+                    after = min(after, blocked.start)
             available = max(0, request.max_seconds - (end - start))
             lead = min(0.12, available, max(0, start - before))
             tail = min(0.18, max(0, available - lead), max(0, after - end))
@@ -157,6 +210,7 @@ def ground_candidates(
             )
             or len(proposal.evidence) < 8
             or proposal.evidence not in text
+            or overlaps(start, end, request.excluded_ranges)
         ):
             rejected += 1
             continue

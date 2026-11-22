@@ -1,5 +1,6 @@
 "use client";
 import { DeleteAction } from "../components/delete-action";
+import { PostedCheckbox } from "../components/posted-checkbox";
 import { MAX_VIDEO_SECONDS } from "../../lib/projects";
 import {
   Empty,
@@ -79,6 +80,7 @@ type Recording = {
   created_at: string;
 };
 type Clip = {
+  posted?: boolean;
   id: string;
   recording_id: string;
   start: number;
@@ -97,7 +99,7 @@ type Clip = {
   captions: CaptionSelection | null;
 };
 type Headline = {
-  appearance?: "classic" | "cover";
+  appearance?: "classic" | "cover" | "profile";
   text: string;
   position: "auto" | "upper" | "centre";
   seconds: number;
@@ -1509,6 +1511,23 @@ export default function Workspace() {
                                   setClips((values) =>
                                     values.filter(
                                       (value) => value.id !== clip.id,
+                                    ),
+                                  );
+                                  setHistoryRefresh((value) => value + 1);
+                                }}
+                              />
+                              <PostedCheckbox
+                                path={`/api/clips/${clip.id}/posted`}
+                                checked={clip.posted}
+                                disabled={running(clip)}
+                                title={`Clip ${clip.start.toFixed(1)}–${clip.end.toFixed(1)} seconds`}
+                                onSaved={(posted) => {
+                                  historyVersion.current++;
+                                  setClips((values) =>
+                                    values.map((value) =>
+                                      value.id === clip.id
+                                        ? { ...value, posted }
+                                        : value,
                                     ),
                                   );
                                   setHistoryRefresh((value) => value + 1);

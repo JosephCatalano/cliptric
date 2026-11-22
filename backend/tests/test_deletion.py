@@ -106,6 +106,8 @@ def test_studio_delete_removes_linked_project_entry(context):
         ("tiktok_posts", "unknown"),
         ("youtube_uploads", "paused"),
         ("instagram_posts", "publishing"),
+        ("x_posts", "uploading"),
+        ("facebook_posts", "unknown"),
     ],
 )
 def test_project_deletion_rolls_back_when_any_export_is_in_use(context, table, status):
@@ -129,10 +131,20 @@ def test_completed_social_posts_remain_after_local_export_deletion(context):
     post_row(manager, "scheduled_posts", identifier, "submitted", identifier=job_id)
     post_row(manager, "youtube_uploads", identifier, "ready")
     post_row(manager, "instagram_posts", identifier, "published")
+    x_id = post_row(manager, "x_posts", identifier, "published")
+    facebook_id = post_row(manager, "facebook_posts", identifier, "published")
     assert client.delete(f"/api/clips/{identifier}").status_code == 200
     with manager.store.connection() as db:
         assert (
             db.execute("SELECT status FROM tiktok_posts WHERE id=?", (job_id,)).fetchone()[0]
+            == "published"
+        )
+        assert (
+            db.execute("SELECT status FROM x_posts WHERE id=?", (x_id,)).fetchone()[0]
+            == "published"
+        )
+        assert (
+            db.execute("SELECT status FROM facebook_posts WHERE id=?", (facebook_id,)).fetchone()[0]
             == "published"
         )
 

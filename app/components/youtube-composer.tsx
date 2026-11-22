@@ -34,8 +34,10 @@ const root = "/api/youtube-publishing";
 export function YouTubeComposer({
   exportId,
   scheduledAt = "",
+  accountId,
 }: {
   exportId: string;
+  accountId: string;
   scheduledAt?: string;
 }) {
   const [scheduleTime, setScheduleTime] = useState(scheduledAt);
@@ -73,18 +75,17 @@ export function YouTubeComposer({
         if (controller.signal.aborted) return;
         setConnection(status);
         setMedia(video);
-        setJob(
-          posts.find((post) => post.account_id === status.account_id) ??
-            posts[0] ??
-            null,
-        );
+        setJob(posts.find((post) => post.account_id === accountId) ?? null);
         setCreator(null);
         setConsent(false);
         setError("");
         if (status.connected) {
-          const profile = await api<YouTubeCreator>(`${root}/creator`, {
-            signal: controller.signal,
-          });
+          const profile = await api<YouTubeCreator>(
+            `${root}/creator?account_id=${accountId}`,
+            {
+              signal: controller.signal,
+            },
+          );
           if (!controller.signal.aborted) setCreator(profile);
         }
       } catch (error) {
@@ -93,7 +94,7 @@ export function YouTubeComposer({
     }
     void load();
     return () => controller.abort();
-  }, [exportId, reload]);
+  }, [exportId, reload, accountId]);
 
   const jobId = job?.id;
   useEffect(() => {

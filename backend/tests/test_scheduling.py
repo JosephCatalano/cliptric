@@ -20,7 +20,13 @@ def scheduled(tmp_path):
     path = tmp_path / "exports" / "approved.mp4"
     path.write_bytes(b"explicit test export bytes")
     with store.connection() as db:
-        for table in ("tiktok_posts", "youtube_uploads"):
+        for table in (
+            "tiktok_posts",
+            "youtube_uploads",
+            "instagram_posts",
+            "x_posts",
+            "facebook_posts",
+        ):
             db.execute(f"CREATE TABLE {table}(id TEXT,export_id TEXT,account_id TEXT,status TEXT)")
 
     class PublishingDouble:
@@ -47,15 +53,19 @@ def scheduled(tmp_path):
             self.calls.append(request)
 
     publishing = PublishingDouble()
-    scheduler = Scheduler(store, publishing, publishing)
+    scheduler = Scheduler(
+        store, publishing, publishing, instagram=publishing, x=publishing, facebook=publishing
+    )
     scheduler.initialize()
     return scheduler, publishing, path
 
 
 def payload(platform="tiktok", **updates):
     request = dict(id=str(uuid4()), export_id=str(uuid4()), account_id="a" * 64, consent=True)
-    if platform == "tiktok":
-        request.update(caption="Approved caption", privacy="SELF_ONLY")
+    if platform != "youtube":
+        request.update(caption="Approved caption")
+        if platform == "tiktok":
+            request.update(privacy="SELF_ONLY")
     else:
         request.update(
             title="Approved title",
@@ -88,7 +98,7 @@ def row(scheduler, identifier):
         )
 
 
-@pytest.mark.parametrize("platform", ["tiktok", "youtube"])
+@pytest.mark.parametrize("platform", ["tiktok", "youtube", "instagram", "x", "facebook"])
 def test_approved_post_waits_until_due_and_dispatches_once(scheduled, platform):
     scheduler, publishing, _ = scheduled
     request = payload(platform)

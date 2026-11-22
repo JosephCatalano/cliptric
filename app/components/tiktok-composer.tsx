@@ -24,8 +24,10 @@ import {
 export function TikTokComposer({
   exportId,
   scheduledAt = "",
+  accountId,
 }: {
   exportId: string;
+  accountId: string;
   scheduledAt?: string;
 }) {
   const [scheduleTime, setScheduleTime] = useState(scheduledAt);
@@ -67,15 +69,18 @@ export function TikTokComposer({
         if (controller.signal.aborted) return;
         setConnection(status);
         setMedia(video);
-        setJob(posts[0] ?? null);
+        setJob(posts.find((post) => post.account_id === accountId) ?? null);
         setCreator(null);
         setPrivacy("");
         setConsent(false);
         setError("");
         if (status.connected) {
-          const profile = await api<TikTokCreator>("/api/tiktok/creator", {
-            signal: controller.signal,
-          });
+          const profile = await api<TikTokCreator>(
+            `/api/tiktok/creator?account_id=${accountId}`,
+            {
+              signal: controller.signal,
+            },
+          );
           if (!controller.signal.aborted) setCreator(profile);
         }
       } catch (error) {
@@ -84,7 +89,7 @@ export function TikTokComposer({
     }
     void load();
     return () => controller.abort();
-  }, [exportId, reload]);
+  }, [exportId, reload, accountId]);
   const jobId = job?.id;
   const jobStatus = job?.status;
   const canReconcile = !!job?.publish_id;

@@ -52,6 +52,8 @@ class RequestBoundary:
             "/api/tiktok/callback",
             "/api/youtube-publishing/callback",
             "/api/instagram/callback",
+            "/api/x/callback",
+            "/api/facebook/callback",
         }
         if not oauth_callback and (
             (origin and origin not in allowed)

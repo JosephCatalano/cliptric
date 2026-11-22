@@ -55,6 +55,7 @@ export default function TermsPage() {
           <a href="https://www.youtube.com/t/terms">YouTube Terms of Service</a>.
           Instagram use is subject to the{" "}
           <a href="https://help.instagram.com/581066165581870">Instagram Terms of Use</a>.
+          X and Facebook integrations are also subject to their providers&apos; terms and permissions.
           Third-party API or processing charges may apply to the services you configure.
         </p>
       </section>

@@ -50,8 +50,8 @@ export default function PrivacyPage() {
           YouTube link, Cliptric contacts YouTube and its media services to
           retrieve that video. When you approve a post, Cliptric sends the
           selected exported video and your chosen publishing details to TikTok,
-          YouTube or Meta for Instagram. Account connection and status checks
-          also communicate with the relevant platform.
+          YouTube, X or Meta for Instagram and Facebook. Account connection and
+          status checks also communicate with the relevant platform.
         </p>
         <p className="mt-2">
           These providers process information under their own policies:{" "}
@@ -59,10 +59,11 @@ export default function PrivacyPage() {
           <a href="https://www.tiktok.com/legal/privacy-policy">TikTok</a>, and{" "}
           <a href="https://policies.google.com/privacy">Google</a>, and{" "}
           <a href="https://privacycenter.instagram.com/policy/">
-            Meta for Instagram
+            Meta for Instagram and Facebook
           </a>
-          . Cliptric does not sell your personal information or use connected
-          account data for advertising.
+          , and <a href="https://x.com/en/privacy">X</a>. Cliptric does not sell
+          your personal information or use connected account data for
+          advertising.
         </p>
       </section>
       <section>
@@ -95,9 +96,10 @@ export default function PrivacyPage() {
         </p>
         <p className="mt-2">
           Disconnect an account in Connected accounts to remove locally stored
-          account credentials and request platform revocation. If revocation
-          fails, Cliptric reports it; remove access in the platform&apos;s
-          settings. You can also revoke Google access from your{" "}
+          credentials for that destination. TikTok also requests revocation and
+          reports a failure. For other services, revoke access in the
+          provider&apos;s settings. Revoking shared grants can affect other
+          connected accounts. You can also revoke Google access from your{" "}
           <a href="https://myaccount.google.com/permissions">
             Google account permissions
           </a>

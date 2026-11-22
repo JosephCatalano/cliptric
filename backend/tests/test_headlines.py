@@ -5,9 +5,10 @@ from uuid import uuid4
 import pytest
 from pydantic import ValidationError
 
-from backend.headlines import HeadlineOptions, write_headline
+from backend.headlines import HeadlineOptions, headline_parts, write_headline
 from backend.media import Media
 from backend.models import ExportRequest, Recording
+from backend.overlays import TextOverlay, write_presentation
 from backend.storage import Store
 from backend.tests.test_captions import caption_media as caption_media
 from backend.tests.test_captions import frame_pixels
@@ -157,3 +158,62 @@ def test_fades_fit_short_clips_and_share_timing(tmp_path, duration, fade, appear
 def test_invalid_fades_are_rejected(fade):
     with pytest.raises(ValidationError):
         HeadlineOptions(text="A title", fade_ms=fade)
+
+
+@pytest.mark.parametrize(
+    "text", ["YOU NEED TO SEE THIS", "W" * 120, "A longer title with useful context " * 3]
+)
+def test_profile_title_is_centered_and_fits_a_square_preview(text):
+    styles, events = headline_parts(HeadlineOptions(text=text), 10, "lower")
+    profile = next(line for line in styles.splitlines() if line.startswith("Style: ProfileCover"))
+    size = int(profile.split(",")[2])
+    assert size > 0
+    if text == "YOU NEED TO SEE THIS":
+        assert size >= 100
+    first = [line for line in events.splitlines() if ",ProfileCover," in line]
+    assert len(first) == 4 and all(",0:00:00.00,0:00:00.25," in line for line in first)
+    assert r"\pos(540,960)" in first[-1]
+    assert all(
+        ",0:00:00.25,0:00:08.00," in line for line in events.splitlines() if ",Headline," in line
+    )
+    assert 0 < len(first[-1].split(r"\N")) * (size + 10) + 64 <= 760
+
+
+def test_profile_respects_centre_captions_and_timed_overlays(tmp_path):
+    options = HeadlineOptions(text="An eye catching headline")
+    styles, _ = headline_parts(options, 3, "centre")
+    assert "ProfileCover" not in styles
+    path = tmp_path / "overlays.ass"
+    write_presentation(
+        path,
+        [TextOverlay(text="Important CTA", start=0.0, end=1.0, position="centre")],
+        3,
+        options,
+        "lower",
+    )
+    assert "ProfileCover" not in path.read_text(encoding="utf-8-sig")
+
+
+@pytest.mark.parametrize("position", ["upper", "centre"])
+def test_real_profile_first_frame_is_large_and_centered(caption_media, tmp_path, position):
+    settings, source = caption_media
+    path = tmp_path / "profile.ass"
+    write_headline(
+        path, HeadlineOptions(text="YOU NEED TO SEE THIS", position=position), 3, "lower"
+    )
+    output = tmp_path / "profile.mp4"
+    info = Media(settings).render(
+        source, output, 0, 3, "pad", threading.Event(), tmp_path / "profile.log", headline_path=path
+    )
+    assert (info.width, info.height, info.has_audio) == (1080, 1920, True)
+    pixels = frame_pixels(settings, output, 0)
+    white = [index for index, value in enumerate(pixels) if value > 220]
+    top, bottom = min(white) // 1080, max(white) // 1080
+    assert 420 < top < bottom < 1500
+    assert abs((top + bottom) / 2 - 960) < 3
+    assert bottom - top > 250
+    later = frame_pixels(settings, output, 0.5)
+    normal = [index for index, value in enumerate(later) if value > 220]
+    assert max(normal) // 1080 - min(normal) // 1080 < bottom - top
+    if position == "upper":
+        assert max(normal) // 1080 < 650

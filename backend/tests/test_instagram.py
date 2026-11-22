@@ -176,8 +176,8 @@ def test_oauth_expiry_denial_and_cross_origin(fixture):
     state, _ = service.begin(service.web_origin)
     assert "cancelled" in service.finish(state, state, "", True)
     state, _ = service.begin(service.web_origin)
-    _, redirect, origin = service.pending[state]
-    service.pending[state] = (time.monotonic() - 1, redirect, origin)
+    _, redirect, origin, page_id = service.pending[state]
+    service.pending[state] = (time.monotonic() - 1, redirect, origin, page_id)
     with pytest.raises(InstagramError):
         service.finish(state, state, "code", False)
     assert (
@@ -299,6 +299,8 @@ def test_expired_credentials_and_config_change(fixture):
     with pytest.raises(InstagramError):
         service.creator()
     service.settings = replace(service.settings, page_id="999")
+    assert service.status()["connected"]  # Page ID is now chosen per connection.
+    service.settings = replace(service.settings, login_config_id="999")
     assert not service.status()["connected"]
 
 
@@ -375,3 +377,32 @@ def test_processing_timeout_never_publishes(fixture, monkeypatch):
     job = finish(service, request_for(service, export_id))
     assert job.status == "failed" and "five minutes" in job.error
     assert not any(path.endswith("media_publish") for _, path, _ in state["calls"])
+
+
+def test_multiple_instagram_accounts_preserve_approved_destination(fixture):
+    service, _, export_id, _ = fixture
+    first = connect(service)
+    request = request_for(service, export_id)
+    token, _ = service._token(first)
+    token.instagram_id = "999"
+    second = "b" * 64
+    service.accounts.save(
+        service.config,
+        second,
+        service.protector(token.model_dump_json().encode()),
+        "Second fixture",
+    )
+    assert service.status()["account_id"] is None
+    with pytest.raises(InstagramError, match="Choose"):
+        service.creator()
+    assert finish(service, request).status == "published"
+    service.disconnect(first)
+    assert service.status()["account_id"] == second
+
+
+def test_missing_instagram_page_is_actionable_validation_error(fixture):
+    service, _, _, _ = fixture
+    service.settings = replace(service.settings, page_id="")
+    with pytest.raises(InstagramError) as exc:
+        service.begin(service.web_origin)
+    assert exc.value.status_code == 422

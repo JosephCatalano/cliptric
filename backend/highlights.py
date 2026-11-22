@@ -28,10 +28,9 @@ from .highlight_models import (
 )
 from .highlight_selection import (
     Segment,
-    build_segments,
-    build_windows,
     ground_candidates,
     rank_unique,
+    unused_windows,
     window_text,
 )
 from .highlight_store import HighlightStore
@@ -93,6 +92,8 @@ class Highlights:
         end = request.analysis_end if request.analysis_end is not None else recording.duration
         if end > recording.duration or end <= request.analysis_start:
             raise HighlightError("Analysis range must be inside the recording.")
+        if any(interval.end > recording.duration for interval in request.excluded_ranges):
+            raise HighlightError("Excluded sections must be inside the recording.")
         if end - request.analysis_start < request.min_seconds:
             raise HighlightError(
                 "This recording is shorter than the requested minimum highlight duration. Lower the minimum or use a longer recording."
@@ -119,8 +120,10 @@ class Highlights:
         except TranscriptionError as exc:
             raise HighlightError(str(exc), exc.status_code) from exc
         words = [w for w in snapshot.words if w.start >= request.analysis_start and w.end <= end]
-        windows = build_windows(
-            build_segments(words, recording.duration),
+        windows = unused_windows(
+            words,
+            recording.duration,
+            request,
             self.settings.highlight_max_windows,
             window_seconds=min(
                 MAX_AUTO_WINDOW_SECONDS, max(WINDOW_SECONDS, request.max_seconds + OVERLAP_SECONDS)
@@ -147,7 +150,8 @@ class Highlights:
             "request": request.model_dump(
                 mode="json",
                 exclude={"regenerate", "remote_consent"}
-                | ({"ai_instructions"} if not request.ai_instructions else set()),
+                | ({"ai_instructions"} if not request.ai_instructions else set())
+                | ({"excluded_ranges"} if not request.excluded_ranges else set()),
             ),
         }
         key = hashlib.sha256(json.dumps(key_data, sort_keys=True).encode()).hexdigest()

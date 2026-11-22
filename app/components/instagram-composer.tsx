@@ -15,6 +15,7 @@ import {
 } from "@/components/ui/field";
 import { Textarea } from "@/components/ui/textarea";
 import { Progress } from "@/components/ui/progress";
+import { ScheduleFields } from "./schedule-fields";
 import { api, message } from "@/lib/client-api";
 import type {
   InstagramConnection,
@@ -26,7 +27,17 @@ import type {
 const root = "/api/instagram";
 const terminal = new Set(["published", "failed", "unknown"]);
 
-export function InstagramComposer({ exportId }: { exportId: string }) {
+export function InstagramComposer({
+  exportId,
+  accountId,
+  scheduledAt = "",
+}: {
+  exportId: string;
+  accountId: string;
+  scheduledAt?: string;
+}) {
+  const [scheduleTime, setScheduleTime] = useState(scheduledAt);
+  const [scheduled, setScheduled] = useState(false);
   const [connection, setConnection] = useState<InstagramConnection | null>(
     null,
   );
@@ -56,18 +67,17 @@ export function InstagramComposer({ exportId }: { exportId: string }) {
         if (controller.signal.aborted) return;
         setConnection(status);
         setMedia(video);
-        setJob(
-          posts.find((post) => post.account_id === status.account_id) ??
-            posts[0] ??
-            null,
-        );
+        setJob(posts.find((post) => post.account_id === accountId) ?? null);
         setCreator(null);
         setConsent(false);
         setError("");
         if (status.connected) {
-          const profile = await api<InstagramCreator>(`${root}/creator`, {
-            signal: controller.signal,
-          });
+          const profile = await api<InstagramCreator>(
+            `${root}/creator?account_id=${accountId}`,
+            {
+              signal: controller.signal,
+            },
+          );
           if (!controller.signal.aborted) setCreator(profile);
         }
       } catch (error) {
@@ -76,7 +86,7 @@ export function InstagramComposer({ exportId }: { exportId: string }) {
     }
     void load();
     return () => controller.abort();
-  }, [exportId, reload]);
+  }, [exportId, reload, accountId]);
   const jobId = job?.id;
   useEffect(() => {
     if (!jobId) return;
@@ -130,7 +140,7 @@ export function InstagramComposer({ exportId }: { exportId: string }) {
       share_to_feed: feed,
       consent,
     };
-    const signature = JSON.stringify(payload);
+    const signature = JSON.stringify({ payload, scheduleTime });
     if (
       token.current?.signature !== signature ||
       (job?.status === "failed" && token.current?.id === job.id)
@@ -139,13 +149,28 @@ export function InstagramComposer({ exportId }: { exportId: string }) {
     setBusy(true);
     setError("");
     try {
-      setJob(
-        await api<InstagramPost>(`${root}/posts`, {
+      if (scheduleTime) {
+        await api("/api/schedule", {
           method: "POST",
           headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({ ...payload, id: token.current.id }),
-        }),
-      );
+          body: JSON.stringify({
+            scheduled_at: new Date(scheduleTime).toISOString(),
+            post: {
+              platform: "instagram",
+              request: { ...payload, id: token.current.id },
+            },
+          }),
+        });
+        setScheduled(true);
+      } else {
+        setJob(
+          await api<InstagramPost>(`${root}/posts`, {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({ ...payload, id: token.current.id }),
+          }),
+        );
+      }
       setConsent(false);
     } catch (error) {
       setError(
@@ -156,9 +181,10 @@ export function InstagramComposer({ exportId }: { exportId: string }) {
     }
   }
   const blocked =
-    !!job &&
-    job.status !== "failed" &&
-    (!creator || job.account_id === creator.account_id);
+    scheduled ||
+    (!!job &&
+      job.status !== "failed" &&
+      (!creator || job.account_id === creator.account_id));
   return (
     <section className="project-workspace tiktok-workspace">
       <header className="project-heading">
@@ -214,6 +240,13 @@ export function InstagramComposer({ exportId }: { exportId: string }) {
               complete video before approving publication.
             </FieldDescription>
             <FieldGroup>
+              <ScheduleFields
+                value={scheduleTime}
+                onChange={(value) => {
+                  setScheduleTime(value);
+                  setConsent(false);
+                }}
+              />
               <Field>
                 <FieldLabel htmlFor="instagram-caption">Caption</FieldLabel>
                 <Textarea
@@ -258,11 +291,21 @@ export function InstagramComposer({ exportId }: { exportId: string }) {
                 type="submit"
                 disabled={!consent || busy || blocked || !media}
               >
-                {busy ? "Submitting..." : "Publish Instagram Reel"}
+                {busy
+                  ? "Submitting..."
+                  : scheduleTime
+                    ? "Approve scheduled Reel"
+                    : "Publish Instagram Reel"}
               </Button>
             </FieldGroup>
           </FieldSet>
         </form>
+      ) : null}
+      {scheduled ? (
+        <p role="status">
+          Instagram Reel scheduled. Keep the local API running and your computer
+          awake. <Link href="/calendar">View schedule</Link>.
+        </p>
       ) : null}
       {job ? (
         <section

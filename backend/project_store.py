@@ -1,3 +1,7 @@
+import sqlite3
+
+from .highlight_models import SourceRange
+from .highlight_selection import merge_ranges
 from .project_models import ACTIVE, Project
 from .storage import Store
 
@@ -27,6 +31,20 @@ class ProjectStore:
                 db.execute("DROP TABLE projects")
                 db.execute("ALTER TABLE projects_migrating RENAME TO projects")
                 db.execute("CREATE INDEX projects_created ON projects(created_at DESC,id DESC)")
+            if not db.execute(
+                "SELECT 1 FROM sqlite_master WHERE type='table' AND name='project_selections'"
+            ).fetchone():
+                if not db.in_transaction:
+                    db.execute("BEGIN IMMEDIATE")
+                db.execute("""
+                    CREATE TABLE project_selections (
+                        recording_id TEXT NOT NULL REFERENCES recordings(id),
+                        start REAL NOT NULL CHECK(start>=0), end REAL NOT NULL CHECK(end>start),
+                        PRIMARY KEY(recording_id,start,end)
+                    )
+                """)
+                for row in db.execute("SELECT payload FROM projects"):
+                    self._remember(Project.model_validate_json(row[0]), db)
         for project in self.list_all_active():
             project.status = "interrupted"
             project.stage = "Processing interrupted"
@@ -58,11 +76,36 @@ class ProjectStore:
                 )
             ]
 
-    def save(self, project: Project):
+    def save(self, project: Project, *, db: sqlite3.Connection | None = None) -> None:
+        if db is None:
+            with self.store.connection() as connection:
+                return self.save(project, db=connection)
         payload = project.model_dump_json(exclude={"items": {"__all__": {"export"}}})
+        db.execute(
+            "INSERT INTO projects VALUES (?,?,?,?,?) ON CONFLICT(id) DO UPDATE SET "
+            "recording_id=excluded.recording_id,status=excluded.status,payload=excluded.payload",
+            (project.id, project.recording_id, project.created_at, project.status, payload),
+        )
+        self._remember(project, db)
+
+    @staticmethod
+    def _remember(project: Project, db: sqlite3.Connection):
+        # History deliberately has no project/clip foreign key. Deletion and
+        # rejection must not make a previously suggested moment new again.
+        if project.recording_id and not project.recording_ids and project.selection_complete:
+            db.executemany(
+                "INSERT OR IGNORE INTO project_selections(recording_id,start,end) VALUES(?,?,?)",
+                [(project.recording_id, item.start, item.end) for item in project.items],
+            )
+
+    def used_ranges(self, recording_id: str) -> list[SourceRange]:
         with self.store.connection() as db:
-            db.execute(
-                "INSERT INTO projects VALUES (?,?,?,?,?) ON CONFLICT(id) DO UPDATE SET "
-                "recording_id=excluded.recording_id,status=excluded.status,payload=excluded.payload",
-                (project.id, project.recording_id, project.created_at, project.status, payload),
+            return merge_ranges(
+                [
+                    SourceRange(start=row[0], end=row[1])
+                    for row in db.execute(
+                        "SELECT start,end FROM project_selections WHERE recording_id=? ORDER BY start,end",
+                        (recording_id,),
+                    )
+                ]
             )

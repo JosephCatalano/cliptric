@@ -17,15 +17,29 @@ from .editing import QualityOptions, mapped_overlays, retained_intervals
 from .files import remove_artifact
 from .headlines import HeadlineOptions
 from .highlight_models import ACTIVE as HIGHLIGHT_ACTIVE
-from .highlight_models import HighlightError, HighlightRequest, ProposedHighlights
-from .highlight_selection import build_segments, ground_candidates, rank_unique, window_text
+from .highlight_models import HighlightError, HighlightRequest, ProposedHighlights, SourceRange
+from .highlight_selection import (
+    build_segments,
+    ground_candidates,
+    overlaps,
+    rank_unique,
+    window_text,
+)
 from .hooks import suggest_hooks
 from .jobs import ExportBusy, Jobs
 from .media import MediaError, RenderCancelled
 from .models import CaptionOptions, ExportRequest
 from .overlays import layout
 from .presentation import AutoPresentation
-from .project_models import ACTIVE, ItemEdit, Project, ProjectCreate, ProjectItem, ResumeRequest
+from .project_models import (
+    ACTIVE,
+    ItemEdit,
+    MoreClipsRequest,
+    Project,
+    ProjectCreate,
+    ProjectItem,
+    ResumeRequest,
+)
 from .project_store import ProjectStore
 from .storage import now
 from .transcription_models import ACTIVE_STATUSES, TranscriptionError
@@ -227,6 +241,42 @@ class Projects:
             self._queue(project)
             return project
 
+    def more_clips(self, identifier: str, request: MoreClipsRequest):
+        with self.lock:
+            existing = self.records.get(str(request.id))
+            if existing:
+                if (
+                    existing.parent_project_id != identifier
+                    or existing.settings.max_clips != request.max_clips
+                ):
+                    raise HTTPException(
+                        409, "This batch token belongs to a different project or clip count."
+                    )
+                return self.get(existing.id)
+            source = self.get(identifier, hydrate=False)
+            if source.recording_ids or not source.recording_id or not source.selection_complete:
+                raise HTTPException(409, "Finish a long-form project before finding another batch.")
+            if source.status in ACTIVE:
+                raise HTTPException(409, "Wait for this project to stop before finding more clips.")
+            if not self.store.source_path(source.recording_id).is_file():
+                raise HTTPException(404, "The saved source video is unavailable.")
+            self._capacity()
+            project = Project(
+                id=str(request.id),
+                parent_project_id=source.id,
+                avoid_used_clips=True,
+                recording_id=source.recording_id,
+                source_thumbnail_url=source.source_thumbnail_url,
+                title=source.title.removesuffix(" - more clips")[:107] + " - more clips",
+                settings=source.settings.model_copy(
+                    deep=True, update={"max_clips": request.max_clips}
+                ),
+                created_at=now(),
+                status="queued",
+            )
+            self._queue(project)
+            return project
+
     def _create_batch(self, request: ProjectCreate):
         recordings = [self.store.recording(str(value)) for value in request.recording_ids]
         if any(recording is None for recording in recordings):
@@ -365,6 +415,44 @@ class Projects:
                 return []
             candidate = next((c for c in analysis.candidates if c.id == item.candidate_id), None)
             return suggest_hooks(words, candidate, item.start, item.end)
+
+    def set_posted(self, identifier: str, item_id: str, posted: bool) -> None:
+        with self.lock:
+            project = self.get(identifier, hydrate=False)
+            if project.status in ACTIVE:
+                raise HTTPException(
+                    409, "Wait for project processing to finish before updating Posted."
+                )
+            item = next((i for i in project.items if i.id == item_id), None)
+            if item is None:
+                raise HTTPException(404, "Project clip not found.")
+            item.posted = posted
+            with self.store.connection() as db:
+                self.records.save(project, db=db)
+                for export_id in {item.export_id, item.pending_export_id} - {None}:
+                    if db.execute("SELECT 1 FROM clips WHERE id=?", (export_id,)).fetchone():
+                        self.store.set_posted(export_id, posted, db=db)
+
+    def set_export_posted(self, identifier: str, posted: bool) -> None:
+        with self.lock, self.store.connection() as db:
+            db.execute("BEGIN IMMEDIATE")
+            if not db.execute("SELECT 1 FROM clips WHERE id=?", (identifier,)).fetchone():
+                raise HTTPException(404, "Export not found.")
+            for row in db.execute("SELECT payload FROM projects").fetchall():
+                project = Project.model_validate_json(row[0])
+                matches = [
+                    i for i in project.items if identifier in (i.export_id, i.pending_export_id)
+                ]
+                if not matches:
+                    continue
+                if project.status in ACTIVE:
+                    raise HTTPException(
+                        409, "Wait for project processing to finish before updating Posted."
+                    )
+                for item in matches:
+                    item.posted = posted
+                self.records.save(project, db=db)
+            self.store.set_posted(identifier, posted, db=db)
 
     def edit(self, identifier: str, item_id: str, request: ItemEdit):
         with self.lock:
@@ -772,10 +860,13 @@ class Projects:
             child_id = str(uuid4())
             with self.lock:
                 project = self._check(identifier)
+                if project.avoid_used_clips:
+                    project.selection_exclusions = self.records.used_ranges(project.recording_id)
                 project.highlight_id, project.analysis_attempted = child_id, True
                 self.records.save(project)
             s = project.settings
             request = HighlightRequest(
+                excluded_ranges=project.selection_exclusions,
                 ai_instructions=s.ai_instructions,
                 transcription_id=transcript.id,
                 revision=transcript.revision,
@@ -822,6 +913,17 @@ class Projects:
             )
         with self.lock:
             project = self._check(identifier)
+            candidates = [
+                candidate for candidate in result.candidates if candidate.review != "rejected"
+            ]
+            if project.avoid_used_clips:
+                blocked = self.records.used_ranges(project.recording_id)
+                unused = []
+                for candidate in candidates:
+                    if not overlaps(candidate.start, candidate.end, blocked):
+                        unused.append(candidate)
+                        blocked.append(SourceRange(start=candidate.start, end=candidate.end))
+                candidates = unused
             project.items = [
                 ProjectItem(
                     quality=QualityOptions(
@@ -842,8 +944,7 @@ class Projects:
                     framing=project.settings.framing,
                     split_layout=project.settings.split_layout,
                 )
-                for c in result.candidates
-                if c.review != "rejected"
+                for c in candidates
             ][: project.settings.max_clips]
             project.selection_complete = True
             self.records.save(project)
@@ -900,7 +1001,9 @@ class Projects:
                 and self.store.export_path(clip.id).is_file()
             ):
                 item.export_id, item.pending_export_id, item.error = clip.id, None, None
-                self.records.save(project)
+                with self.store.connection() as db:
+                    self.records.save(project, db=db)
+                    self.store.set_posted(clip.id, item.posted, db=db)
                 return
             words = None
             if captions is not None:
@@ -938,7 +1041,9 @@ class Projects:
             project = self._check(identifier)
             item = next(i for i in project.items if i.id == item_id)
             item.export_id, item.pending_export_id, item.error = child_id, None, None
-            self.records.save(project)
+            with self.store.connection() as db:
+                self.records.save(project, db=db)
+                self.store.set_posted(child_id, item.posted, db=db)
 
     def _prepare_supplied(self, identifier: str, item_id: str):
         with self.lock:
@@ -1209,6 +1314,7 @@ class Projects:
                 for selected, source_candidate in zip(grounded[1:], candidates[1:]):
                     child = target.model_copy(deep=True)
                     child.id, child.candidate_id = str(uuid4()), selected.id
+                    child.posted = False
                     child.start, child.end, child.title = (
                         selected.start,
                         selected.end,
@@ -1392,6 +1498,8 @@ class Projects:
                 current.stage = (
                     f"{len(eligible) - failed} of {len(eligible)} eligible clips ready"
                     if current.items
+                    else "No additional unused moments found in this range"
+                    if current.avoid_used_clips
                     else "No suitable moments found in this range"
                 )
                 self.records.save(current)

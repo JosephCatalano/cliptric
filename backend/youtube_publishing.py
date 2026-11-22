@@ -15,6 +15,7 @@ from uuid import UUID
 from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
 
 from .media import MediaError
+from .social_accounts import Accounts
 from .social_security import CredentialError, protect_secret
 from .storage import now
 from .transcription_store import TranscriptStore
@@ -97,6 +98,7 @@ class YouTubePublishing:
     def __init__(self, store, media, settings, web_origin, *, api=None):
         self.store, self.media, self.settings, self.web_origin = store, media, settings, web_origin
         self.api = api or YouTubeAPI(settings)
+        self.accounts = Accounts(store, "youtube_account", "client_id", YouTubeError)
         self.lock = threading.RLock()
         self.pending = {}
         self.pool = ThreadPoolExecutor(max_workers=1, thread_name_prefix="youtube-publishing")
@@ -133,6 +135,8 @@ class YouTubePublishing:
                 )
                 self._save(job, db)
 
+        self.accounts.initialize()
+
     def _configured(self):
         if not self.settings.client_id or os.name != "nt":
             raise YouTubeError(
@@ -141,15 +145,13 @@ class YouTubePublishing:
             )
 
     def status(self):
-        with self.lock, self.store.connection() as db:
-            row = db.execute(
-                "SELECT account_id,client_id FROM youtube_account WHERE id=1"
-            ).fetchone()
-            connected = bool(row and row["client_id"] == self.settings.client_id)
+        with self.lock:
+            accounts = self.accounts.list(self.settings.client_id)
             return {
                 "configured": bool(self.settings.client_id and os.name == "nt"),
-                "connected": connected,
-                "account_id": row["account_id"] if connected else None,
+                "connected": bool(accounts),
+                "account_id": accounts[0]["account_id"] if len(accounts) == 1 else None,
+                "accounts": accounts,
             }
 
     def begin(self, origin):
@@ -162,8 +164,6 @@ class YouTubePublishing:
             self.pending = {
                 key: value for key, value in self.pending.items() if value[0] > time.monotonic()
             }
-            if self.status()["connected"]:
-                raise YouTubeError("Disconnect the current YouTube account first.", 409)
             if len(self.pending) >= 4:
                 raise YouTubeError("Too many connection attempts. Wait ten minutes.", 429)
             self.pending[state] = (time.monotonic() + 600, verifier, redirect, origin)
@@ -192,8 +192,6 @@ class YouTubePublishing:
                 raise YouTubeError("YouTube connection expired or was already used.", 400)
             if denied or not code:
                 return pending[3] + "/connections?youtube=cancelled"
-            if self.status()["connected"]:
-                raise YouTubeError("An account is already connected. Disconnect first.", 409)
             response = self.api.token(
                 grant_type="authorization_code",
                 code=code,
@@ -254,17 +252,12 @@ class YouTubePublishing:
             encrypted = protect_secret(record.model_dump_json().encode())
         except CredentialError as exc:
             raise YouTubeError(str(exc), 503) from exc
-        with self.store.connection() as db:
-            db.execute(
-                "INSERT OR REPLACE INTO youtube_account VALUES (1,?,?,?)",
-                (self.settings.client_id, fingerprint, encrypted),
-            )
+        self.accounts.save(self.settings.client_id, fingerprint, encrypted, record.channel.title)
         return record, fingerprint
 
-    def _stored_token(self):
+    def _stored_token(self, account_id=None):
         self._configured()
-        with self.store.connection() as db:
-            row = db.execute("SELECT * FROM youtube_account WHERE id=1").fetchone()
+        row = self.accounts.get(self.settings.client_id, account_id)
         if not row or row["client_id"] != self.settings.client_id:
             raise YouTubeError("Connect your YouTube channel first.", 409)
         try:
@@ -276,8 +269,8 @@ class YouTubePublishing:
                 "Cannot unlock YouTube credentials. Reconnect on this Windows account.", 503
             ) from exc
 
-    def _token(self):
-        record, account = self._stored_token()
+    def _token(self, account_id=None):
+        record, account = self._stored_token(account_id)
         if record.expires_at <= time.time() + 60:
             record, account = self._store_token(
                 self.api.token(grant_type="refresh_token", refresh_token=record.refresh_token),
@@ -286,14 +279,15 @@ class YouTubePublishing:
             )
         return record, account
 
-    def creator(self):
+    def creator(self, account_id=None):
         with self.lock:
-            record, account = self._token()
+            record, account = self._token(account_id)
             channel = self._channel(record.access_token)
             if channel.id != record.channel.id:
                 raise YouTubeError(
                     "The connected YouTube channel changed. Reconnect before uploading.", 409
                 )
+            self.accounts.label(account, channel.title)
             return {
                 "account_id": account,
                 "channel": channel.model_dump(),
@@ -326,17 +320,13 @@ class YouTubePublishing:
         self.category_cache = (time.monotonic() + 3600, categories)
         return categories
 
-    def disconnect(self):
+    def disconnect(self, account_id=None):
         with self.lock:
             self._idle()
-            warning = None
-            try:
-                record, _ = self._stored_token()
-                self.api.revoke(record.refresh_token)
-            except YouTubeError:
-                warning = "Local credentials were removed, but Google revocation was not confirmed. Remove this app in your Google Account connections."
-            with self.store.connection() as db:
-                db.execute("DELETE FROM youtube_account WHERE id=1")
+            account_id = self.accounts.get(self.settings.client_id, account_id)["account_id"]
+            # Google revocation can revoke other channels sharing the same grant.
+            warning = "Local channel disconnected. Revoke app access in Google Account settings if desired; this can affect other connected channels."
+            self.accounts.delete(self.settings.client_id, account_id)
             self.pending.clear()
             self.category_cache = None
             return {"connected": False, "warning": warning}
@@ -422,7 +412,7 @@ class YouTubePublishing:
             raise YouTubeError("Another YouTube upload is active. Wait for it to finish.", 409)
 
     def validate_post(self, request):
-        creator = self.creator()
+        creator = self.creator(request.account_id)
         if creator["account_id"] != request.account_id:
             raise YouTubeError("The destination account changed. Review again.", 409)
         if request.category_id not in {item["id"] for item in creator["categories"]}:
@@ -574,7 +564,7 @@ class YouTubePublishing:
                         "The approved export changed. No replacement media was sent."
                     )
                 with self.lock:
-                    record, account = self._token()
+                    record, account = self._token(job.account_id)
                     if account != job.account_id:
                         raise YouTubeError("Reconnect the original destination account.", 409)
                     if resume:
@@ -653,7 +643,7 @@ class YouTubePublishing:
             if job.resume_after > time.time():
                 return job
             self.last_check = time.monotonic()
-            record, account = self._token()
+            record, account = self._token(job.account_id)
             if account != job.account_id:
                 raise YouTubeError("Reconnect the original channel to check this upload.", 409)
             if job.video_id:
@@ -686,7 +676,7 @@ class YouTubePublishing:
                 raise YouTubeError(
                     "Google requested a delay. Wait before resuming this upload.", 429
                 )
-            creator = self.creator()
+            creator = self.creator(job.account_id)
             if creator["account_id"] != job.account_id:
                 raise YouTubeError("Reconnect the original channel before resuming.", 409)
             job.status = "queued"

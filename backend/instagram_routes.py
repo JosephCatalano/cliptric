@@ -21,9 +21,9 @@ def create_instagram_router(service):
         return service.status()
 
     @router.post("/connect")
-    def connect(request: Request):
+    def connect(request: Request, page_id: str | None = Query(None, pattern=r"^[0-9]{1,32}$")):
         try:
-            state, url = service.begin(request.headers.get("origin", service.web_origin))
+            state, url = service.begin(request.headers.get("origin", service.web_origin), page_id)
             response = JSONResponse({"url": url})
             response.set_cookie(
                 "instagram_oauth_state",
@@ -56,12 +56,12 @@ def create_instagram_router(service):
         return response
 
     @router.post("/disconnect")
-    def disconnect():
-        return call(service.disconnect)
+    def disconnect(account_id: str | None = Query(None, pattern=r"^[0-9a-f]{64}$")):
+        return call(service.disconnect, account_id)
 
     @router.get("/creator")
-    def creator():
-        return call(service.creator)
+    def creator(account_id: str | None = Query(None, pattern=r"^[0-9a-f]{64}$")):
+        return call(service.creator, account_id)
 
     @router.get("/exports/{export_id}")
     def export(export_id: UUID):

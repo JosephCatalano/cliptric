@@ -25,7 +25,20 @@ class HighlightCancelled(Exception):
     pass
 
 
+class SourceRange(BaseModel):
+    model_config = ConfigDict(extra="forbid", allow_inf_nan=False, frozen=True)
+    start: float = Field(ge=0, le=MAX_MEDIA_SECONDS, strict=True)
+    end: float = Field(gt=0, le=MAX_MEDIA_SECONDS, strict=True)
+
+    @model_validator(mode="after")
+    def ordered(self):
+        if self.end <= self.start:
+            raise ValueError("Source range end must be after its start.")
+        return self
+
+
 class HighlightRequest(BaseModel):
+    excluded_ranges: list[SourceRange] = Field(default_factory=list, max_length=5000)
     ai_instructions: AIInstructions = ""
     quality_mode: bool = Field(default=False, strict=True)
     model_config = ConfigDict(extra="forbid", allow_inf_nan=False)

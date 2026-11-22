@@ -14,6 +14,7 @@ from uuid import UUID
 
 from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
 
+from .social_accounts import Accounts
 from .storage import now
 from .tiktok_api import CALLBACK_PATH, TikTokAPI, TikTokError, chunk_plan, protect_tokens
 from .transcription_store import TranscriptStore
@@ -100,6 +101,7 @@ class TikTok:
         self.store, self.media, self.settings, self.web_origin = store, media, settings, web_origin
         self.api = api or TikTokAPI(settings)
         self.protector = protector
+        self.accounts = Accounts(store, "tiktok_account", "client_key", TikTokError)
         self.lock = threading.RLock()
         self.pending = {}
         self.pool = ThreadPoolExecutor(max_workers=1, thread_name_prefix="tiktok")
@@ -129,6 +131,8 @@ class TikTok:
                 job.error = "Local processing was interrupted. Check TikTok status before making another attempt."
                 self._save(job, db=db)
 
+        self.accounts.initialize()
+
     def _configured(self):
         if not self.settings.client_key or not self.settings.client_secret:
             raise TikTokError(
@@ -139,18 +143,15 @@ class TikTok:
             raise TikTokError("Local TikTok credential storage currently requires Windows.", 503)
 
     def status(self):
-        with self.lock, self.store.connection() as db:
-            row = db.execute(
-                "SELECT account_id,client_key FROM tiktok_account WHERE id=1"
-            ).fetchone()
+        with self.lock:
+            accounts = self.accounts.list(self.settings.client_key)
             return {
                 "configured": bool(
                     self.settings.client_key and self.settings.client_secret and os.name == "nt"
                 ),
-                "connected": bool(row and row["client_key"] == self.settings.client_key),
-                "account_id": row["account_id"]
-                if row and row["client_key"] == self.settings.client_key
-                else None,
+                "connected": bool(accounts),
+                "account_id": accounts[0]["account_id"] if len(accounts) == 1 else None,
+                "accounts": accounts,
                 "audited": self.settings.audited,
             }
 
@@ -166,10 +167,6 @@ class TikTok:
             self.pending = {
                 key: item for key, item in self.pending.items() if item[0] > time.monotonic()
             }
-            if self.status()["connected"]:
-                raise TikTokError(
-                    "Disconnect the current TikTok account before connecting another.", 409
-                )
             if len(self.pending) >= 4:
                 raise TikTokError(
                     "Too many connection attempts. Wait ten minutes and try again.", 429
@@ -200,8 +197,6 @@ class TikTok:
                 )
             if denied or not code:
                 return pending[3] + "/connections?tiktok=cancelled"
-            if self.status()["connected"]:
-                raise TikTokError("An account is already connected. Disconnect it first.", 409)
             response = self.api.token(
                 grant_type="authorization_code",
                 code=code,
@@ -237,17 +232,12 @@ class TikTok:
         except (KeyError, ValueError, TypeError) as exc:
             raise TikTokError("TikTok returned invalid account credentials. Reconnect.") from exc
         encrypted = self.protector(record.model_dump_json().encode())
-        with self.store.connection() as db:
-            db.execute(
-                "INSERT OR REPLACE INTO tiktok_account VALUES (1,?,?,?)",
-                (self.settings.client_key, account, encrypted),
-            )
+        self.accounts.save(self.settings.client_key, account, encrypted)
         return record, account
 
-    def _stored_token(self):
+    def _stored_token(self, account_id=None):
         self._configured()
-        with self.store.connection() as db:
-            row = db.execute("SELECT * FROM tiktok_account WHERE id=1").fetchone()
+        row = self.accounts.get(self.settings.client_key, account_id)
         if not row or row["client_key"] != self.settings.client_key:
             raise TikTokError("Connect your TikTok account first.", 409)
         try:
@@ -260,8 +250,8 @@ class TikTok:
             ) from exc
         return record, row["account_id"]
 
-    def _token(self):
-        record, account = self._stored_token()
+    def _token(self, account_id=None):
+        record, account = self._stored_token(account_id)
         if record.refresh_expires_at <= time.time():
             raise TikTokError(
                 "TikTok authorization expired. Disconnect and reconnect your account.", 409
@@ -273,9 +263,9 @@ class TikTok:
             )
         return record, account
 
-    def creator(self):
+    def creator(self, account_id=None):
         with self.lock:
-            token, account = self._token()
+            token, account = self._token(account_id)
             if "video.publish" not in token.scope.split(","):
                 raise TikTokError("Reconnect and authorize TikTok's video.publish permission.", 409)
             response = self.api.request(
@@ -285,17 +275,21 @@ class TikTok:
                 creator = Creator.model_validate(response["data"])
             except (KeyError, ValueError) as exc:
                 raise TikTokError("TikTok returned invalid creator settings.") from exc
+            self.accounts.label(
+                account, f"{creator.creator_nickname} (@{creator.creator_username})"
+            )
             return {**creator.model_dump(), "account_id": account, "audited": self.settings.audited}
 
-    def disconnect(self):
+    def disconnect(self, account_id=None):
         with self.lock:
+            account_id = self.accounts.get(self.settings.client_key, account_id)["account_id"]
             if self.active is not None and not self.active.done():
                 raise TikTokError(
                     "Wait for the active TikTok upload to stop before disconnecting.", 409
                 )
             warning = None
             try:
-                token, _ = self._stored_token()
+                token, _ = self._stored_token(account_id)
                 self.api.request(
                     "/v2/oauth/revoke/",
                     form={
@@ -306,8 +300,7 @@ class TikTok:
                 )
             except TikTokError:
                 warning = "Local credentials were removed, but TikTok could not confirm revocation. Remove this app in TikTok's connected-app settings."
-            with self.store.connection() as db:
-                db.execute("DELETE FROM tiktok_account WHERE id=1")
+            self.accounts.delete(self.settings.client_key, account_id)
             self.pending.clear()
         return {"connected": False, "warning": warning}
 
@@ -368,7 +361,7 @@ class TikTok:
         return [PostJob.model_validate_json(row[0]) for row in rows]
 
     def validate_post(self, request):
-        creator = self.creator()
+        creator = self.creator(request.account_id)
         if creator["account_id"] != request.account_id:
             raise TikTokError("The destination account changed. Review the post again.", 409)
         clip, path = self.export(str(request.export_id))
@@ -379,7 +372,9 @@ class TikTok:
         if not self.settings.audited and request.privacy != "SELF_ONLY":
             raise TikTokError("Unaudited apps can post with Only me visibility only.", 422)
         if not self.settings.audited and "PUBLIC_TO_EVERYONE" in creator["privacy_level_options"]:
-            raise TikTokError("TikTok requires a private account when testing an unaudited app.", 422)
+            raise TikTokError(
+                "TikTok requires a private account when testing an unaudited app.", 422
+            )
         for option, blocked in (
             ("allow_comments", "comment_disabled"),
             ("allow_duet", "duet_disabled"),
@@ -387,7 +382,8 @@ class TikTok:
         ):
             if getattr(request, option) and creator[blocked]:
                 raise TikTokError(
-                    "An interaction is disabled by this TikTok account. Review its latest settings.", 409
+                    "An interaction is disabled by this TikTok account. Review its latest settings.",
+                    409,
                 )
         return clip, path
 
@@ -441,7 +437,7 @@ class TikTok:
         job = self.get(identifier)
         try:
             with self.lock:
-                token, account = self._token()
+                token, account = self._token(job.account_id)
                 if account != job.account_id:
                     raise TikTokError("The destination account changed before upload.")
                 clip, path = self.export(job.export_id)
@@ -537,7 +533,7 @@ class TikTok:
             if time.monotonic() - self.last_status_check < 3:
                 return job
             self.last_status_check = time.monotonic()
-            token, account = self._token()
+            token, account = self._token(job.account_id)
             if account != job.account_id:
                 raise TikTokError(
                     "Reconnect the original destination account to check this post.", 409

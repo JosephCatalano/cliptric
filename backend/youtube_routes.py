@@ -56,12 +56,12 @@ def create_youtube_publishing_router(service):
         return response
 
     @router.post("/disconnect")
-    def disconnect():
-        return call(service.disconnect)
+    def disconnect(account_id: str | None = Query(None, pattern=r"^[0-9a-f]{64}$")):
+        return call(service.disconnect, account_id)
 
     @router.get("/creator")
-    def creator():
-        return call(service.creator)
+    def creator(account_id: str | None = Query(None, pattern=r"^[0-9a-f]{64}$")):
+        return call(service.creator, account_id)
 
     @router.get("/exports/{export_id}")
     def export(export_id: UUID):

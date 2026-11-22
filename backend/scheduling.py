@@ -10,6 +10,10 @@ from uuid import UUID
 from fastapi import APIRouter, HTTPException, Query
 from pydantic import AwareDatetime, BaseModel, ConfigDict, Field
 
+from .instagram import ReelRequest
+from .instagram_api import InstagramError
+from .social_publishing import SocialRequest
+from .social_transport import SocialError
 from .tiktok import PostRequest
 from .tiktok_api import TikTokError
 from .youtube_api import YouTubeError
@@ -30,16 +34,49 @@ class YouTubeSchedule(BaseModel):
     request: UploadRequest
 
 
+class InstagramSchedule(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+    platform: Literal["instagram"]
+    request: ReelRequest
+
+
+class XSchedule(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+    platform: Literal["x"]
+    request: SocialRequest
+
+
+class FacebookSchedule(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+    platform: Literal["facebook"]
+    request: SocialRequest
+
+
+POST_TABLES = {
+    "tiktok": "tiktok_posts",
+    "youtube": "youtube_uploads",
+    "instagram": "instagram_posts",
+    "x": "x_posts",
+    "facebook": "facebook_posts",
+}
+PUBLISHING_ERRORS = (TikTokError, YouTubeError, InstagramError, SocialError)
+
+
 class ScheduleRequest(BaseModel):
     model_config = ConfigDict(extra="forbid")
     scheduled_at: AwareDatetime
-    post: Annotated[TikTokSchedule | YouTubeSchedule, Field(discriminator="platform")]
+    post: Annotated[
+        TikTokSchedule | YouTubeSchedule | InstagramSchedule | XSchedule | FacebookSchedule,
+        Field(discriminator="platform"),
+    ]
 
 
 class Scheduler:
-    def __init__(self, store, tiktok, youtube):
+    def __init__(self, store, tiktok, youtube, **publishers):
         self.store = store
-        self.services = {"tiktok": tiktok, "youtube": youtube}
+        self.services = {"tiktok": tiktok, "youtube": youtube, **publishers}
+        if not self.services.keys() <= POST_TABLES.keys():
+            raise ValueError("Unsupported scheduling platform")
         self.stop = threading.Event()
         self.lock = threading.Lock()
         self.thread = None
@@ -107,7 +144,9 @@ class Scheduler:
                 raise HTTPException(
                     422, "Choose a time at least one minute ahead and within one year."
                 )
-            service = self.services[payload.post.platform]
+            service = self.services.get(payload.post.platform)
+            if service is None:
+                raise HTTPException(503, "This publishing platform is unavailable.")
             validated = service.validate_post(request)
             digest = self.digest(validated[-1])
             with self.store.connection() as db:
@@ -120,7 +159,7 @@ class Scheduler:
                     raise HTTPException(
                         409, "This export already has a scheduled post. Check the calendar."
                     )
-                table = "tiktok_posts" if payload.post.platform == "tiktok" else "youtube_uploads"
+                table = POST_TABLES[payload.post.platform]
                 if db.execute(
                     f"SELECT 1 FROM {table} WHERE export_id=? AND account_id=? AND status!='failed'",
                     (str(request.export_id), request.account_id),
@@ -156,7 +195,7 @@ class Scheduler:
             raise HTTPException(422, "Choose a calendar range of up to 62 days.")
         with self.store.connection() as db:
             rows = db.execute(
-                "SELECT id,platform,export_id,scheduled_at,status,error,payload FROM scheduled_posts WHERE scheduled_at>=? AND scheduled_at<? ORDER BY scheduled_at",
+                "SELECT id,platform,export_id,account_id,scheduled_at,status,error,payload FROM scheduled_posts WHERE scheduled_at>=? AND scheduled_at<? ORDER BY scheduled_at",
                 (
                     start.astimezone(timezone.utc).isoformat(),
                     end.astimezone(timezone.utc).isoformat(),
@@ -170,7 +209,7 @@ class Scheduler:
             item["title"] = (
                 request.title
                 if isinstance(request, UploadRequest)
-                else request.caption or "TikTok post"
+                else request.caption or f"{payload.post.platform} post"
             )
             results.append(item)
         return results
@@ -192,7 +231,8 @@ class Scheduler:
         with self.lock, self.store.connection() as db:
             db.execute("BEGIN IMMEDIATE")
             # Reconcile durable local handoffs without repeating remote requests.
-            for platform, table in (("tiktok", "tiktok_posts"), ("youtube", "youtube_uploads")):
+            for platform in self.services:
+                table = POST_TABLES[platform]
                 db.execute(
                     f"UPDATE scheduled_posts SET status='failed',error=? WHERE platform=? "
                     f"AND status IN ('submitted','unknown') AND EXISTS "
@@ -231,7 +271,7 @@ class Scheduler:
                         409, "The approved video changed. Review and schedule it again."
                     )
                 service.submit(payload.post.request)
-        except (TikTokError, YouTubeError, HTTPException) as exc:
+        except (*PUBLISHING_ERRORS, HTTPException) as exc:
             status, error = (
                 "failed",
                 str(exc.detail) if isinstance(exc, HTTPException) else str(exc),
@@ -278,7 +318,7 @@ def create_scheduling_router(service):
     def create(payload: ScheduleRequest):
         try:
             return service.create(payload)
-        except (TikTokError, YouTubeError) as exc:
+        except PUBLISHING_ERRORS as exc:
             raise HTTPException(exc.status_code, str(exc)) from exc
 
     @router.post("/{identifier}/cancel")

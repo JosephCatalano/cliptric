@@ -539,6 +539,7 @@ def test_application_initializes_and_closes_publisher_without_credentials(tmp_pa
             "configured": False,
             "connected": False,
             "account_id": None,
+            "accounts": [],
         }
         assert client.post("/api/youtube-publishing/connect").status_code == 503
         assert client.get("/api/tiktok").status_code == 200
@@ -643,3 +644,21 @@ def test_exact_caption_warning_available_before_approval(integration):
         response.status_code == 200
         and response.json()["caption_warning"] == "Explicit timing fixture warning"
     )
+
+
+def test_multiple_channels_preserve_approved_destination_and_local_disconnect(integration):
+    service, state, export_id, _ = integration
+    first = connected(service)
+    request = upload_request(service, export_id)
+    record, _ = service._stored_token(first)
+    second_record = record.model_copy(deep=True)
+    second_record.channel.id = "UC_second_fixture"
+    _, second = service._store_token(token_response(), previous=second_record)
+    assert service.status()["account_id"] is None
+    with pytest.raises(YouTubeError, match="Choose"):
+        service.creator()
+    job = finish(service, request)
+    assert job.account_id == first and job.status != "failed", job.error
+    service.disconnect(first)
+    assert service.status()["account_id"] == second
+    assert not any(path == "/revoke" for _, path, _ in state["calls"])

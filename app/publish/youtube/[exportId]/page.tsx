@@ -1,18 +1,20 @@
-import { YouTubeComposer } from "../../../components/youtube-composer";
+import { PublishReview } from "../../../components/publish-review";
 
-export default async function YouTubePage({
+export default async function PublishPage({
   params,
   searchParams,
 }: {
   params: Promise<{ exportId: string }>;
-  searchParams: Promise<{ at?: string }>;
+  searchParams: Promise<{ at?: string; account_id?: string }>;
 }) {
   const { exportId } = await params;
-  const { at } = await searchParams;
+  const { at, account_id } = await searchParams;
   return (
-    <YouTubeComposer
+    <PublishReview
+      platform="youtube"
       exportId={exportId}
       scheduledAt={typeof at === "string" ? at : ""}
+      initialAccount={typeof account_id === "string" ? account_id : ""}
     />
   );
 }

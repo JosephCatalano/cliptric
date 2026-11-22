@@ -1,6 +1,8 @@
 "use client";
 import { useRouter } from "next/navigation";
 import { DeleteAction } from "./delete-action";
+import { PostedCheckbox } from "./posted-checkbox";
+import { MoreClips } from "./more-clips";
 import {
   Card,
   CardHeader,
@@ -247,6 +249,15 @@ export function ProjectResults({ id }: { id: string }) {
               </AccordionContent>
             </AccordionItem>
           </Accordion>
+          {project.recording_id &&
+          !project.recording_ids?.length &&
+          project.selection_complete ? (
+            <MoreClips
+              key={project.id}
+              projectId={project.id}
+              disabled={running || busy}
+            />
+          ) : null}
           <div className="project-actions">
             {running ? (
               <Button
@@ -386,6 +397,19 @@ export function ProjectResults({ id }: { id: string }) {
                 project={project}
                 item={item}
                 locked={running || busy}
+                onPosted={(posted) => {
+                  setProject((previous) =>
+                    previous
+                      ? {
+                          ...previous,
+                          items: previous.items.map((value) =>
+                            value.id === item.id ? { ...value, posted } : value,
+                          ),
+                        }
+                      : previous,
+                  );
+                  setRefresh((value) => value + 1);
+                }}
                 onDeleted={() => {
                   setProject({
                     ...project,
@@ -430,6 +454,7 @@ function ClipCard({
   onSelect,
   onSaved,
   onDeleted,
+  onPosted,
 }: {
   project: Project;
   item: ProjectItem;
@@ -438,6 +463,7 @@ function ClipCard({
   onSelect(value: boolean): void;
   onSaved(value: Project): void;
   onDeleted(): void;
+  onPosted(posted: boolean): void;
 }) {
   const project: Project = item.recording_id
     ? {
@@ -592,6 +618,13 @@ function ClipCard({
         <CardDescription>Review: {item.review}</CardDescription>
       </CardHeader>
       <CardContent className="project-card-body">
+        <PostedCheckbox
+          path={`/api/projects/${project.id}/clips/${item.id}/posted`}
+          checked={item.posted}
+          disabled={locked || saving}
+          title={item.title}
+          onSaved={onPosted}
+        />
         {item.presentation_summary && (
           <Accordion type="single" collapsible>
             <AccordionItem value="presentation">
@@ -720,6 +753,14 @@ function ClipCard({
               <Button asChild variant="outline">
                 <Link href={`/publish/instagram/${item.export!.id}`}>
                   Upload Instagram Reel
+                </Link>
+              </Button>
+              <Button asChild variant="outline">
+                <Link href={`/publish/x/${item.export!.id}`}>Post to X</Link>
+              </Button>
+              <Button asChild variant="outline">
+                <Link href={`/publish/facebook/${item.export!.id}`}>
+                  Post Facebook Reel
                 </Link>
               </Button>
             </>

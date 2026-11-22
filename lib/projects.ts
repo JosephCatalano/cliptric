@@ -129,6 +129,7 @@ export type TextOverlay = {
   style: "card" | "outline" | "violet";
 };
 export type ProjectItem = {
+  posted?: boolean;
   presentation_complete?: boolean;
   presentation_summary?: string | null;
   presentation_warnings?: string[];
@@ -190,6 +191,8 @@ export type ProjectItem = {
   } | null;
 };
 export type Project = {
+  parent_project_id?: string | null;
+  avoid_used_clips?: boolean;
   recording_ids?: string[];
   generate_titles?: boolean;
   transcription_id: string | null;

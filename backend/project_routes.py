@@ -11,7 +11,15 @@ from fastapi.responses import FileResponse, StreamingResponse
 from starlette.types import Receive, Scope, Send
 
 from .files import require_space
-from .project_models import ACTIVE, ItemEdit, Project, ProjectCreate, ResumeRequest
+from .project_models import (
+    ACTIVE,
+    ItemEdit,
+    MoreClipsRequest,
+    PostedUpdate,
+    Project,
+    ProjectCreate,
+    ResumeRequest,
+)
 from .projects import Projects
 
 MAX_BUNDLE_BYTES = 2 * 1024**3
@@ -57,6 +65,10 @@ def create_project_router(manager: Projects):
     def cancel(identifier: UUID):
         return manager.cancel(str(identifier))
 
+    @router.post("/api/projects/{identifier}/more-clips", response_model=Project, status_code=202)
+    def more_clips(identifier: UUID, request: MoreClipsRequest):
+        return manager.more_clips(str(identifier), request)
+
     @router.get("/api/projects/{identifier}/clips/{item_id}/hooks")
     def hooks(identifier: UUID, item_id: UUID):
         return manager.hooks(str(identifier), str(item_id))
@@ -66,6 +78,11 @@ def create_project_router(manager: Projects):
     )
     def edit(identifier: UUID, item_id: UUID, request: ItemEdit):
         return manager.edit(str(identifier), str(item_id), request)
+
+    @router.patch("/api/projects/{identifier}/clips/{item_id}/posted", response_model=PostedUpdate)
+    def posted(identifier: UUID, item_id: UUID, request: PostedUpdate):
+        manager.set_posted(str(identifier), str(item_id), request.posted)
+        return request
 
     @router.get("/api/projects/{identifier}/thumbnail")
     def thumbnail(identifier: UUID, item_id: UUID | None = None, download: bool = False):

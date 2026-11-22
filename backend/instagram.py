@@ -15,6 +15,7 @@ from pydantic import BaseModel, ConfigDict, Field, field_validator
 
 from .instagram_api import CALLBACK_PATH, InstagramAPI, InstagramError, meta_id
 from .media import MediaError
+from .social_accounts import Accounts
 from .social_security import CredentialError, protect_secret
 from .storage import now
 from .transcription_store import TranscriptStore
@@ -76,6 +77,7 @@ class Instagram:
     def __init__(self, store, media, settings, web_origin, *, api=None, protector=protect_secret):
         self.store, self.media, self.settings, self.web_origin = store, media, settings, web_origin
         self.api, self.protector = api or InstagramAPI(settings), protector
+        self.accounts = Accounts(store, "instagram_account", "config", InstagramError)
         self.lock, self.stop = threading.RLock(), threading.Event()
         self.pool = ThreadPoolExecutor(max_workers=1, thread_name_prefix="instagram")
         self.active, self.pending = None, {}
@@ -101,27 +103,30 @@ class Instagram:
                 job.error = "Local processing was interrupted. Check saved Instagram status before retrying."
                 self._save(job, db)
 
+        self.accounts.initialize()
+        with self.store.connection() as db:
+            db.execute(
+                "UPDATE instagram_account SET config=? WHERE config=?",
+                (self.config, f"{self.config}:{self.settings.page_id}"),
+            )
+
     @property
     def config(self):
-        return f"{self.settings.app_id}:{self.settings.login_config_id}:{self.settings.page_id}"
+        return f"{self.settings.app_id}:{self.settings.login_config_id}"
 
     def status(self):
-        configured = bool(
-            os.name == "nt"
-            and self.settings.app_id
-            and self.settings.app_secret
-            and self.settings.login_config_id
-            and self.settings.page_id
-        )
-        with self.lock, self.store.connection() as db:
-            row = db.execute(
-                "SELECT config,account_id FROM instagram_account WHERE id=1"
-            ).fetchone()
-            connected = bool(row and row["config"] == self.config)
+        with self.lock:
+            accounts = self.accounts.list(self.config)
             return {
-                "configured": configured,
-                "connected": connected,
-                "account_id": row["account_id"] if connected else None,
+                "configured": bool(
+                    self.settings.app_id
+                    and self.settings.app_secret
+                    and self.settings.login_config_id
+                    and os.name == "nt"
+                ),
+                "connected": bool(accounts),
+                "account_id": accounts[0]["account_id"] if len(accounts) == 1 else None,
+                "accounts": accounts,
             }
 
     def _configured(self):
@@ -131,21 +136,25 @@ class Instagram:
                 503,
             )
 
-    def begin(self, origin):
+    def begin(self, origin, page_id=None):
         self._configured()
         if origin not in {self.web_origin, self.web_origin.replace("127.0.0.1", "localhost")}:
             raise InstagramError("Start the connection from the local app.", 403)
+        page_id = page_id or self.settings.page_id
+        if not page_id:
+            raise InstagramError(
+                "Enter the Facebook Page ID linked to this Instagram account.", 422
+            )
+        meta_id(page_id)
         redirect = f"http://{urlsplit(origin).hostname}:8765{CALLBACK_PATH}"
         with self.lock:
             self.pending = {
                 key: value for key, value in self.pending.items() if value[0] > time.monotonic()
             }
-            if self.status()["connected"]:
-                raise InstagramError("Disconnect Instagram before connecting another account.", 409)
             if len(self.pending) >= 4:
                 raise InstagramError("Wait ten minutes before another connection attempt.", 429)
             state = secrets.token_urlsafe(32)
-            self.pending[state] = (time.monotonic() + 600, redirect, origin)
+            self.pending[state] = (time.monotonic() + 600, redirect, origin, page_id)
         return state, f"https://www.facebook.com/{self.settings.version}/dialog/oauth?" + urlencode(
             {
                 "client_id": self.settings.app_id,
@@ -168,8 +177,6 @@ class Instagram:
                 raise InstagramError("Instagram connection expired or was already used.", 400)
             if denied or not code:
                 return pending[2] + "/connections?instagram=cancelled"
-            if self.status()["connected"]:
-                raise InstagramError("An Instagram account is already connected.", 409)
             result = self.api.exchange(code, pending[1])
             token = result.get("access_token")
             if not isinstance(token, str) or not 1 <= len(token) <= 8192:
@@ -192,7 +199,7 @@ class Instagram:
             ):
                 raise InstagramError("Meta did not return valid long-lived credentials.")
             page = self.api.request(
-                self.settings.page_id,
+                pending[3],
                 token=token,
                 params={
                     "fields": "access_token,instagram_business_account{id,username}",
@@ -216,17 +223,14 @@ class Instagram:
                 encrypted = self.protector(record.model_dump_json().encode())
             except (CredentialError, OSError) as exc:
                 raise InstagramError("Could not protect Instagram credentials.", 503) from exc
-            with self.store.connection() as db:
-                db.execute(
-                    "INSERT OR REPLACE INTO instagram_account VALUES (1,?,?,?)",
-                    (self.config, account, encrypted),
-                )
+            username = page["instagram_business_account"].get("username")
+            label = "@" + username if isinstance(username, str) and 0 < len(username) < 300 else ""
+            self.accounts.save(self.config, account, encrypted, label)
             return pending[2] + "/connections?instagram=connected"
 
-    def _token(self):
+    def _token(self, account_id=None):
         self._configured()
-        with self.store.connection() as db:
-            row = db.execute("SELECT * FROM instagram_account WHERE id=1").fetchone()
+        row = self.accounts.get(self.config, account_id)
         if not row or row["config"] != self.config:
             raise InstagramError("Connect Instagram first.", 409)
         try:
@@ -241,9 +245,9 @@ class Instagram:
             raise InstagramError("Instagram authorization expired. Disconnect and reconnect.", 409)
         return record, row["account_id"]
 
-    def creator(self):
+    def creator(self, account_id=None):
         with self.lock:
-            token, account = self._token()
+            token, account = self._token(account_id)
             profile = self.api.request(
                 token.instagram_id, token=token.access_token, params={"fields": "id,username"}
             )
@@ -251,16 +255,17 @@ class Instagram:
                 profile.get("username"), str
             ):
                 raise InstagramError("Instagram returned an invalid account profile.")
+            self.accounts.label(account, "@" + profile["username"])
             return {"account_id": account, "username": profile["username"]}
 
-    def disconnect(self):
+    def disconnect(self, account_id=None):
         with self.lock:
+            account_id = self.accounts.get(self.config, account_id)["account_id"]
             if self.active and not self.active.done():
                 raise InstagramError(
                     "Wait for the active Reel upload to finish before disconnecting.", 409
                 )
-            with self.store.connection() as db:
-                db.execute("DELETE FROM instagram_account WHERE id=1")
+            self.accounts.delete(self.config, account_id)
             self.pending.clear()
         return {
             "connected": False,
@@ -355,6 +360,11 @@ class Instagram:
         with path.open("rb") as stream:
             return hashlib.file_digest(stream, "sha256").hexdigest()
 
+    def validate_post(self, request):
+        creator = self.creator(request.account_id)
+        clip, path, _ = self.export(str(request.export_id))
+        return creator, clip, path
+
     def submit(self, request):
         with self.lock:
             with self.store.connection() as db:
@@ -380,11 +390,7 @@ class Instagram:
                 raise InstagramError(
                     "Another Instagram upload is active. Wait for it to finish.", 409
                 )
-            if self.creator()["account_id"] != request.account_id:
-                raise InstagramError(
-                    "The Instagram destination changed. Review the post again.", 409
-                )
-            clip, path, _ = self.export(str(request.export_id))
+            _, clip, path = self.validate_post(request)
             job = ReelJob(
                 id=str(request.id),
                 export_id=str(request.export_id),
@@ -402,7 +408,7 @@ class Instagram:
     def _run(self, identifier):
         job = self.get(identifier)
         try:
-            token, account = self._token()
+            token, account = self._token(job.account_id)
             _, path, _ = self.export(job.export_id)
             if account != job.account_id or self.checksum(path) != job.sha256:
                 raise InstagramError("The approved account or exported video changed.", 409)
@@ -493,7 +499,7 @@ class Instagram:
             job = self.get(identifier)
             if job.status != "unknown" or not job.container_id:
                 return job
-            token, account = self._token()
+            token, account = self._token(job.account_id)
             if account != job.account_id:
                 raise InstagramError(
                     "Reconnect the original Instagram account to check this post.", 409

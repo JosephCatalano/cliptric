@@ -18,6 +18,7 @@ from .caption_styles import CaptionStyles, create_caption_style_router
 from .captions import CaptionError, build_cues
 from .config import Settings
 from .deletion import Deletions
+from .facebook_api import FacebookAPI
 from .files import remove_artifact, require_space
 from .highlight_provider import OpenAIHighlights
 from .highlights import Highlights, create_highlight_router
@@ -29,15 +30,20 @@ from .jobs import ExportBusy, Jobs
 from .media import Media, MediaError
 from .models import Clip, ExportRequest, Recording, SelectionDraft
 from .previews import Previews, create_preview_router
+from .project_models import PostedUpdate
 from .project_routes import create_project_router
 from .projects import Projects
 from .quality_analysis import QualityAnalysis, create_quality_router
 from .scheduling import Scheduler, create_scheduling_router
+from .social_publishing import SocialPublisher
+from .social_routes import create_social_router
+from .social_transport import SocialSettings, secure_social_logs
 from .storage import DraftConflict, Store, now
 from .tiktok import TikTok
 from .tiktok_api import TikTokSettings, secure_tiktok_logs
 from .tiktok_routes import create_tiktok_router
 from .transcription import Transcriptions, create_transcription_router
+from .x_api import XAPI
 from .youtube_api import YouTubeSettings, secure_youtube_logs
 from .youtube_imports import YouTubeImports, create_youtube_router
 from .youtube_publishing import YouTubePublishing
@@ -64,10 +70,25 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         store, media, YouTubeSettings.load(), settings.web_origin
     )
     secure_youtube_logs()
-    scheduler = Scheduler(store, tiktok, youtube_publishing)
     instagram = Instagram(store, media, InstagramSettings.load(), settings.web_origin)
     secure_instagram_logs()
-    deletions = Deletions(store, projects, jobs, scheduler, [tiktok, youtube_publishing, instagram])
+    x_publishing = SocialPublisher(
+        store, media, XAPI(SocialSettings.load("x")), settings.web_origin
+    )
+    facebook = SocialPublisher(
+        store, media, FacebookAPI(SocialSettings.load("facebook")), settings.web_origin
+    )
+    secure_social_logs()
+    scheduler = Scheduler(
+        store, tiktok, youtube_publishing, instagram=instagram, x=x_publishing, facebook=facebook
+    )
+    deletions = Deletions(
+        store,
+        projects,
+        jobs,
+        scheduler,
+        [tiktok, youtube_publishing, instagram, x_publishing, facebook],
+    )
     upload_lock = asyncio.Lock()
 
     @asynccontextmanager
@@ -86,8 +107,10 @@ def create_app(settings: Settings | None = None) -> FastAPI:
             caption_styles.initialize()
             tiktok.initialize()
             youtube_publishing.initialize()
-            scheduler.initialize()
             instagram.initialize()
+            x_publishing.initialize()
+            facebook.initialize()
+            scheduler.initialize()
             deletions.initialize()
             app.state.jobs = jobs
             app.state.transcriptions = transcriptions
@@ -97,6 +120,8 @@ def create_app(settings: Settings | None = None) -> FastAPI:
             app.state.tiktok = tiktok
             app.state.youtube_publishing = youtube_publishing
             app.state.instagram = instagram
+            app.state.x_publishing = x_publishing
+            app.state.facebook = facebook
             try:
                 scheduler.start()
                 yield
@@ -108,7 +133,13 @@ def create_app(settings: Settings | None = None) -> FastAPI:
                     try:
                         try:
                             try:
-                                await run_in_threadpool(instagram.close)
+                                try:
+                                    await run_in_threadpool(facebook.close)
+                                finally:
+                                    try:
+                                        await run_in_threadpool(x_publishing.close)
+                                    finally:
+                                        await run_in_threadpool(instagram.close)
                             finally:
                                 await run_in_threadpool(youtube_publishing.close)
                         finally:
@@ -144,6 +175,8 @@ def create_app(settings: Settings | None = None) -> FastAPI:
     app.include_router(create_youtube_publishing_router(youtube_publishing))
     app.include_router(create_scheduling_router(scheduler))
     app.include_router(create_instagram_router(instagram))
+    app.include_router(create_social_router(x_publishing))
+    app.include_router(create_social_router(facebook))
 
     @app.exception_handler(RequestValidationError)
     async def invalid_request(request: Request, exc: RequestValidationError):
@@ -372,6 +405,11 @@ def create_app(settings: Settings | None = None) -> FastAPI:
     @app.delete("/api/clips/{clip_id}")
     def delete_clip(clip_id: UUID):
         return deletions.delete(clip_id=str(clip_id))
+
+    @app.patch("/api/clips/{clip_id}/posted", response_model=PostedUpdate)
+    def set_export_posted(clip_id: UUID, request: PostedUpdate):
+        projects.set_export_posted(str(clip_id), request.posted)
+        return request
 
     @app.post("/api/clips/{clip_id}/cancel", response_model=Clip)
     def cancel_clip(clip_id: UUID):

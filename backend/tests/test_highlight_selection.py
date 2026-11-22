@@ -3,13 +3,19 @@ from uuid import uuid4
 import pytest
 from pydantic import ValidationError
 
-from backend.highlight_models import HighlightError, HighlightRequest, ProposedHighlights
+from backend.highlight_models import (
+    HighlightError,
+    HighlightRequest,
+    ProposedHighlights,
+    SourceRange,
+)
 from backend.highlight_selection import (
     Segment,
     build_segments,
     build_windows,
     ground_candidates,
     rank_unique,
+    unused_windows,
 )
 from backend.transcription_models import TranscriptWord
 
@@ -46,6 +52,40 @@ def test_segments_preserve_source_times_corrections_and_silence():
         build_segments(list(reversed(words)), 120)
     with pytest.raises(HighlightError):
         build_segments(words, 105)
+
+
+def test_exclusions_split_windows_even_across_a_silent_gap():
+    words = [
+        TranscriptWord(
+            id=i, start=float(i * 10), end=float(i * 10 + 9), text=f"Evidence {i}.", probability=0.9
+        )
+        for i in range(6)
+    ]
+    options = request(min_seconds=8, excluded_ranges=[SourceRange(start=19.5, end=20.0)])
+    windows = unused_windows(words, 60, options, 2, window_seconds=180)
+    assert [[s.id for s in window] for window in windows] == [[0, 1], [2, 3, 4, 5]]
+    with pytest.raises(HighlightError):
+        unused_windows(words, 60, options, 1, window_seconds=180)
+
+
+def test_candidate_cannot_bridge_a_used_interval():
+    window = [Segment(0, 0.0, 9.0, "A useful lesson."), Segment(1, 20.0, 29.0, "The ending.")]
+    grounded, rejected = ground_candidates(
+        ProposedHighlights(candidates=[proposal(last_segment=1)]),
+        window,
+        request(min_seconds=8, excluded_ranges=[SourceRange(start=10.0, end=20.0)]),
+        60,
+        str(uuid4()),
+    )
+    assert grounded == [] and rejected == 1
+
+
+@pytest.mark.parametrize(
+    "start,end", [(-1.0, 2.0), (2.0, 2.0), (3.0, 2.0), (float("nan"), 2.0), (1.0, float("inf"))]
+)
+def test_invalid_excluded_range_is_rejected(start, end):
+    with pytest.raises(ValidationError):
+        SourceRange(start=start, end=end)
 
 
 def test_longer_windows_support_multi_minute_candidates_without_losing_source_times():

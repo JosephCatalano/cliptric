@@ -55,6 +55,10 @@ class Store:
                 );
                 CREATE INDEX IF NOT EXISTS recordings_created ON recordings(created_at DESC, id DESC);
                 CREATE INDEX IF NOT EXISTS clips_recording_created ON clips(recording_id, created_at DESC, id DESC);
+                CREATE TABLE IF NOT EXISTS clip_posted (
+                    clip_id TEXT PRIMARY KEY REFERENCES clips(id) ON DELETE CASCADE,
+                    posted INTEGER NOT NULL CHECK(posted IN (0, 1))
+                );
             """)
             # Additive caption/draft and headline tables preserve the media library.
             db.executescript("""
@@ -192,7 +196,10 @@ class Store:
 
     def clip(self, clip_id: str) -> Clip | None:
         with self.connection() as db:
-            row = db.execute("SELECT * FROM clips WHERE id = ?", (clip_id,)).fetchone()
+            row = db.execute(
+                "SELECT clips.*, COALESCE(clip_posted.posted, 0) AS posted FROM clips LEFT JOIN clip_posted ON clip_posted.clip_id=clips.id WHERE clips.id = ?",
+                (clip_id,),
+            ).fetchone()
             return self._clip(db, row) if row else None
 
     @staticmethod
@@ -215,6 +222,7 @@ class Store:
         return Clip.model_validate(
             {
                 **dict(row),
+                "posted": bool(row["posted"]),
                 "captions": _caption_snapshot(caption[0] if caption else None),
                 "headline": _headline_snapshot(headline[0] if headline else None),
                 "overlays": json.loads(overlays[0]) if overlays else [],
@@ -229,6 +237,7 @@ class Store:
                 Clip.model_validate(
                     {
                         **dict(row),
+                        "posted": bool(row["posted"]),
                         "headline": _headline_snapshot(row["headline_options"]),
                         "split_layout": json.loads(row["framing_options"])
                         if row["framing_options"]
@@ -243,7 +252,8 @@ class Store:
                     }
                 )
                 for row in db.execute(
-                    "SELECT clips.*, clip_captions.options AS caption_options, clip_headlines.options AS headline_options, clip_overlays.options AS overlay_options, clip_framing.options AS framing_options, clip_quality.options AS quality_options FROM clips "
+                    "SELECT clips.*, COALESCE(clip_posted.posted, 0) AS posted, clip_captions.options AS caption_options, clip_headlines.options AS headline_options, clip_overlays.options AS overlay_options, clip_framing.options AS framing_options, clip_quality.options AS quality_options FROM clips "
+                    "LEFT JOIN clip_posted ON clips.id = clip_posted.clip_id "
                     "LEFT JOIN clip_captions ON clips.id = clip_captions.clip_id "
                     "LEFT JOIN clip_headlines ON clips.id = clip_headlines.clip_id "
                     "LEFT JOIN clip_overlays ON clips.id = clip_overlays.clip_id "
@@ -253,6 +263,12 @@ class Store:
                     (recording_id, limit, offset),
                 )
             ]
+
+    def set_posted(self, clip_id: str, posted: bool, *, db: sqlite3.Connection) -> None:
+        db.execute(
+            "INSERT INTO clip_posted VALUES (?,?) ON CONFLICT(clip_id) DO UPDATE SET posted=excluded.posted",
+            (clip_id, int(posted)),
+        )
 
     def update_clip(
         self,

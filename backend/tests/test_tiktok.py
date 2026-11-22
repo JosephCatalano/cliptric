@@ -425,3 +425,22 @@ def test_restart_before_media_transfer_allows_reviewed_new_attempt(integration):
     service.initialize()
     assert service.get(job.id).status == "failed" and not state["calls"]
     assert finish_upload(service, post_request(service, export_id)).status == "processing"
+
+
+def test_multiple_accounts_keep_approved_upload_destination(integration):
+    service, _, export_id, _ = integration
+    first = connected(service)
+    request = post_request(service, export_id)
+    _, second = service._store_token(
+        token_response(open_id="second-fixture-account", access_token="second-access")
+    )
+    assert service.status()["account_id"] is None
+    with pytest.raises(TikTokError, match="Choose"):
+        service.creator()
+    assert finish_upload(service, request).account_id == first
+    assert service.get(str(request.id)).status != "failed"
+    second_request = request.model_copy(update={"id": uuid4(), "account_id": second})
+    assert finish_upload(service, second_request).account_id == second
+    service.disconnect(first)
+    assert service.status()["account_id"] == second
+    assert service.creator(second)["account_id"] == second

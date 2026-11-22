@@ -32,12 +32,14 @@ import {
   EmptyDescription,
 } from "@/components/ui/empty";
 import { cn } from "@/lib/utils";
+import { platformNames, type Platform } from "@/lib/social";
 import { api, message } from "@/lib/client-api";
 
 type ScheduledPost = {
   id: string;
   export_id: string;
-  platform: "tiktok" | "youtube";
+  platform: Platform;
+  account_id: string;
   scheduled_at: string;
   status: string;
   error: string | null;
@@ -201,7 +203,7 @@ export function PostCalendar() {
         <div>
           <h1 className="text-2xl font-semibold tracking-tight">Calendar</h1>
           <p className="mt-1 text-sm text-muted-foreground">
-            Plan and schedule your TikTok posts and YouTube Shorts.
+            Plan and schedule posts for your connected accounts.
           </p>
         </div>
         <Button onClick={() => schedule()}>
@@ -361,7 +363,7 @@ export function PostCalendar() {
             <div className="flex min-w-0 flex-1 flex-col gap-1">
               <p className="truncate font-medium">{post.title}</p>
               <p className="text-sm text-muted-foreground">
-                {post.platform === "youtube" ? "YouTube" : "TikTok"} ·{" "}
+                {platformNames[post.platform]} ·{" "}
                 {new Date(post.scheduled_at).toLocaleString()}
               </p>
               <Badge
@@ -381,7 +383,9 @@ export function PostCalendar() {
             </div>
             <div className="flex gap-2">
               <Button asChild size="sm" variant="outline">
-                <Link href={`/publish/${post.platform}/${post.export_id}`}>
+                <Link
+                  href={`/publish/${post.platform}/${post.export_id}?${new URLSearchParams({ account_id: post.account_id })}`}
+                >
                   Publishing review
                 </Link>
               </Button>
@@ -430,6 +434,13 @@ export function PostCalendar() {
                     YouTube Shorts
                   </NativeSelectOption>
                   <NativeSelectOption value="tiktok">TikTok</NativeSelectOption>
+                  <NativeSelectOption value="instagram">
+                    Instagram
+                  </NativeSelectOption>
+                  <NativeSelectOption value="x">X</NativeSelectOption>
+                  <NativeSelectOption value="facebook">
+                    Facebook Page Reel
+                  </NativeSelectOption>
                 </NativeSelect>
               </Field>
               <Field>
