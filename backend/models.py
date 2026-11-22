@@ -86,6 +86,8 @@ class RenderPerformance(BaseModel):
 
 
 class Clip(BaseModel):
+    render_progress: float | None = None
+    progress_updated_at: str | None = None
     auto_layout: AutoLayoutPlan | None = None
     follow_plan: FollowPlan | None = None
     performance: RenderPerformance | None = None

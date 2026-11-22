@@ -1,6 +1,8 @@
 """Persistent, bounded local project workflow around the existing media services."""
 
 import asyncio
+import hashlib
+import json
 import logging
 import math
 import threading
@@ -15,7 +17,7 @@ from pydantic import ValidationError
 from .batch_review import MAX_REVIEW_BYTES, MAX_REVIEW_WORDS, BatchReview, MultiBatchReview
 from .batch_titles import BatchTitles
 from .caption_styles import BatchStyle
-from .editing import QualityOptions, mapped_overlays, retained_intervals
+from .editing import QualityOptions, mapped_overlays, mapped_words, retained_intervals
 from .files import remove_artifact
 from .headlines import HeadlineOptions
 from .highlight_models import ACTIVE as HIGHLIGHT_ACTIVE
@@ -43,6 +45,7 @@ from .project_models import (
     ResumeRequest,
 )
 from .project_store import ProjectStore
+from .social_copy import SocialCopyWriter
 from .storage import now
 from .transcription_models import ACTIVE_STATUSES, TranscriptionError
 from .youtube_imports import ACTIVE as DOWNLOAD_ACTIVE
@@ -61,6 +64,8 @@ class Projects:
         self.transcriptions, self.highlights, self.jobs = transcriptions, highlights, jobs
         self.youtube = youtube
         self.titles = BatchTitles(media.settings)
+        self.copy_writer = SocialCopyWriter(media.settings)
+        self.copy_active: set[tuple[str, str]] = set()
         self.batch_review = BatchReview(media.settings)
         self.batch_highlights = MultiBatchReview(media.settings)
         self.presentation = AutoPresentation(media)
@@ -99,6 +104,7 @@ class Projects:
                     elif download.total_bytes:
                         fraction = min(download.downloaded_bytes / download.total_bytes, 1)
                         project.progress = fraction * 0.25
+                        project.step_progress = fraction
                         project.stage = f"Downloading video: {fraction:.0%}"
                     else:
                         project.stage = (
@@ -116,15 +122,23 @@ class Projects:
                             f"Transcription: {transcription.status}, {transcription.progress:.0%}"
                         )
                         project.progress = 0.25 + 0.25 * transcription.progress
+                        project.step_progress = transcription.progress
                 if project.status == "analysing" and project.highlight_id:
                     analysis = self.highlights.results.job(project.highlight_id)
                     if analysis:
                         project.stage = f"AI analysis: {analysis.completed_windows} of {analysis.total_windows} windows completed"
                         if analysis.total_windows:
+                            project.step_progress = min(
+                                1, analysis.completed_windows / analysis.total_windows
+                            )
                             project.progress = 0.5 + 0.25 * min(
                                 analysis.completed_windows / analysis.total_windows, 1
                             )
                 for item in project.items:
+                    item.post_copy_stale = bool(
+                        (item.post_copy or item.post_copy_selected)
+                        and item.post_copy_source != self.copy_source(project, item)
+                    )
                     identifier = item.pending_export_id or item.export_id
                     item.export = self.store.clip(identifier) if identifier else None
                     if (
@@ -134,6 +148,24 @@ class Projects:
                     ):
                         item.export.status = "failed"
                         item.export.error = "The export file is missing. Resume to render it again."
+                active_export = next(
+                    (
+                        i.export
+                        for i in project.items
+                        if i.export and i.export.status in {"queued", "rendering", "cancelling"}
+                    ),
+                    None,
+                )
+                if active_export and project.status == "rendering":
+                    project.step_progress = active_export.render_progress
+                    project.step_updated_at = (
+                        active_export.progress_updated_at or project.step_updated_at
+                    )
+                    project.stage = (
+                        "Encoding video"
+                        if active_export.render_progress is not None
+                        else "Preparing export: layout, tracking, captions and audio"
+                    )
                 if project.status == "rendering" or (
                     project.recording_ids and project.status in ACTIVE
                 ):
@@ -215,6 +247,7 @@ class Projects:
                 if (
                     not source_matches
                     or existing.generate_titles != request.generate_titles
+                    or existing.generate_post_copy != request.generate_post_copy
                     or (existing.title, existing.settings)
                     != (
                         request.title,
@@ -243,6 +276,7 @@ class Projects:
                 raise HTTPException(422, "Analysis range exceeds the source duration.")
             self._capacity()
             project = Project(
+                generate_post_copy=request.generate_post_copy,
                 id=str(request.id),
                 recording_id=recording.id if request.recording_id else None,
                 youtube_source_id=str(request.youtube_source_id)
@@ -278,6 +312,7 @@ class Projects:
                 raise HTTPException(404, "The saved source video is unavailable.")
             self._capacity()
             project = Project(
+                generate_post_copy=source.generate_post_copy,
                 id=str(request.id),
                 parent_project_id=source.id,
                 avoid_used_clips=True,
@@ -322,6 +357,7 @@ class Projects:
             )
         self._capacity()
         project = Project(
+            generate_post_copy=request.generate_post_copy,
             id=str(request.id),
             title=request.title,
             created_at=now(),
@@ -666,6 +702,8 @@ class Projects:
         with self.lock:
             project = self._check(identifier)
             project.status, project.stage = status, text
+            project.step_progress = None
+            project.step_started_at = project.step_updated_at = now()
             project.progress = {
                 "downloading": 0,
                 "transcribing": 0.25,
@@ -1114,7 +1152,12 @@ class Projects:
                     item.analysis_error
                     or "The previous AI review outcome is unknown. Review manually or explicitly approve another analysis attempt.",
                 )
-            needs_transcript = item.caption_preset != "none" or needs_title or needs_review
+            needs_transcript = (
+                item.caption_preset != "none"
+                or needs_title
+                or needs_review
+                or project.generate_post_copy
+            )
             recording = self.store.recording(item.recording_id)
             if not recording:
                 raise HTTPException(404, "Supplied recording is missing.")
@@ -1392,6 +1435,114 @@ class Projects:
                 self.records.save(current)
             raise HTTPException(422, target.analysis_error) from exc
 
+    @staticmethod
+    def copy_source(project, item):
+        value = [
+            item.recording_id or project.recording_id,
+            item.transcription_id or project.transcription_id,
+            item.transcript_revision if project.recording_ids else project.transcript_revision,
+            float(item.start),
+            float(item.end),
+            [
+                [float(a), float(b)]
+                for a, b in retained_intervals(item.start, item.end, item.quality)
+            ],
+        ]
+        return hashlib.sha256(json.dumps(value, separators=(",", ":")).encode()).hexdigest()
+
+    def write_post_copy(self, identifier, item_id, request_id=None, revision=None):
+        key = (identifier, item_id)
+        with self.lock:
+            project = self.get(identifier, hydrate=False)
+            item = next((i for i in project.items if i.id == item_id), None)
+            if item is None:
+                raise HTTPException(404, "Project clip not found.")
+            if request_id:
+                if request_id in item.post_copy_requests:
+                    return self.get(identifier)
+                if project.status in ACTIVE or key in self.copy_active:
+                    raise HTTPException(409, "Wait for this clip's current processing to finish.")
+                if len(self.copy_active) >= 2:
+                    raise HTTPException(
+                        409,
+                        "Posting-copy generation is busy. Wait before starting another request.",
+                    )
+                if item.revision != revision:
+                    raise HTTPException(409, "Clip changed. Reload before generating copy.")
+                if len(item.post_copy_requests) >= 64:
+                    raise HTTPException(
+                        409, "This clip reached its copy-attempt limit. Edit posting text manually."
+                    )
+                item.post_copy_requests.append(request_id)
+            elif item.post_copy_attempted:
+                return
+            source_key = self.copy_source(project, item)
+            item.post_copy_attempted = True
+            item.post_copy_request_id = request_id
+            item.post_copy_error = (
+                "Posting copy outcome is unconfirmed. Check usage before explicitly retrying."
+            )
+            self.records.save(project)
+            self.copy_active.add(key)
+            recording_id = item.recording_id or project.recording_id
+            transcript_id = item.transcription_id or project.transcription_id
+            transcript_revision = (
+                item.transcript_revision if project.recording_ids else project.transcript_revision
+            )
+            start, end = item.start, item.end
+            kept = retained_intervals(start, end, item.quality)
+            instructions = project.settings.ai_instructions
+        try:
+            if not transcript_id or transcript_revision is None:
+                raise HighlightError(
+                    "No saved speech transcript is available. Add posting copy manually.", 422
+                )
+            words = self.transcriptions.export_words(
+                recording_id, transcript_id, transcript_revision, start, end
+            )
+            words = mapped_words(words, kept, start)
+            if not request_id:
+                self._stage(
+                    identifier, "rendering", f"Writing description and hashtags for {item.title}"
+                )
+            with self._timed(identifier, "ai"):
+                copy, inputs, outputs = asyncio.run(
+                    self.copy_writer.suggest(words, ai_instructions=instructions)
+                )
+            self.transcriptions.export_words(
+                recording_id, transcript_id, transcript_revision, start, end
+            )
+            with self.lock:
+                current = self.get(identifier, hydrate=False)
+                target = next((i for i in current.items if i.id == item_id), None)
+                if (
+                    target is None
+                    or self.copy_source(current, target) != source_key
+                    or current.status in {"cancelled", "cancelling"}
+                ):
+                    raise HighlightError(
+                        "Clip changed while generating posting copy. Review and regenerate explicitly.",
+                        409,
+                    )
+                target.post_copy = copy
+                target.post_copy_selected = None
+                target.revision += 1
+                target.post_copy_source = source_key
+                target.post_copy_input_tokens, target.post_copy_output_tokens = inputs, outputs
+                target.post_copy_error = None
+                self.records.save(current)
+        except (HighlightError, TranscriptionError) as exc:
+            with self.lock:
+                current = self.get(identifier, hydrate=False)
+                target = next((i for i in current.items if i.id == item_id), None)
+                if target:
+                    target.post_copy_error = str(exc)
+                    self.records.save(current)
+        finally:
+            with self.lock:
+                self.copy_active.discard(key)
+        return self.get(identifier)
+
     def _present(self, identifier: str, item_id: str):
         with self.lock:
             project = self._check(identifier)
@@ -1411,6 +1562,17 @@ class Projects:
                 else "auto"
             )
             self._stage(identifier, "rendering", f"Choosing presentation for {item.title}")
+
+        def visual_progress(done, total):
+            with self.lock:
+                current = self._check(identifier)
+                current.step_progress = done / max(1, total)
+                current.step_updated_at = now()
+                current.stage = (
+                    f"Choosing presentation: {done} of {total} frames checked for {item.title}"
+                )
+                self.records.save(current)
+
         plan = self.presentation.analyze(
             source,
             recording,
@@ -1421,6 +1583,7 @@ class Projects:
             item.headline_position,
             self.stop,
             lambda: self._check(identifier),
+            visual_progress,
         )
         with self.lock:
             project = self._check(identifier)
@@ -1541,8 +1704,13 @@ class Projects:
                             "rendering",
                             f"Rendering supplied clip {index} of {len(project.items)}",
                         )
+                    if self.get(identifier, hydrate=False).generate_post_copy:
+                        self.write_post_copy(identifier, item.id)
                     with self._timed(identifier, "visual"):
                         self._present(identifier, item.id)
+                    self._stage(
+                        identifier, "rendering", f"Rendering clip {index} of {len(project.items)}"
+                    )
                     with self._timed(identifier, "render"):
                         self._render(identifier, item.id)
                     with self._timed(identifier, "thumbnails"):

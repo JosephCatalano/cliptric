@@ -236,8 +236,9 @@ class AutoPresentation:
         headline_position: str,
         cancel,
         check: Callable[[], None],
+        progress=None,
     ):
-        samples, faces = self.sample(source, start, end, cancel, check)
+        samples, faces = self.sample(source, start, end, cancel, check, progress)
         return plan_frames(
             samples,
             faces,
@@ -250,7 +251,15 @@ class AutoPresentation:
             headline_position,
         )
 
-    def sample(self, source: Path, start: float, end: float, cancel, check: Callable[[], None]):
+    def sample(
+        self,
+        source: Path,
+        start: float,
+        end: float,
+        cancel,
+        check: Callable[[], None],
+        progress=None,
+    ):
         cv2.setNumThreads(1)
         cascade = cv2.CascadeClassifier(
             str(Path(cv2.data.haarcascades) / "haarcascade_frontalface_default.xml")
@@ -278,6 +287,8 @@ class AutoPresentation:
                 raise MediaError("Presentation scratch directory is outside local storage.")
             for index, at in enumerate(times):
                 check()
+                if progress:
+                    progress(index, len(times))
                 if time.monotonic() > deadline:
                     raise MediaError("Automatic presentation exceeded its local analysis budget.")
                 path = Path(temporary) / f"{index}.jpg"
@@ -289,4 +300,6 @@ class AutoPresentation:
                 samples.append((at, frame))
                 faces.append(face_boxes(frame, cascade))
         check()
+        if progress:
+            progress(len(times), len(times))
         return samples, faces

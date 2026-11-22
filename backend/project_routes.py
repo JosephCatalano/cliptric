@@ -9,6 +9,7 @@ from uuid import UUID
 
 from fastapi import APIRouter, HTTPException, Query
 from fastapi.responses import FileResponse, StreamingResponse
+from pydantic import BaseModel, ConfigDict, Field
 from starlette.types import Receive, Scope, Send
 
 from .files import require_space
@@ -22,6 +23,7 @@ from .project_models import (
     ResumeRequest,
 )
 from .projects import Projects
+from .social_copy import CopyOption
 
 MAX_BUNDLE_BYTES = 2 * 1024**3
 
@@ -37,6 +39,19 @@ class BundleResponse(StreamingResponse):
             await super().__call__(scope, receive, send)
         finally:
             self.cleanup()
+
+
+class CopyGenerate(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+    request_id: UUID
+    revision: int = Field(ge=0, strict=True)
+    consent: bool = Field(strict=True)
+
+
+class CopySave(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+    revision: int = Field(ge=0, strict=True)
+    content: CopyOption
 
 
 def create_project_router(manager: Projects):
@@ -94,6 +109,50 @@ def create_project_router(manager: Projects):
     def posted(identifier: UUID, item_id: UUID, request: PostedUpdate):
         manager.set_posted(str(identifier), str(item_id), request.posted)
         return request
+
+    @router.post("/api/projects/{identifier}/clips/{item_id}/post-copy", response_model=Project)
+    def generate_copy(identifier: UUID, item_id: UUID, request: CopyGenerate):
+        if not request.consent:
+            raise HTTPException(
+                422, "Approve sharing this clip transcript and billed AI usage first."
+            )
+        return manager.write_post_copy(
+            str(identifier), str(item_id), str(request.request_id), request.revision
+        )
+
+    @router.patch("/api/projects/{identifier}/clips/{item_id}/post-copy", response_model=Project)
+    def save_copy(identifier: UUID, item_id: UUID, request: CopySave):
+        with manager.lock:
+            project = manager.get(str(identifier), hydrate=False)
+            item = next((i for i in project.items if i.id == str(item_id)), None)
+            if item is None:
+                raise HTTPException(404, "Project clip not found.")
+            if project.status in ACTIVE or (str(identifier), str(item_id)) in manager.copy_active:
+                raise HTTPException(409, "Wait for processing before saving posting copy.")
+            if item.revision != request.revision:
+                raise HTTPException(409, "Clip changed. Reload before saving.")
+            item.post_copy_selected = request.content
+            item.post_copy_source = manager.copy_source(project, item)
+            item.post_copy_error = None
+            item.revision += 1
+            manager.records.save(project)
+        return manager.get(str(identifier))
+
+    @router.get("/api/clips/{export_id}/post-copy")
+    def export_copy(export_id: UUID):
+        with manager.store.connection() as db:
+            row = db.execute(
+                "SELECT payload FROM projects WHERE EXISTS (SELECT 1 FROM json_each(projects.payload,'$.items') AS item WHERE json_extract(item.value,'$.export_id')=?) LIMIT 1",
+                (str(export_id),),
+            ).fetchone()
+        if row is None:
+            return {"ready_to_post": None}
+        project = Project.model_validate_json(row[0])
+        item = next(i for i in project.items if i.export_id == str(export_id))
+        if item.post_copy_source != manager.copy_source(project, item):
+            return {"ready_to_post": None}
+        value = item.post_copy_selected or (item.post_copy.recommended if item.post_copy else None)
+        return {"ready_to_post": value.ready() if value else None}
 
     @router.get("/api/projects/{identifier}/thumbnail")
     def thumbnail(identifier: UUID, item_id: UUID | None = None, download: bool = False):

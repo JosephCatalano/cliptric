@@ -1,4 +1,5 @@
 "use client";
+import { SavedPostCopy } from "./saved-post-copy";
 
 import { Button } from "@/components/ui/button";
 import { Alert, AlertDescription } from "@/components/ui/alert";
@@ -358,6 +359,13 @@ export function TikTokComposer({
               disabled={busy || submitted || tooLong || publicTestAccount}
             >
               <Field>
+                <SavedPostCopy
+                  exportId={exportId}
+                  onApply={(text) => {
+                    setCaption(text);
+                    setConsent(false);
+                  }}
+                />
                 <FieldLabel htmlFor={`${fieldId}-1`}>Post caption</FieldLabel>
                 <Textarea
                   id={`${fieldId}-1`}

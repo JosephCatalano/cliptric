@@ -149,7 +149,22 @@ export type TextOverlay = {
   position: "auto" | "upper" | "centre" | "lower";
   style: "card" | "outline" | "violet";
 };
+export type PostCopyOption = { description: string; hashtags: string[] };
+export type PostCopy = {
+  recommended: PostCopyOption;
+  alternatives: (PostCopyOption & {
+    style: "curiosity" | "conversation" | "funny_or_relatable";
+  })[];
+  reason: string;
+  evidence_quote: string;
+};
 export type ProjectItem = {
+  post_copy?: PostCopy | null;
+  post_copy_selected?: PostCopyOption | null;
+  post_copy_attempted?: boolean;
+  post_copy_error?: string | null;
+  post_copy_request_id?: string | null;
+  post_copy_stale?: boolean;
   transcription_backend?: "cpu" | "cuda" | null;
   posted?: boolean;
   presentation_complete?: boolean;
@@ -222,6 +237,9 @@ export type ProjectItem = {
   } | null;
 };
 export type Project = {
+  step_progress?: number | null;
+  step_started_at?: string | null;
+  step_updated_at?: string | null;
   stage_seconds?: Record<string, number>;
   transcription_backend?: "cpu" | "cuda" | null;
   analysis_cache_hit?: boolean;

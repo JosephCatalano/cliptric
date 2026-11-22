@@ -93,6 +93,7 @@ export function NewProject({
   const [settings, setSettings] = useState(defaults);
   const [emphasisText, setEmphasisText] = useState("");
   const [error, setError] = useState("");
+  const [postCopy, setPostCopy] = useState(true);
   const [busy, setBusy] = useState(false);
   const [refresh, setRefresh] = useState(0);
   const player = useRef<HTMLVideoElement>(null);
@@ -198,6 +199,8 @@ export function NewProject({
         : { recording_id: recordingId }),
       title,
       settings,
+      generate_post_copy: postCopy,
+      remote_consent: true,
     };
     draft.persistCurrent();
     let signature: string;
@@ -761,6 +764,17 @@ export function NewProject({
                     <dd>{settings.caption_preset}</dd>
                   </div>
                 </dl>
+                <Field orientation="horizontal">
+                  <Checkbox
+                    id="long-post-copy"
+                    checked={postCopy}
+                    onCheckedChange={(value) => setPostCopy(value === true)}
+                  />
+                  <FieldLabel htmlFor="long-post-copy">
+                    Generate a description, hashtags and three alternatives for
+                    each clip (additional AI usage).
+                  </FieldLabel>
+                </Field>
                 <p>
                   Creating shares saved transcript text and timestamps with
                   OpenAI. API charges apply. Your video stays local; AI may

@@ -14,6 +14,7 @@ from .highlight_models import EditorialQuality, SourceRange
 from .limits import MAX_MEDIA_SECONDS
 from .models import Clip, EmphasisWords
 from .overlays import Overlays, layout
+from .social_copy import CopyOption, SocialCopy
 from .transcription_models import clean_text
 
 ACTIVE = {"queued", "downloading", "transcribing", "analysing", "rendering", "cancelling"}
@@ -71,6 +72,7 @@ class ProjectCreate(BaseModel):
     youtube_source_id: UUID | None = None
     recording_ids: list[UUID] = Field(default_factory=list, max_length=15)
     generate_titles: bool = Field(default=False, strict=True)
+    generate_post_copy: bool = Field(default=False, strict=True)
     remote_consent: bool = Field(default=False, strict=True)
     title: str = Field(min_length=1, max_length=120, strict=True)
     settings: ProjectSettings
@@ -94,6 +96,8 @@ class ProjectCreate(BaseModel):
             raise ValueError("Each supplied recording must appear only once.")
         if bool(self.recording_ids) != (self.settings.duration_mode == "full"):
             raise ValueError("Full-length processing requires a batch of supplied clips.")
+        if self.generate_post_copy and not self.remote_consent:
+            raise ValueError("Posting copy requires explicit transcript-sharing consent.")
         if self.generate_titles and (not self.recording_ids or not self.remote_consent):
             raise ValueError("AI batch titles require explicit consent to share transcript text.")
         if self.settings.batch_mode in {"auto", "highlights"} and (
@@ -114,6 +118,16 @@ class ProjectCreate(BaseModel):
 
 
 class ProjectItem(BaseModel):
+    post_copy: SocialCopy | None = None
+    post_copy_selected: CopyOption | None = None
+    post_copy_source: str | None = None
+    post_copy_attempted: bool = False
+    post_copy_request_id: str | None = None
+    post_copy_requests: list[str] = Field(default_factory=list, max_length=64)
+    post_copy_error: str | None = None
+    post_copy_input_tokens: int = 0
+    post_copy_output_tokens: int = 0
+    post_copy_stale: bool = False
     transcription_backend: Literal["cpu", "cuda"] | None = None
     posted: bool = Field(default=False, strict=True)
     presentation_complete: bool = False
@@ -171,6 +185,9 @@ class ProjectItem(BaseModel):
 
 
 class Project(BaseModel):
+    step_progress: float | None = Field(default=None, ge=0, le=1)
+    step_started_at: str | None = None
+    step_updated_at: str | None = None
     stage_seconds: dict[str, Annotated[float, Field(ge=0, allow_inf_nan=False)]] = Field(
         default_factory=dict
     )
@@ -181,6 +198,7 @@ class Project(BaseModel):
     selection_exclusions: list[SourceRange] = Field(default_factory=list)
     recording_ids: list[str] = Field(default_factory=list)
     generate_titles: bool = False
+    generate_post_copy: bool = False
     id: str
     recording_id: str | None = None
     youtube_source_id: str | None = None

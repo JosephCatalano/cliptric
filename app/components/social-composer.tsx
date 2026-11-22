@@ -1,4 +1,5 @@
 "use client";
+import { SavedPostCopy } from "./saved-post-copy";
 
 import { useEffect, useRef, useState, type FormEvent } from "react";
 import Link from "next/link";
@@ -206,6 +207,13 @@ export function SocialComposer({
             <FieldLegend>Post to {creator.label}</FieldLegend>
             <FieldGroup>
               <Field>
+                <SavedPostCopy
+                  exportId={exportId}
+                  onApply={(text) => {
+                    setCaption(text);
+                    setConsent(false);
+                  }}
+                />
                 <FieldLabel htmlFor="social-caption">
                   {platform === "x" ? "Post text" : "Caption"}
                 </FieldLabel>

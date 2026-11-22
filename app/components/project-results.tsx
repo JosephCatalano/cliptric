@@ -1,4 +1,6 @@
 "use client";
+import { PostCopyEditor } from "./post-copy-editor";
+import { ProjectStepProgress } from "./project-step-progress";
 import { AdvancedOptions } from "./creation-flow";
 import { PublishChooser } from "./publish-chooser";
 import { Badge } from "@/components/ui/badge";
@@ -278,9 +280,17 @@ export function ProjectResults({ id }: { id: string }) {
           </div>
           {running ? (
             <div className="flex flex-col gap-2">
+              <p className="text-sm">
+                Overall progress: {Math.round(project.progress * 100)}%
+              </p>
               <Progress
                 value={project.progress * 100}
                 aria-label="Clip creation progress"
+              />
+              <ProjectStepProgress
+                progress={project.step_progress}
+                started={project.step_started_at}
+                updated={project.step_updated_at}
               />
               <div className="flex flex-wrap items-center justify-between gap-2">
                 <p role="status">{project.stage}</p>
@@ -992,6 +1002,12 @@ function ClipCard({
         </CardDescription>
       </CardHeader>
       <CardContent className="project-card-body">
+        <PostCopyEditor
+          projectId={project.id}
+          item={item}
+          disabled={locked || saving || dirty}
+          onSaved={onSaved}
+        />
         <div className="flex flex-wrap items-center gap-2">
           <Badge
             variant={

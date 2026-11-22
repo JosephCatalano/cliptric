@@ -88,6 +88,7 @@ export function NewBatch() {
     "auto" | "upper" | "centre"
   >("auto");
   const [aiTitles, setAiTitles] = useState(false);
+  const [postCopy, setPostCopy] = useState(true);
   const [batchMode, setBatchMode] = useState<"auto" | "keep" | "highlights">(
     "highlights",
   );
@@ -348,7 +349,12 @@ export function NewBatch() {
   }
   async function create(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
-    if (!ready || busy || (batchMode !== "keep" && !reviewConsent)) return;
+    if (
+      !ready ||
+      busy ||
+      ((batchMode !== "keep" || postCopy) && !reviewConsent)
+    )
+      return;
     setBusy("saving");
     setError("");
     const settings = savedSettings;
@@ -357,7 +363,9 @@ export function NewBatch() {
       recording_ids: clips.map((clip) => clip.recording!.id),
       settings,
       generate_titles: batchMode === "keep" && aiTitles,
-      remote_consent: batchMode !== "keep" ? reviewConsent : aiTitles,
+      generate_post_copy: postCopy,
+      remote_consent:
+        batchMode !== "keep" || postCopy ? reviewConsent : aiTitles,
     };
     draft.persistCurrent();
     let signature: string;
@@ -843,7 +851,21 @@ export function NewBatch() {
                   <dd>{style.preset}</dd>
                 </div>
               </dl>
-              {batchMode !== "keep" && (
+              <Field orientation="horizontal">
+                <Checkbox
+                  id="batch-post-copy"
+                  checked={postCopy}
+                  onCheckedChange={(value) => {
+                    setPostCopy(value === true);
+                    setReviewConsent(false);
+                  }}
+                />
+                <FieldLabel htmlFor="batch-post-copy">
+                  Generate descriptions, hashtags and alternatives for every
+                  clip (additional AI usage).
+                </FieldLabel>
+              </Field>
+              {(batchMode !== "keep" || postCopy) && (
                 <Field orientation="horizontal">
                   <Checkbox
                     id="batch-review-consent"
@@ -853,8 +875,8 @@ export function NewBatch() {
                     }
                   />
                   <FieldLabel htmlFor="batch-review-consent">
-                    I agree to share saved transcripts with OpenAI for analysis.
-                    API charges apply.
+                    I agree to share saved transcripts with OpenAI for analysis
+                    and enabled posting-copy generation. API charges apply.
                   </FieldLabel>
                 </Field>
               )}
@@ -886,7 +908,7 @@ export function NewBatch() {
                     !ready ||
                     busy !== null ||
                     !title.trim() ||
-                    (batchMode !== "keep" && !reviewConsent)
+                    ((batchMode !== "keep" || postCopy) && !reviewConsent)
                   }
                 >
                   {busy === "saving"

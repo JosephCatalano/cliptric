@@ -74,7 +74,11 @@ class Deletions:
 
     def _idle(self, project: Project) -> None:
         future = self.projects.scheduled.get(project.id)
-        if project.status in ACTIVE or future is not None:
+        if (
+            project.status in ACTIVE
+            or future is not None
+            or any(key[0] == project.id for key in self.projects.copy_active)
+        ):
             raise HTTPException(
                 409, "Cancel project processing and wait for it to stop before deleting."
             )
@@ -215,6 +219,7 @@ class Deletions:
                         [
                             f"exports/{identifier}.mp4",
                             f"logs/{identifier}.log",
+                            f"logs/{identifier}.progress",
                             f"exports/{identifier}.partial.mp4",
                             f"exports/{identifier}.partial.ass",
                             f"exports/{identifier}.headline.partial.ass",

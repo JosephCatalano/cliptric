@@ -400,6 +400,8 @@ class Media:
             "mov,matroska,webm",
             "-ss",
             str(start),
+            "-t",
+            str(end - start),
             "-i",
             str(source.resolve()),
             *(
@@ -451,6 +453,10 @@ class Media:
             "+faststart",
             "-f",
             "mp4",
+            "-progress",
+            str(log_path.with_suffix(".progress").resolve()),
+            "-stats_period",
+            "1",
             str(output.resolve()),
         ]
         if cancel.is_set():
@@ -486,9 +492,16 @@ class Media:
                     if time.monotonic() >= next_resource_check:
                         require_space(output.parent, self.settings.min_free_bytes)
                         if (
-                            output.exists()
-                            and output.stat().st_size > self.settings.max_export_bytes
-                        ) or log.tell() > 1024**2:
+                            (
+                                output.exists()
+                                and output.stat().st_size > self.settings.max_export_bytes
+                            )
+                            or log.tell() > 1024**2
+                            or (
+                                log_path.with_suffix(".progress").exists()
+                                and log_path.with_suffix(".progress").stat().st_size > 4 * 1024**2
+                            )
+                        ):
                             raise MediaError("Export exceeded its output or diagnostic size limit.")
                         next_resource_check = time.monotonic() + 1
                 if cancel.is_set():

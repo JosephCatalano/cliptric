@@ -79,6 +79,8 @@ Upload -> Probe -> Transcribe -> Detect Highlights -> Validate and Score -> Alig
 
 ## Publishing
 
+- Posting descriptions/hashtags are separate editable clip metadata. Generate only from the selected saved speech interval and project instructions with explicit sharing/billing consent, bounded structured output and durable attempt identities. Resume must not repeat uncertain paid copy requests. Preserve source identity/staleness and earlier video exports; apply saved copy only to the exact current export on user action and reset publishing consent. README owns generation, editing and handoff contracts.
+
 - Publishing supports multiple destinations per platform. Every reviewed post, schedule, token refresh, background upload and reconciliation must resolve its persisted `account_id`. Never substitute a current/default account for a disconnected destination.
 - Account connection does not authorize posting. Retain per-export review, explicit consent, immutable approved settings, duplicate protection and durable uncertain outcomes. Never repeat a publish request after an ambiguous response.
 - README.md owns provider setup, media limits and local scheduling contracts. Provider credentials stay in backend configuration and Windows-encrypted storage. Browser and live provider verification remain separate from simulated transport checks.

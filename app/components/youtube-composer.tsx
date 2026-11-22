@@ -1,4 +1,5 @@
 "use client";
+import { SavedPostCopy } from "./saved-post-copy";
 
 import { useEffect, useRef, useState, type FormEvent } from "react";
 import Link from "next/link";
@@ -331,6 +332,13 @@ export function YouTubeComposer({
                   onChange={(event) => setTitle(event.target.value)}
                 />
               </Field>
+              <SavedPostCopy
+                exportId={exportId}
+                onApply={(text) => {
+                  setDescription(text);
+                  setConsent(false);
+                }}
+              />
               <Field data-invalid={descriptionBytes > 5000}>
                 <FieldLabel htmlFor="short-description">Description</FieldLabel>
                 <Textarea

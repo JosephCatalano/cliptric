@@ -6,9 +6,9 @@ import json
 import httpx2
 from pydantic import BaseModel, ConfigDict, Field, field_validator
 
-from .ai_instructions import EDITORIAL_GUIDANCE
 from .highlight_models import HighlightError
 from .highlight_provider import ENDPOINT, MAX_RESPONSE_BYTES, OpenAIHighlights
+from .prompt_settings import request_prompt
 from .transcription_models import clean_text
 
 TITLE_INSTRUCTIONS = """Act as Cliptric's short-form title editor for one already-selected clip.
@@ -56,39 +56,54 @@ class TitleProposal(BaseModel):
 
 
 class BatchTitles:
+    task_label = "title"
+    prompt_key = "titles"
+    instructions = TITLE_INSTRUCTIONS
+    schema_model = TitleProposal
+    response_name = "supplied_clip_title"
+    output_tokens = 512
+
+    @staticmethod
+    def decode(text):
+        return TitleProposal.model_validate_json(text).title
+
     def __init__(self, settings, *, transport=None):
         self.settings, self.transport = settings, transport
 
     async def suggest(self, words: list[dict], *, ai_instructions: str = ""):
         if not self.settings.openai_api_key:
             raise HighlightError(
-                "Configure the existing backend OpenAI key to generate titles.", 503
+                f"Configure the existing backend OpenAI key to generate {self.task_label}.", 503
             )
         text = " ".join(word["text"] for word in words)
         if not text.strip():
             raise HighlightError(
-                "No recognized speech for an AI title. Edit the filename title manually.", 422
+                f"No recognized speech for AI {self.task_label}. Edit manually.", 422
             )
         if len(words) > 3000 or len(text.encode("utf-8")) > 64 * 1024:
-            raise HighlightError("The clip transcript exceeds the title request limit.", 422)
+            raise HighlightError(
+                f"The clip transcript exceeds the {self.task_label} request limit.", 422
+            )
         body = {
             "model": self.settings.highlight_model,
             "store": False,
-            "instructions": TITLE_INSTRUCTIONS + (EDITORIAL_GUIDANCE if ai_instructions else ""),
+            "instructions": request_prompt(
+                self.settings, self.prompt_key, self.instructions, bool(ai_instructions)
+            ),
             "input": json.dumps(
                 {
                     "transcript": text,
                     **({"project_instructions": ai_instructions} if ai_instructions else {}),
                 }
             ),
-            "max_output_tokens": 512,
+            "max_output_tokens": self.output_tokens,
             "reasoning": {"effort": "low"},
             "text": {
                 "format": {
                     "type": "json_schema",
-                    "name": "supplied_clip_title",
+                    "name": self.response_name,
                     "strict": True,
-                    "schema": TitleProposal.model_json_schema(),
+                    "schema": self.schema_model.model_json_schema(),
                 }
             },
         }
@@ -111,18 +126,19 @@ class BatchTitles:
                         async for chunk in response.aiter_bytes(chunk_size=8192):
                             if len(output) + len(chunk) > MAX_RESPONSE_BYTES:
                                 raise HighlightError(
-                                    "OpenAI title response exceeded the safety limit.", 502
+                                    f"OpenAI {self.task_label} response exceeded the safety limit.",
+                                    502,
                                 )
                             output.extend(chunk)
             return self.parse(bytes(output))
         except (httpx2.HTTPError, TimeoutError) as exc:
             raise HighlightError(
-                "Title request failed or timed out. Billing may be unknown; retry titles explicitly after checking usage.",
+                f"AI {self.task_label} request failed or timed out. Billing may be unknown; retry explicitly after checking usage.",
                 503,
             ) from exc
 
-    @staticmethod
-    def parse(raw: bytes):
+    @classmethod
+    def parse(cls, raw: bytes):
         try:
             data = json.loads(raw)
             if data.get("status") != "completed" or data.get("error") is not None:
@@ -134,13 +150,13 @@ class BatchTitles:
                 for content in item.get("content", []):
                     if content.get("type") == "refusal":
                         raise HighlightError(
-                            "The model declined this title. Edit the title manually.", 422
+                            f"The model declined this {cls.task_label}. Edit manually.", 422
                         )
                     if content.get("type") == "output_text":
                         texts.append(content["text"])
             if len(texts) != 1:
                 raise ValueError("Missing structured result")
-            title = TitleProposal.model_validate_json(texts[0]).title
+            title = cls.decode(texts[0])
             usage = data["usage"]
             if any(
                 type(usage[key]) is not int or usage[key] < 0
@@ -150,5 +166,6 @@ class BatchTitles:
             return title, usage["input_tokens"], usage["output_tokens"]
         except (ValueError, TypeError, KeyError, AttributeError) as exc:
             raise HighlightError(
-                "OpenAI returned invalid title data. Edit manually or retry titles explicitly.", 502
+                f"OpenAI returned invalid {cls.task_label} data. Edit manually or retry explicitly.",
+                502,
             ) from exc

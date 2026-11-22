@@ -5,10 +5,12 @@ from datetime import datetime, timezone
 from pathlib import Path
 from typing import Iterator
 
+from .editing import QualityOptions, retained_intervals
 from .files import remove_artifact
 from .follow_models import FOLLOW_VERSION, FollowPlan
 from .layout_models import LAYOUT_VERSION, AutoLayoutPlan
 from .models import Clip, ExportRequest, Recording, RenderPerformance, SelectionDraft
+from .render_progress import render_progress
 
 
 def now() -> str:
@@ -259,8 +261,7 @@ class Store:
             ).fetchone()
             return self._clip(db, row) if row else None
 
-    @staticmethod
-    def _clip(db: sqlite3.Connection, row: sqlite3.Row) -> Clip:
+    def _clip(self, db: sqlite3.Connection, row: sqlite3.Row) -> Clip:
         auto_layout = db.execute(
             "SELECT payload FROM clip_auto_layout WHERE clip_id=?", (row["id"],)
         ).fetchone()
@@ -291,6 +292,20 @@ class Store:
         return Clip.model_validate(
             {
                 **dict(row),
+                **render_progress(
+                    self.root,
+                    row["id"],
+                    sum(
+                        b - a
+                        for a, b in retained_intervals(
+                            row["start"],
+                            row["end"],
+                            QualityOptions.model_validate_json(quality[0])
+                            if quality
+                            else QualityOptions(),
+                        )
+                    ),
+                ),
                 "posted": bool(row["posted"]),
                 "performance": json.loads(performance[0]) if performance else None,
                 "follow_plan": json.loads(follow[0]) if follow else None,

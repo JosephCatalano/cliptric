@@ -1,4 +1,5 @@
 "use client";
+import { SavedPostCopy } from "./saved-post-copy";
 
 import { useEffect, useRef, useState, type FormEvent } from "react";
 import Link from "next/link";
@@ -244,6 +245,13 @@ export function InstagramComposer({
                 value={scheduleTime}
                 onChange={(value) => {
                   setScheduleTime(value);
+                  setConsent(false);
+                }}
+              />
+              <SavedPostCopy
+                exportId={exportId}
+                onApply={(text) => {
+                  setCaption(text);
                   setConsent(false);
                 }}
               />
