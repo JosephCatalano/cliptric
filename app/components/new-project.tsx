@@ -105,7 +105,7 @@ export function NewProject({
     const controller = new AbortController();
     api<Recording | YouTubeSource>(
       youtube
-        ? `/api/youtube-sources/${recordingId}`
+        ? `/api/video-sources/${recordingId}`
         : `/api/recordings/${recordingId}`,
       {
         signal: controller.signal,
@@ -215,14 +215,22 @@ export function NewProject({
             </Field>
             {youtube && "url" in source && !mediaSource ? (
               <>
-                <Image
-                  unoptimized
-                  src={`https://i.ytimg.com/vi/${new URL(source.url).searchParams.get("v")}/hqdefault.jpg`}
-                  width={480}
-                  height={360}
-                  alt={source.name}
-                  className="setup-preview object-contain"
-                />
+                {source.preview_image_url ||
+                new URL(source.url).searchParams.has("v") ? (
+                  <Image
+                    unoptimized
+                    src={
+                      source.preview_image_url ||
+                      `https://i.ytimg.com/vi/${new URL(source.url).searchParams.get("v")}/hqdefault.jpg`
+                    }
+                    width={480}
+                    height={360}
+                    alt={source.name}
+                    className="setup-preview object-contain"
+                  />
+                ) : (
+                  <p>Video preview will be available after download.</p>
+                )}
                 <p>
                   Duration: {Math.floor(source.duration / 60)}m{" "}
                   {Math.floor(source.duration % 60)}s. Downloading while you

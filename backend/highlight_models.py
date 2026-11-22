@@ -124,6 +124,8 @@ class Candidate(BaseModel):
 
 
 class HighlightJob(BaseModel):
+    pool_key: str | None = None
+    cache_hit: bool = False
     id: str
     recording_id: str
     transcription_id: str

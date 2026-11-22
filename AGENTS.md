@@ -49,6 +49,8 @@ Installed skills do not mandate their frameworks or dependencies. Apply guidance
 
 ## Media pipeline
 
+- The shared video-link input accepts public YouTube videos and completed Twitch VODs. Preserve provider-specific HTTPS/public-DNS destination guards on every request/redirect, native bounded Twitch HLS downloads, and local-only FFmpeg inputs. Keep large uploads streamed and read frontend size limits from the backend. README owns configuration, provider restrictions and compatibility paths.
+
 - Optional extra AI instructions are project generation settings, retained with that project and included in the appropriate highlight/title request. Preserve the base source-grounding/output contracts and include non-empty instructions in analysis cache identity. README.md owns limits and editing behavior.
 
 Upload -> Probe -> Transcribe -> Detect Highlights -> Validate and Score -> Align Captions -> Render -> Evaluate -> Export.

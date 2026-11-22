@@ -47,11 +47,12 @@ export default function PrivacyPage() {
           text and, where needed, source timestamps to OpenAI. Project-specific
           AI instructions are included when supplied for that task. These
           requests do not send the source video or audio. If you import a
-          YouTube link, Cliptric contacts YouTube and its media services to
-          retrieve that video. When you approve a post, Cliptric sends the
-          selected exported video and your chosen publishing details to TikTok,
-          YouTube, X or Meta for Instagram and Facebook. Account connection and
-          status checks also communicate with the relevant platform.
+          YouTube or Twitch VOD link, Cliptric contacts that provider and its
+          media services to retrieve the video. When you approve a post,
+          Cliptric sends the selected exported video and your chosen publishing
+          details to TikTok, YouTube, X or Meta for Instagram and Facebook.
+          Account connection and status checks also communicate with the
+          relevant platform.
         </p>
         <p className="mt-2">
           These providers process information under their own policies:{" "}

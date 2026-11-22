@@ -684,7 +684,7 @@ class Projects:
                         raise
                 except HTTPException as exc:
                     if exc.status_code != 409 or not str(exc.detail).startswith(
-                        "Another YouTube video is importing"
+                        "Another video is importing"
                     ):
                         raise
             self.stop.wait(0.25)

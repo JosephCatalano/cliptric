@@ -126,8 +126,8 @@ export default function ProjectsPage() {
               {offset ? "No older projects" : "Create your first clips"}
             </EmptyTitle>
             <EmptyDescription>
-              Start with an uploaded video or a YouTube link, then choose your
-              clip settings.
+              Start with an uploaded video, YouTube link or Twitch VOD link,
+              then choose your clip settings.
             </EmptyDescription>
           </EmptyHeader>
           <EmptyContent>

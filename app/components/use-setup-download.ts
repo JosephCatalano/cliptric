@@ -33,10 +33,10 @@ export function useSetupDownload(
     async function inspect() {
       try {
         job = job
-          ? await api<Download>(`/api/youtube-imports/${job.id}`, {
+          ? await api<Download>(`/api/video-imports/${job.id}`, {
               signal: controller.signal,
             })
-          : await api<Download>("/api/youtube-imports", {
+          : await api<Download>("/api/video-imports", {
               method: "POST",
               headers: { "Content-Type": "application/json" },
               body: JSON.stringify({ url: sourceUrl }),

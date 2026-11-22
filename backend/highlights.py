@@ -29,6 +29,7 @@ from .highlight_models import (
 from .highlight_selection import (
     Segment,
     ground_candidates,
+    overlaps,
     rank_unique,
     unused_windows,
     window_text,
@@ -155,6 +156,8 @@ class Highlights:
             ),
         }
         key = hashlib.sha256(json.dumps(key_data, sort_keys=True).encode()).hexdigest()
+        pool_data = {**key_data, "pool_policy": 1, "request": request.model_dump(mode="json", exclude={"max_candidates", "regenerate", "remote_consent", "excluded_ranges"})}
+        pool_key = hashlib.sha256(json.dumps(pool_data, sort_keys=True).encode()).hexdigest()
         with self.lock:
             if self.stopping:
                 raise HighlightError("Highlight service is stopping. Retry after restart.", 503)
@@ -169,12 +172,32 @@ class Highlights:
                 )
             if not request.regenerate and (cached := self.results.cached(key)) and not cached.stale:
                 return cached
+            available = []
+            if not request.regenerate and request.excluded_ranges:
+                blocked = list(request.excluded_ranges)
+                for candidate in self.results.pool(pool_key):
+                    if not overlaps(candidate.start, candidate.end, blocked):
+                        available.append(candidate)
+                        from .highlight_models import SourceRange
+                        blocked.append(SourceRange(start=candidate.start, end=candidate.end))
+                        if len(available) >= request.max_candidates:
+                            break
+            if available:
+                job = HighlightJob(id=identifier or str(uuid4()), recording_id=recording_id,
+                    transcription_id=transcript.id, transcript_revision=transcript.revision,
+                    model=self.settings.highlight_model, status="queued", total_windows=0,
+                    created_at=now(), pool_key=pool_key, cache_hit=True)
+                self.results.create(job, key)
+                copies = [candidate.model_copy(update={"id": str(uuid4()), "job_id": job.id, "review": "unreviewed", "revision": 0}) for candidate in available]
+                self.results.publish(job, copies, 0)
+                return self.results.job(job.id)
             if windows and not self.settings.openai_api_key:
                 raise HighlightError(
                     "Configure OPENAI_API_KEY in the backend environment and restart the API to enable highlight detection. Manual clipping remains available.",
                     503,
                 )
             job = HighlightJob(
+                pool_key=pool_key,
                 id=identifier or str(uuid4()),
                 recording_id=recording_id,
                 transcription_id=transcript.id,
@@ -223,56 +246,58 @@ class Highlights:
         duration: float,
     ) -> tuple[list[Candidate], int]:
         deadline = time.monotonic() + self.settings.highlight_timeout_seconds
-        candidates: list[Candidate] = []
-        rejected = 0
+        queue = asyncio.Queue()
         for index, window in enumerate(windows):
-            self._check(deadline)
-            transcript = self.transcripts.latest(job.recording_id)
-            if (
-                transcript is None
-                or transcript.id != job.transcription_id
-                or transcript.revision != job.transcript_revision
-                or transcript.status != "succeeded"
-            ):
-                raise HighlightError(
-                    "The transcript changed during analysis. Further API requests were stopped; retry using its saved revision.",
-                    409,
-                )
-            # Charge the attempt before sending. Unknown provider outcomes never auto-retry.
-            self.results.update(job.id, requests_made=index + 1)
-            task = asyncio.create_task(self.provider.suggest(window, request))
-            try:
-                request_deadline = min(
-                    deadline, time.monotonic() + self.settings.highlight_request_seconds
-                )
-                while not task.done():
-                    self._check(request_deadline)
-                    await asyncio.wait({task}, timeout=0.1)
-                response = await task
-            finally:
+            queue.put_nowait((index, window))
+        results = {}
+        rejected = 0
+
+        async def worker():
+            nonlocal rejected
+            while not queue.empty():
+                index, window = queue.get_nowait()
+                self._check(deadline)
+                transcript = self.transcripts.latest(job.recording_id)
+                if (transcript is None or transcript.id != job.transcription_id
+                    or transcript.revision != job.transcript_revision or transcript.status != "succeeded"):
+                    raise HighlightError("The transcript changed during analysis. Further API requests were stopped; retry using its saved revision.", 409)
+                # Persist each attempt before dispatch, including requests still in flight
+                # when cancellation/failure arrives. There are no automatic retries.
+                job.requests_made += 1
+                self.results.update(job.id, requests_made=job.requests_made)
+                task = asyncio.create_task(self.provider.suggest(window, request))
+                try:
+                    request_deadline = min(deadline, time.monotonic() + self.settings.highlight_request_seconds)
+                    while not task.done():
+                        self._check(request_deadline)
+                        await asyncio.wait({task}, timeout=0.1)
+                    response = await task
+                finally:
+                    if not task.done():
+                        task.cancel()
+                        await asyncio.gather(task, return_exceptions=True)
+                self._check(deadline)
+                grounded, invalid = ground_candidates(response.candidates, window, request, duration, job.id)
+                results[index] = grounded
+                rejected += invalid
+                job.input_tokens += response.input_tokens
+                job.output_tokens += response.output_tokens
+                job.completed_windows += 1
+                self.results.update(job.id, completed_windows=job.completed_windows,
+                    input_tokens=job.input_tokens, output_tokens=job.output_tokens, rejected_candidates=rejected)
+
+        tasks = [asyncio.create_task(worker()) for _ in range(min(len(windows), self.settings.highlight_concurrency))]
+        try:
+            await asyncio.gather(*tasks)
+        finally:
+            for task in tasks:
                 if not task.done():
                     task.cancel()
-                    await asyncio.gather(task, return_exceptions=True)
-            self._check(deadline)
-            grounded, invalid = ground_candidates(
-                response.candidates, window, request, duration, job.id
-            )
-            candidates.extend(grounded)
-            rejected += invalid
-            job.input_tokens += response.input_tokens
-            job.output_tokens += response.output_tokens
-            self.results.update(
-                job.id,
-                completed_windows=index + 1,
-                input_tokens=job.input_tokens,
-                output_tokens=job.output_tokens,
-                rejected_candidates=rejected,
-            )
+            await asyncio.gather(*tasks, return_exceptions=True)
+        candidates = [candidate for index in sorted(results) for candidate in results[index]]
         if rejected and not candidates:
-            raise HighlightError(
-                "All suggested moments failed source-evidence or duration checks. Review the transcript or change duration settings, then retry explicitly."
-            )
-        return rank_unique(candidates, request.max_candidates), rejected
+            raise HighlightError("All suggested moments failed source-evidence or duration checks. Review the transcript or change duration settings, then retry explicitly.")
+        return rank_unique(candidates, max(request.max_candidates, self.settings.highlight_pool_size)), rejected
 
     def _check(self, deadline: float) -> None:
         if self.cancel_event.is_set():
@@ -297,7 +322,9 @@ class Highlights:
             candidates, rejected = asyncio.run(self._analyse(job, windows, request, duration))
             with self.lock:
                 self._check(float("inf"))
-                self.results.publish(job, candidates, rejected)
+                previous = [candidate for candidate in self.results.pool(job.pool_key) if not overlaps(candidate.start, candidate.end, request.excluded_ranges)] if job.pool_key else []
+            pool = rank_unique(candidates + previous, self.settings.highlight_pool_size)
+            self.results.publish(job, candidates[:request.max_candidates], rejected, pool=pool)
         except HighlightCancelled:
             self.results.update(
                 job.id,

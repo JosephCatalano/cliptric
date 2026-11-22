@@ -44,7 +44,7 @@ class Settings:
     data_dir: Path
     ffmpeg: str
     ffprobe: str
-    max_upload_bytes: int = 2 * 1024**3
+    max_upload_bytes: int = 20 * 1024**3
     max_source_seconds: float = MAX_MEDIA_SECONDS
     max_clip_seconds: float = MAX_MEDIA_SECONDS
     render_timeout_seconds: float = 600
@@ -57,6 +57,11 @@ class Settings:
     transcription_model_revision: str = TRANSCRIPTION_REVISION
     transcription_timeout_seconds: float = 7200
     transcription_threads: int = 6
+    transcription_device: str = "auto"
+    transcription_worker_idle_seconds: int = 120
+    render_encoder: str = "auto"
+    render_threads: int = 4
+    nvenc_ffmpeg: str = ""
     openai_api_key: str = field(default_factory=read_openai_key, repr=False)
     highlight_model: str = "gpt-6-luna"
     highlight_max_windows: int = 64
@@ -64,8 +69,22 @@ class Settings:
     highlight_output_tokens: int = 2048
     highlight_request_seconds: float = 60
     highlight_timeout_seconds: float = 3600
+    highlight_concurrency: int = 3
+    highlight_pool_size: int = 20
 
     def __post_init__(self) -> None:
+        if self.transcription_device not in {"auto", "cpu", "cuda"}:
+            raise ValueError("Transcription device must be auto, cpu or cuda.")
+        if self.render_encoder not in {"auto", "cpu", "nvenc"}:
+            raise ValueError("Render encoder must be auto, cpu or nvenc.")
+        if not 1 <= self.render_threads <= 16 or not 1 <= self.transcription_threads <= 16:
+            raise ValueError("Processing threads must be between 1 and 16.")
+        if not 1 <= self.transcription_worker_idle_seconds <= 600:
+            raise ValueError("Transcription worker idle timeout must be between 1 and 600 seconds.")
+        if not 1 <= self.highlight_concurrency <= 4 or not 1 <= self.highlight_pool_size <= 100:
+            raise ValueError("Highlight concurrency must be 1-4 and candidate pool size 1-100.")
+        if type(self.max_upload_bytes) is not int or not 0 < self.max_upload_bytes <= 100 * 1024**3:
+            raise ValueError("Upload limit must be positive and at most 100 GiB.")
         origin = urlsplit(self.web_origin)
         if (
             origin.scheme != "http"
@@ -85,7 +104,26 @@ class Settings:
 
     @classmethod
     def load(cls) -> "Settings":
+        values = dotenv_values(ROOT / "backend" / ".env", interpolate=False)
+        raw_limit = os.environ.get(
+            "CLIPPING_MAX_UPLOAD_GIB", values.get("CLIPPING_MAX_UPLOAD_GIB", "20")
+        )
+        try:
+            gib = int(raw_limit)
+        except (ValueError, TypeError) as exc:
+            raise ValueError(
+                "CLIPPING_MAX_UPLOAD_GIB must be an integer between 1 and 100."
+            ) from exc
+        if not 1 <= gib <= 100:
+            raise ValueError("CLIPPING_MAX_UPLOAD_GIB must be between 1 and 100.")
         return cls(
+            transcription_device=os.environ.get("CLIPPING_TRANSCRIPTION_DEVICE", values.get("CLIPPING_TRANSCRIPTION_DEVICE", "auto")),
+            transcription_worker_idle_seconds=int(os.environ.get("CLIPPING_TRANSCRIPTION_IDLE_SECONDS", values.get("CLIPPING_TRANSCRIPTION_IDLE_SECONDS", "120"))),
+            render_encoder=os.environ.get("CLIPPING_RENDER_ENCODER", values.get("CLIPPING_RENDER_ENCODER", "auto")),
+            render_threads=int(os.environ.get("CLIPPING_RENDER_THREADS", values.get("CLIPPING_RENDER_THREADS", "4"))),
+            nvenc_ffmpeg=os.environ.get("CLIPPING_NVENC_FFMPEG", values.get("CLIPPING_NVENC_FFMPEG", "")) or "",
+            highlight_concurrency=int(os.environ.get("CLIPPING_HIGHLIGHT_CONCURRENCY", values.get("CLIPPING_HIGHLIGHT_CONCURRENCY", "3"))),
+            max_upload_bytes=gib * 1024**3,
             data_dir=Path(os.environ.get("CLIPPING_DATA_DIR", str(ROOT / "data"))).resolve(),
             ffmpeg=find_tool("ffmpeg"),
             ffprobe=find_tool("ffprobe"),

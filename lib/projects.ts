@@ -50,7 +50,10 @@ export const defaultCaptionCustomization: CaptionCustomization = {
   capitalization: "original",
   font_size: 64,
 };
-export type YouTubeSource = Recording & { url: string };
+export type YouTubeSource = Recording & {
+  url: string;
+  preview_image_url?: string | null;
+};
 export type FramingMode = "pad" | "crop" | "split";
 export type SourceRegion = {
   x: number;

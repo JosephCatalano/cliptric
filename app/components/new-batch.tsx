@@ -41,6 +41,7 @@ import { CaptionStylePicker } from "./caption-style-picker";
 import { CaptionCustomizationFields } from "./caption-customization-fields";
 import { CaptionStyleLibrary } from "./caption-style-library";
 import { AiInstructionsField } from "./ai-instructions-field";
+import { useImportLimits, ImportLimitNotice } from "./import-limits";
 import { PresentationField } from "./presentation-field";
 
 type Upload = {
@@ -50,10 +51,11 @@ type Upload = {
   recording: Recording | null;
   error: string;
 };
-const MAX_FILE_BYTES = 2 * 1024 ** 3;
 
 export function NewBatch() {
   const router = useRouter();
+  const limits = useImportLimits();
+  const maxFileBytes = limits.maxBytes ?? 0;
   const [clips, setClips] = useState<Upload[]>([]);
   const [title, setTitle] = useState("Supplied clips");
   const [style, setStyle] = useState<CaptionStyle>({
@@ -94,6 +96,12 @@ export function NewBatch() {
     clips.length > 0 && clips.every((clip) => clip.recording && !clip.error);
 
   function addFiles(files: FileList | null) {
+    if (limits.maxBytes === null) {
+      setError(
+        "Wait for the upload limit to load, or retry the API connection.",
+      );
+      return;
+    }
     if (!files) return;
     const added = Array.from(files);
     if (clips.length + added.length > 15) {
@@ -115,10 +123,10 @@ export function NewBatch() {
         0,
       ) + added.reduce((total, file) => total + file.size, 0);
     if (
-      added.some((file) => file.size > MAX_FILE_BYTES) ||
-      size > 15 * MAX_FILE_BYTES
+      added.some((file) => file.size > maxFileBytes) ||
+      size > 15 * maxFileBytes
     ) {
-      setError("Choose at most 15 videos, up to 2 GiB each.");
+      setError(`Choose at most 15 videos, up to ${limits.label} each.`);
       return;
     }
     setError("");
@@ -311,11 +319,12 @@ export function NewBatch() {
                 <CardTitle>1. Add your clips</CardTitle>
                 <CardDescription>
                   MP4, MOV, MKV, M4V or WebM. Videos can be minutes long, up to
-                  six hours each. Up to 2 GiB per file. Import videos you have
-                  permission to edit.
+                  six hours each. Up to {limits.label} per file. Import videos
+                  you have permission to edit.
                 </CardDescription>
               </CardHeader>
               <CardContent className="flex flex-col gap-4">
+                <ImportLimitNotice limits={limits} />
                 <Field>
                   <FieldLabel htmlFor="batch-files">Select videos</FieldLabel>
                   <Input
@@ -323,7 +332,11 @@ export function NewBatch() {
                     type="file"
                     multiple
                     accept=".mp4,.m4v,.mov,.mkv,.webm"
-                    disabled={busy !== null || clips.length >= 15}
+                    disabled={
+                      busy !== null ||
+                      limits.maxBytes === null ||
+                      clips.length >= 15
+                    }
                     onChange={(event) => {
                       addFiles(event.target.files);
                       event.target.value = "";

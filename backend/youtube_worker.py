@@ -7,10 +7,11 @@ import time
 from pathlib import Path
 from urllib.parse import urlsplit
 
+from yt_dlp.downloader.hls import HlsFD
 from yt_dlp.globals import plugin_dirs
 
 from .files import write_json_atomic as write_json
-from .youtube_network import YouTubeDownloader, canonical_video_url
+from .youtube_network import YouTubeDownloader, canonical_video_url, video_provider
 
 
 class QuietLogger:
@@ -89,7 +90,67 @@ def select_formats(info: dict):
     ]
 
 
+def select_twitch_format(info):
+    formats = [
+        format
+        for format in info.get("formats", [])
+        if format.get("protocol") == "m3u8_native"
+        and urlsplit(format.get("url", "")).scheme == "https"
+        and not format.get("has_drm")
+        and (format.get("vcodec") or "").startswith(("avc1", "h264"))
+        and (format.get("acodec") or "").startswith(("mp4a", "aac"))
+        and 0 < (format.get("height") or 0) <= 1080
+        and 0 < (format.get("fps") or 30) <= 60
+        and audio_rank(format)[0] > 0
+    ]
+    if not formats:
+        raise ValueError("No supported public H.264/AAC Twitch VOD format")
+    best = max(formats, key=lambda f: (audio_rank(f)[:2], f.get("height") or 0, f.get("tbr") or 0))
+    return [("video.ts", best)]
+
+
+def download_twitch_hls(downloader, selected, output, progress):
+    # Inspect a bounded complete media playlist before invoking the native
+    # downloader. Unsupported/encrypted playlists must never fall back to a
+    # network-enabled FFmpeg process, outside our destination guard.
+    with downloader.urlopen(selected["url"]) as response:
+        raw = response.read(2 * 1024**2 + 1)
+    if len(raw) > 2 * 1024**2:
+        raise ValueError("Twitch playlist exceeded its size limit")
+    manifest = raw.decode("utf-8-sig")
+    validate_twitch_manifest(manifest, selected)
+    native = HlsFD(downloader, downloader.params)
+    native.add_progress_hook(progress)
+    return native.download(
+        str(output),
+        {
+            **selected,
+            "extractor_key": "TwitchVod",
+            "is_live": False,
+            "hls_media_playlist_data": manifest,
+        },
+    )
+
+
+def validate_twitch_manifest(manifest, selected):
+    lines = [line.strip() for line in manifest.splitlines()]
+    unsupported = any(
+        line.startswith(("#EXT-X-SESSION-KEY", "#EXT-X-MAP", "#ANVATO-SEGMENT", "#UPLYNK-SEGMENT"))
+        or (line.startswith("#EXT-X-KEY") and line != "#EXT-X-KEY:METHOD=NONE")
+        for line in lines
+    )
+    if (
+        not manifest.startswith("#EXTM3U")
+        or "#EXT-X-ENDLIST" not in lines
+        or unsupported
+        or selected.get("hls_aes")
+        or not HlsFD.can_download(manifest, selected)
+    ):
+        raise ValueError("Only complete, unencrypted native Twitch VOD playlists are supported")
+
+
 def download(request: dict, root: Path):
+    platform = video_provider(request["url"])
     plugin_dirs.value = []
     last_update = 0.0
     completed_bytes = 0
@@ -112,7 +173,7 @@ def download(request: dict, root: Path):
         "no_warnings": True,
         "logger": QuietLogger(),
         "noplaylist": True,
-        "allowed_extractors": ["youtube"],
+        "allowed_extractors": ["twitch:vod"] if platform == "twitch" else ["youtube"],
         "proxy": "",
         "socket_timeout": 15,
         "retries": 0,
@@ -121,16 +182,20 @@ def download(request: dict, root: Path):
         "cachedir": False,
         "remote_components": [],
         "plugin_dirs": [],
-        "js_runtimes": {"node": {"path": request["node"]}},
+        "js_runtimes": {"node": {"path": request["node"]}} if platform == "youtube" else {},
         "progress_hooks": [progress],
         "max_filesize": request["max_bytes"],
         "overwrites": False,
         "continuedl": False,
         "concurrent_fragment_downloads": 1,
+        "external_downloader": {"default": "native"},
+        "skip_unavailable_fragments": False,
     }
     with YouTubeDownloader(options) as downloader:
         info = downloader.extract_info(
-            canonical_video_url(request["url"]), download=False, ie_key="Youtube"
+            canonical_video_url(request["url"]),
+            download=False,
+            ie_key="TwitchVod" if platform == "twitch" else "Youtube",
         )
         duration = info.get("duration")
         if (
@@ -140,22 +205,51 @@ def download(request: dict, root: Path):
             or type(duration) not in (float, int)
             or not math.isfinite(duration)
             or not 0 < duration <= request["max_seconds"]
+            or (platform == "twitch" and info.get("is_live") is not False)
         ):
             raise ValueError("Unsupported live, unavailable, or oversized video")
-        formats = select_formats(info)
+        formats = select_twitch_format(info) if platform == "twitch" else select_formats(info)
         title = info.get("title")
         if not isinstance(title, str) or not title.strip():
             raise ValueError("Video title unavailable")
         if request.get("metadata_only"):
-            return {"name": title[:200], "duration": duration, "has_audio": True}
+            return {
+                "name": title[:200],
+                "duration": duration,
+                "has_audio": True,
+                **(
+                    {
+                        "preview_image_url": info.get("thumbnail")
+                        or next(
+                            (
+                                item.get("url")
+                                for item in info.get("thumbnails", [])
+                                if item.get("url")
+                            ),
+                            None,
+                        )
+                    }
+                    if platform == "twitch"
+                    else {}
+                ),
+            }
         sizes = [f.get("filesize") or f.get("filesize_approx") for _, f in formats]
         if all(type(size) in (int, float) and size > 0 for size in sizes):
             total_bytes = int(sum(sizes))
             if total_bytes > request["max_bytes"]:
                 raise ValueError("Source exceeded size limit")
         for filename, selected in formats:
-            success, _ = downloader.dl(
-                str(root / filename), {**selected, "http_headers": info.get("http_headers", {})}
+            success, _ = (
+                download_twitch_hls(
+                    downloader,
+                    {**selected, "http_headers": info.get("http_headers", {})},
+                    root / filename,
+                    progress,
+                )
+                if platform == "twitch"
+                else downloader.dl(
+                    str(root / filename), {**selected, "http_headers": info.get("http_headers", {})}
+                )
             )
             path = root / filename
             if not success or not path.is_file() or path.stat().st_size <= 0:
@@ -175,7 +269,7 @@ def main():
         write_json(
             root / "result.json",
             {
-                "error": "YouTube could not provide supported public footage with English audio. Check the link or upload an English recording. Private, restricted, live, and DRM-protected footage is not imported."
+                "error": "Could not import supported public YouTube or Twitch footage with English audio. Check the link or upload the recording. Private, restricted, live, encrypted and DRM-protected footage is not imported."
             },
         )
         return 1

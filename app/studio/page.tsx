@@ -1,4 +1,8 @@
 "use client";
+import {
+  useImportLimits,
+  ImportLimitNotice,
+} from "../components/import-limits";
 import { DeleteAction } from "../components/delete-action";
 import { PostedCheckbox } from "../components/posted-checkbox";
 import { MAX_VIDEO_SECONDS } from "../../lib/projects";
@@ -133,6 +137,7 @@ const clock = (value: number) => {
 };
 
 export default function Workspace() {
+  const limits = useImportLimits();
   const fieldId = useId();
   const [recordings, setRecordings] = useState<Recording[]>([]);
   const [selectedId, setSelectedId] = useState("");
@@ -394,8 +399,14 @@ export default function Workspace() {
     if (importing || submitting || loading || libraryBusy || navigationLocked)
       return;
     setError("");
-    if (file.size === 0 || file.size > 2 * 1024 ** 3) {
-      setError("Choose a non-empty video no larger than 2 GiB.");
+    if (limits.maxBytes === null) {
+      setError(
+        "Wait for the upload limit to load, or retry the API connection.",
+      );
+      return;
+    }
+    if (file.size === 0 || file.size > (limits.maxBytes ?? 0)) {
+      setError(`Choose a non-empty video up to ${limits.label}.`);
       return;
     }
     setImporting(true);
@@ -660,6 +671,7 @@ export default function Workspace() {
                 accept=".mp4,.m4v,.mov,.mkv,.webm"
                 className="visually-hidden"
                 aria-label="Choose recording"
+                disabled={limits.maxBytes === null || importing}
                 onChange={(event) => {
                   const file = event.target.files?.[0];
                   event.target.value = "";
@@ -670,6 +682,7 @@ export default function Workspace() {
                 type="button"
                 className="import-button"
                 disabled={
+                  limits.maxBytes === null ||
                   importing ||
                   loading ||
                   submitting ||
@@ -682,12 +695,13 @@ export default function Workspace() {
                 <UploadIcon data-icon="inline-start" />
                 {importing ? "Importing recording..." : "Import recording"}
               </Button>
+              <ImportLimitNotice limits={limits} />
               <p role="status">
                 {importing
                   ? uploadProgress < 100
                     ? `${Math.floor(uploadProgress)}% transferred. Keep this page open.`
                     : "Saving and checking your video…"
-                  : "MP4, MOV, MKV, M4V, WebM. Up to 2 GiB."}
+                  : `MP4, MOV, MKV, M4V, WebM. Up to ${limits.label}.`}
               </p>
               {importing ? (
                 <Progress

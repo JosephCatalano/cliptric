@@ -8,6 +8,7 @@ import threading
 import time
 from concurrent.futures import Future, ThreadPoolExecutor
 from typing import Literal
+from urllib.parse import urlsplit
 from uuid import UUID, uuid4
 
 from fastapi import APIRouter, HTTPException
@@ -19,7 +20,7 @@ from .media import MediaError, RenderCancelled
 from .models import Recording
 from .storage import now
 from .transcription_models import clean_text
-from .youtube_network import canonical_video_url
+from .youtube_network import canonical_video_url, video_provider
 
 logger = logging.getLogger(__name__)
 ACTIVE = {"queued", "downloading", "processing", "cancelling"}
@@ -54,6 +55,7 @@ class YouTubeImport(BaseModel):
 
 
 class YouTubeSource(BaseModel):
+    preview_image_url: str | None = Field(default=None, max_length=2048)
     model_config = ConfigDict(extra="forbid", allow_inf_nan=False)
     id: str
     url: str
@@ -63,7 +65,29 @@ class YouTubeSource(BaseModel):
 
     @property
     def thumbnail_url(self):
+        if video_provider(self.url) == "twitch":
+            return self.preview_image_url
         return f"https://i.ytimg.com/vi/{self.url.rsplit('=', 1)[1]}/hqdefault.jpg"
+
+    @field_validator("preview_image_url")
+    @classmethod
+    def safe_preview(cls, value):
+        if value is None:
+            return value
+        url = urlsplit(value)
+        allowed = ("jtvnw.net", "twitchcdn.net", "twitch.tv", "ytimg.com")
+        if (
+            url.scheme != "https"
+            or url.username
+            or url.password
+            or url.port not in {None, 443}
+            or not any(
+                url.hostname == domain or (url.hostname or "").endswith("." + domain)
+                for domain in allowed
+            )
+        ):
+            raise ValueError("Unsupported video preview image.")
+        return value
 
 
 class YouTubeImports:
@@ -102,7 +126,7 @@ class YouTubeImports:
             elif job.status in ACTIVE:
                 job.status, job.error = (
                     "interrupted",
-                    "Import was interrupted. Retry the YouTube link explicitly.",
+                    "Import was interrupted. Retry the video link explicitly.",
                 )
                 self.save(job)
         for path in self.root.iterdir():
@@ -147,7 +171,7 @@ class YouTubeImports:
                 "SELECT payload FROM youtube_sources WHERE id=?", (identifier,)
             ).fetchone()
         if row is None:
-            raise HTTPException(404, "YouTube preview not found. Enter the link again.")
+            raise HTTPException(404, "Video preview not found. Enter the link again.")
         return YouTubeSource.model_validate_json(row[0])
 
     def preview(self, request):
@@ -159,10 +183,8 @@ class YouTubeImports:
         work = self.root / identifier
         try:
             node = shutil.which("node")
-            if node is None:
-                raise HTTPException(
-                    503, "YouTube preview requires Node.js. Upload the file instead."
-                )
+            if node is None and video_provider(request.url) == "youtube":
+                raise HTTPException(503, "Video preview requires Node.js. Upload the file instead.")
             work.mkdir()
             (work / "request.json").write_text(
                 json.dumps(
@@ -218,9 +240,7 @@ class YouTubeImports:
                 active = self.get(self.active)
                 if active.url == request.url:
                     return active
-                raise HTTPException(
-                    409, "Another YouTube video is importing. Wait or cancel it first."
-                )
+                raise HTTPException(409, "Another video is importing. Wait or cancel it first.")
             with self.store.connection() as db:
                 rows = db.execute(
                     "SELECT payload FROM youtube_imports WHERE url=? ORDER BY created_at DESC,id DESC LIMIT 1",
@@ -237,10 +257,10 @@ class YouTubeImports:
                     prior.status, prior.recording_id, prior.error = "succeeded", recording.id, None
                     self.save(prior)
                     return prior
-            if shutil.which("node") is None:
+            if shutil.which("node") is None and video_provider(request.url) == "youtube":
                 raise HTTPException(
                     503,
-                    "YouTube import requires the project's Node.js runtime. Upload the file instead.",
+                    "Video import requires the project's Node.js runtime. Upload the file instead.",
                 )
             job = YouTubeImport(
                 id=identifier or str(uuid4()),
@@ -298,7 +318,7 @@ class YouTubeImports:
                         raise RenderCancelled()
                     if time.monotonic() > deadline:
                         raise MediaError(
-                            f"YouTube import reached its {self.settings.upload_timeout_seconds:g}-second processing limit."
+                            f"Video import reached its {self.settings.upload_timeout_seconds:g}-second processing limit."
                         )
                     require_space(self.store.root, self.settings.min_free_bytes)
                     if (
@@ -311,13 +331,13 @@ class YouTubeImports:
                         > self.settings.max_upload_bytes + 1024**2
                         or log.tell() > 1024**2
                     ):
-                        raise MediaError("YouTube import exceeded its size limit.")
+                        raise MediaError("Video import exceeded its size limit.")
                     if (
                         output
                         and output.is_file()
                         and output.stat().st_size > self.settings.max_upload_bytes
                     ):
-                        raise MediaError("Combined YouTube video exceeded its size limit.")
+                        raise MediaError("Combined video exceeded its size limit.")
                     fields = read_json_snapshot(work / "progress.json") if downloading else None
                     if fields is not None:
                         with self.lock:
@@ -374,16 +394,18 @@ class YouTubeImports:
             result_path = work / "result.json"
             if not result_path.is_file() or result_path.stat().st_size > 4096:
                 raise MediaError(
-                    "YouTube downloader did not return a valid result. Upload the file or retry explicitly."
+                    "Video downloader did not return a valid result. Upload the file or retry explicitly."
                 )
             result = json.loads(result_path.read_text(encoding="utf-8"))
             if result.get("error"):
                 raise MediaError(
-                    "YouTube could not provide a supported public video. Check the link or upload the file. Restricted and live footage is not imported."
+                    "The source could not provide a supported public video. Check the link or upload the file. Restricted and live footage is not imported."
                 )
             files = result.get("files")
-            if files not in (["video.mp4"], ["video.mp4", "audio.m4a"]):
-                raise MediaError("Invalid YouTube media result.")
+            if files not in (["video.mp4"], ["video.mp4", "audio.m4a"], ["video.ts"]):
+                raise MediaError("Invalid downloaded media result.")
+            if files == ["video.ts"] and video_provider(job.url) != "twitch":
+                raise MediaError("Unexpected segmented source format.")
             with self.lock:
                 job = self.get(identifier)
                 if self.cancel_event.is_set():
@@ -391,7 +413,7 @@ class YouTubeImports:
                 job.status = "processing"
                 self.save(job)
             source = work / "video.mp4"
-            if len(files) == 2:
+            if len(files) == 2 or files == ["video.ts"]:
                 size = sum((work / name).stat().st_size for name in files)
                 require_space(self.store.root, self.settings.min_free_bytes, size)
                 # Mux local files in a separate, cancellable FFmpeg process. No remote URLs enter FFmpeg.
@@ -410,7 +432,7 @@ class YouTubeImports:
                         "-protocol_whitelist",
                         "file,pipe",
                         "-format_whitelist",
-                        "mov,matroska,webm",
+                        "mpegts" if name == "video.ts" else "mov,matroska,webm",
                         "-i",
                         str((work / name).resolve()),
                     ]
@@ -418,7 +440,7 @@ class YouTubeImports:
                     "-map",
                     "0:v:0",
                     "-map",
-                    "1:a:0",
+                    "1:a:0" if len(files) == 2 else "0:a:0",
                     "-c",
                     "copy",
                     "-map_metadata",
@@ -433,6 +455,8 @@ class YouTubeImports:
                     raise MediaError("Could not combine the downloaded audio and video.")
                 source = merged
             info = self.media.probe(source)
+            if video_provider(job.url) == "twitch" and not info.has_audio:
+                raise MediaError("The Twitch VOD did not contain supported audio.")
             size = source.stat().st_size
             if not 0 < size <= self.settings.max_upload_bytes:
                 raise MediaError("Downloaded video exceeds the import size limit.")
@@ -506,26 +530,32 @@ def create_youtube_router(manager):
     router = APIRouter()
 
     @router.post("/api/youtube-sources", response_model=YouTubeSource, status_code=201)
+    @router.post("/api/video-sources", response_model=YouTubeSource, status_code=201)
     def preview(request: YouTubeRequest):
         return manager.preview(request)
 
     @router.get("/api/youtube-sources/{identifier}", response_model=YouTubeSource)
+    @router.get("/api/video-sources/{identifier}", response_model=YouTubeSource)
     def source(identifier: UUID):
         return manager.source(str(identifier))
 
     @router.post("/api/youtube-imports", response_model=YouTubeImport, status_code=202)
+    @router.post("/api/video-imports", response_model=YouTubeImport, status_code=202)
     def submit(request: YouTubeRequest):
         return manager.submit(request)
 
     @router.get("/api/youtube-imports/latest", response_model=YouTubeImport | None)
+    @router.get("/api/video-imports/latest", response_model=YouTubeImport | None)
     def latest():
         return manager.latest()
 
     @router.get("/api/youtube-imports/{identifier}", response_model=YouTubeImport)
+    @router.get("/api/video-imports/{identifier}", response_model=YouTubeImport)
     def get(identifier: UUID):
         return manager.get(str(identifier))
 
     @router.post("/api/youtube-imports/{identifier}/cancel", response_model=YouTubeImport)
+    @router.post("/api/video-imports/{identifier}/cancel", response_model=YouTubeImport)
     def cancel(identifier: UUID):
         return manager.cancel(str(identifier))
 

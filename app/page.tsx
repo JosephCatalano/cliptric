@@ -25,6 +25,7 @@ import {
   CardContent,
 } from "@/components/ui/card";
 import { Tabs, TabsList, TabsTrigger, TabsContent } from "@/components/ui/tabs";
+import { useImportLimits, ImportLimitNotice } from "./components/import-limits";
 import { HomeProjects } from "./components/home-projects";
 
 import { useEffect, useRef, useState, type FormEvent } from "react";
@@ -35,6 +36,7 @@ import type { Recording, YouTubeSource } from "../lib/projects";
 
 export default function HomePage() {
   const router = useRouter();
+  const limits = useImportLimits();
   const [url, setUrl] = useState("");
   const [busy, setBusy] = useState(false);
   const [loadingDetails, setLoadingDetails] = useState(false);
@@ -65,8 +67,14 @@ export default function HomePage() {
   useEffect(() => () => upload.current?.abort(), []);
   async function importFile(file: File) {
     if (busy) return;
-    if (file.size === 0 || file.size > 2 * 1024 ** 3) {
-      setError("Choose a non-empty video up to 2 GiB.");
+    if (limits.maxBytes === null) {
+      setError(
+        "Wait for the upload limit to load, or retry the API connection.",
+      );
+      return;
+    }
+    if (file.size === 0 || file.size > (limits.maxBytes ?? 0)) {
+      setError(`Choose a non-empty video up to ${limits.label}.`);
       return;
     }
     setBusy(true);
@@ -99,7 +107,7 @@ export default function HomePage() {
     setError("");
     try {
       const value = await api<YouTubeSource>(
-        "/api/youtube-sources",
+        "/api/video-sources",
         {
           method: "POST",
           headers: { "Content-Type": "application/json" },
@@ -107,7 +115,7 @@ export default function HomePage() {
         },
         65_000,
       );
-      router.push(`/projects/new/youtube/${value.id}`);
+      router.push(`/projects/new/video/${value.id}`);
     } catch (error) {
       setError(message(error));
       setBusy(false);
@@ -139,10 +147,12 @@ export default function HomePage() {
               Create clips
             </CardTitle>
             <CardDescription>
-              Add a YouTube link or upload a video to get started.
+              Add a YouTube or Twitch VOD link, or upload a video to get
+              started.
             </CardDescription>
           </CardHeader>
           <CardContent className="flex flex-col gap-5">
+            <ImportLimitNotice limits={limits} />
             {error ? (
               <Alert role="alert" variant="destructive">
                 <AlertDescription>{error}</AlertDescription>
@@ -156,11 +166,11 @@ export default function HomePage() {
                 <TabsTrigger
                   value="youtube"
                   disabled={working}
-                  aria-label="YouTube link"
+                  aria-label="YouTube or Twitch VOD link"
                 >
                   <LinkIcon />
                   <span>
-                    YouTube<span className="hidden sm:inline"> link</span>
+                    Video<span className="hidden sm:inline"> link</span>
                   </span>
                 </TabsTrigger>
                 <TabsTrigger
@@ -178,7 +188,7 @@ export default function HomePage() {
                 <form onSubmit={importYouTube} className="flex flex-col gap-3">
                   <Field>
                     <FieldLabel htmlFor="youtube-url">
-                      YouTube video link
+                      YouTube video or Twitch VOD link
                     </FieldLabel>
                     <div className="source-url-row">
                       <Input
@@ -226,7 +236,7 @@ export default function HomePage() {
                       id="source-upload-file"
                       type="file"
                       accept=".mp4,.m4v,.mov,.mkv,.webm"
-                      disabled={working}
+                      disabled={limits.maxBytes === null || working}
                       onChange={(event) => {
                         const file = event.target.files?.[0];
                         if (file) void importFile(file);
@@ -236,8 +246,8 @@ export default function HomePage() {
                   </Field>
                 </div>
                 <p className="mt-3 text-xs">
-                  MP4, MOV, MKV or WebM, up to 2 GiB and six hours. Import
-                  videos you own or have permission to repurpose.
+                  MP4, MOV, MKV or WebM, up to {limits.label} and six hours.
+                  Import videos you own or have permission to repurpose.
                 </p>
               </TabsContent>
             </Tabs>

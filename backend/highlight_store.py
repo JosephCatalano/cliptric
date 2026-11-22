@@ -27,6 +27,9 @@ class HighlightStore:
                 );
                 CREATE INDEX IF NOT EXISTS highlights_candidates_job ON highlight_candidates(job_id);
                 CREATE INDEX IF NOT EXISTS highlights_candidates_fingerprint ON highlight_candidates(fingerprint);
+                CREATE TABLE IF NOT EXISTS highlight_pools (
+                    cache_key TEXT PRIMARY KEY, payload TEXT NOT NULL
+                );
             """)
 
     def recover(self) -> None:
@@ -120,7 +123,7 @@ class HighlightStore:
                 (payload["status"], json.dumps(payload), identifier),
             )
 
-    def publish(self, job: HighlightJob, candidates: list[Candidate], rejected: int) -> None:
+    def publish(self, job: HighlightJob, candidates: list[Candidate], rejected: int, *, pool: list[Candidate] | None = None) -> None:
         with self.store.connection() as db:
             db.execute("BEGIN IMMEDIATE")
             latest = db.execute(
@@ -167,6 +170,19 @@ class HighlightStore:
                 "UPDATE highlight_jobs SET status='succeeded',payload=? WHERE id=?",
                 (json.dumps(payload), job.id),
             )
+            if pool is not None and job.pool_key:
+                db.execute("INSERT INTO highlight_pools VALUES (?,?) ON CONFLICT(cache_key) DO UPDATE SET payload=excluded.payload",
+                           (job.pool_key, json.dumps([candidate.model_dump() for candidate in pool])))
+
+    def pool(self, key: str) -> list[Candidate]:
+        with self.store.connection() as db:
+            row = db.execute("SELECT payload FROM highlight_pools WHERE cache_key=?", (key,)).fetchone()
+            if not row:
+                return []
+            result = [Candidate.model_validate(item) for item in json.loads(row[0])]
+            # A review may have changed since discovery. Never revive an explicitly rejected moment.
+            rejected = {item[0] for item in db.execute("SELECT DISTINCT fingerprint FROM highlight_candidates WHERE review='rejected'")}
+            return [candidate for candidate in result if candidate.fingerprint not in rejected]
 
     def review(self, identifier: str, request: ReviewRequest) -> Candidate:
         with self.store.connection() as db:
