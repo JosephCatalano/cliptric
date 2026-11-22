@@ -1,0 +1,24 @@
+{
+  "light": {
+    "primary_text_on_canvas": 18.28,
+    "secondary_text_on_surface": 10.32,
+    "muted_text_on_surface": 4.92,
+    "primary_button": 6.96,
+    "secondary_button": 8.54,
+    "link_on_canvas": 7.01,
+    "success_text_on_bg": 5.05,
+    "warning_text_on_bg": 5.48,
+    "danger_text_on_bg": 5.11
+  },
+  "dark": {
+    "primary_text_on_canvas": 18.54,
+    "secondary_text_on_surface": 12.49,
+    "muted_text_on_surface": 7.65,
+    "primary_button": 9.19,
+    "secondary_button": 11.19,
+    "link_on_canvas": 10.71,
+    "success_text_on_bg": 7.82,
+    "warning_text_on_bg": 8.21,
+    "danger_text_on_bg": 6.62
+  }
+}

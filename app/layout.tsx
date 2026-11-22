@@ -28,7 +28,8 @@ export default function RootLayout({
   return (
     <html
       lang="en"
-      className={`dark ${instrumentSans.variable}`}
+      className={instrumentSans.variable}
+      data-theme="dark"
       suppressHydrationWarning
     >
       <head>

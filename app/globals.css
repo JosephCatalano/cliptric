@@ -2,148 +2,89 @@
 @import "tw-animate-css";
 @import "shadcn/tailwind.css";
 
-@custom-variant dark (&:is(.dark *));
+@import "../assets/branding/design-system/cliptric-theme.css";
 
-/* Brand and editing colours are shared by both themes. */
+@custom-variant dark (&:where([data-theme="dark"], [data-theme="dark"] *));
+
+/* Map the approved palette to shadcn and the app's editor controls. */
 :root {
-  --radius: 0.625rem;
-  --brand-blue: #1458fa;
-  --brand-motion: #0078f9;
-  --brand-violet: #8107ee;
-  --brand-purple: #7900fa;
-  --brand-cyan: #00d5fa;
-  --brand-lavender: #b16cff;
-  --brand-ink: #07072f;
-  --brand-white: #fafbff;
-  --brand-gradient: linear-gradient(
-    135deg,
-    var(--brand-blue),
-    #5b23f9 56%,
-    var(--brand-violet)
-  );
-  --ribbon-gradient: linear-gradient(
-    100deg,
-    var(--brand-cyan),
-    #52c8ff 32%,
-    var(--brand-lavender) 75%,
-    #d35cff
-  );
-  --editor-canvas: #070916;
-  --editor-preview: #03040c;
-  --editor-timeline: #0e1429;
-  --editor-track: #222c4a;
-  --editor-selection: #5668ff;
-  --editor-playhead: #e5edff;
-  --editor-handle: #ba78ff;
-  --editor-waveform: #1bc9e8;
-  --editor-caption-text: #ffffff;
-  --editor-caption-outline: #050613;
-  --editor-caption-emphasis: #bb99ff;
-  --editor-caption-punchline: #ffe08a;
-  --editor-caption-backplate: #080a17cc;
-  --chart-1: #3e76ff;
-  --chart-2: #a06aff;
-  --chart-3: #22c5e8;
-  --chart-4: #35c9a0;
-  --chart-5: #f6b94d;
-  --chart-6: #f17b9c;
-  --chart-7: #c3a1ff;
-  --chart-8: #8193be;
-
   color-scheme: light;
-  --background: var(--brand-white);
-  --foreground: var(--brand-ink);
-  --card: #ffffff;
-  --popover: #ffffff;
-  --sidebar: #f0f3fc;
-  --surface-alt: #f1f4fc;
-  --secondary-text: #283557;
-  --muted-foreground: #505f7b;
-  --border: #d4ddef;
-  --border-strong: #8c9bb9;
-  --divider: #e3e9f4;
-  --input-background: #ffffff;
-  --input: #8c9bb9;
-  --primary: var(--brand-blue);
-  --primary-hover: #1048d3;
-  --primary-foreground: #ffffff;
-  --secondary: #e6ecfc;
-  --secondary-hover: #d7e1fa;
-  --secondary-foreground: #1a2e59;
-  --accent: #e9edff;
-  --surface-active: #dee5ff;
-  --accent-foreground: #263777;
-  --link: #2448ac;
-  --link-hover: #5320bc;
-  --ring: var(--brand-purple);
-  --selection: #d9dfff;
-  --success: #176342;
-  --success-background: #def5e9;
-  --warning: #805117;
-  --warning-background: #fff2d7;
-  --destructive: #b92c46;
-  --destructive-background: #fce8ef;
-  --info: #245abb;
-  --info-background: #e7f1ff;
-  --disabled-background: #eff2f8;
-  --disabled-foreground: #8894a9;
-  --overlay: #080b26b3;
-  --progress-gradient: var(--brand-gradient);
-
+  --radius: 0.625rem;
+  --background: var(--ct-canvas);
+  --foreground: var(--ct-text-primary);
+  --card: var(--ct-surface);
   --card-foreground: var(--foreground);
+  --popover: var(--ct-surface-alt);
   --popover-foreground: var(--foreground);
-  --muted: var(--surface-alt);
-  --sidebar-foreground: var(--secondary-text);
+  --primary: var(--ct-button-primary);
+  --primary-hover: var(--ct-button-primary-hover);
+  --primary-foreground: var(--ct-button-primary-text);
+  --secondary: var(--ct-button-secondary);
+  --secondary-hover: var(--ct-button-secondary-hover);
+  --secondary-foreground: var(--ct-button-secondary-text);
+  --muted: var(--ct-surface-alt);
+  --muted-foreground: var(--ct-text-muted);
+  --accent: var(--ct-surface-hover);
+  --accent-foreground: var(--ct-text-primary);
+  --destructive: var(--ct-danger);
+  --destructive-background: var(--ct-danger-bg);
+  --border: var(--ct-border);
+  --border-strong: var(--ct-border-strong);
+  --divider: var(--ct-divider);
+  --input: var(--ct-input-border);
+  --input-background: var(--ct-input-bg);
+  --ring: var(--ct-focus-ring);
+  --link: var(--ct-link);
+  --link-hover: var(--ct-link-hover);
+  --selection: var(--ct-selection);
+  --success: var(--ct-success);
+  --success-background: var(--ct-success-bg);
+  --warning: var(--ct-warning);
+  --warning-background: var(--ct-warning-bg);
+  --info: var(--ct-info);
+  --info-background: var(--ct-info-bg);
+  --disabled-background: var(--ct-disabled-bg);
+  --disabled-foreground: var(--ct-disabled-text);
+  --overlay: var(--ct-overlay);
+  --sidebar: var(--ct-sidebar);
+  --sidebar-foreground: var(--ct-text-secondary);
   --sidebar-primary: var(--primary);
   --sidebar-primary-foreground: var(--primary-foreground);
-  --sidebar-accent: var(--surface-active);
-  --sidebar-accent-foreground: var(--accent-foreground);
+  --sidebar-accent: var(--ct-surface-hover);
+  --sidebar-active: var(--ct-surface-active);
+  --sidebar-accent-foreground: var(--ct-text-primary);
   --sidebar-border: var(--divider);
   --sidebar-ring: var(--ring);
+  --chart-1: var(--ct-chart-blue);
+  --chart-2: var(--ct-chart-violet);
+  --chart-3: var(--ct-chart-cyan);
+  --chart-4: var(--ct-chart-mint);
+  --chart-5: var(--ct-chart-amber);
+  --chart-6: var(--ct-chart-rose);
+  --chart-7: var(--ct-chart-lilac);
+  --chart-8: var(--ct-chart-slate);
+  --editor-canvas: var(--ct-editor-canvas);
+  --editor-preview: var(--ct-editor-preview-bg);
+  --editor-timeline: var(--ct-editor-timeline-bg);
+  --editor-track: var(--ct-editor-timeline-track);
+  --editor-selection: var(--ct-editor-timeline-selection);
+  --editor-playhead: var(--ct-editor-playhead);
+  --editor-handle: var(--ct-editor-trim-handle);
+  --editor-waveform: var(--ct-editor-waveform);
+  --editor-caption-text: var(--ct-editor-captions);
+  --editor-caption-outline: var(--ct-editor-captions-outline);
+  --editor-caption-emphasis: var(--ct-editor-caption-emphasis);
+  --editor-caption-punchline: var(--ct-editor-caption-punchline);
+  --editor-caption-backplate: var(--ct-editor-caption-backplate);
+  --ribbon-gradient: var(--ct-ribbon-gradient);
+  --progress-gradient: var(--ct-logo-gradient);
 }
 
-.dark {
+:root[data-theme="dark"] {
   color-scheme: dark;
-  --background: #090b1c;
-  --sidebar: #0d1025;
-  --card: #121832;
-  --popover: #171e39;
-  --surface-alt: #171e39;
-  --accent: #212a49;
-  --surface-active: #252b55;
-  --foreground: #f7f9ff;
-  --secondary-text: #d2daef;
-  --muted-foreground: #9eacc9;
-  --border: #2a3555;
-  --border-strong: #42506f;
-  --divider: #222c49;
-  --input-background: #0f152b;
-  --input: #405171;
-  --primary: #a8b1ff;
-  --primary-hover: #c0c6ff;
-  --primary-foreground: #0b1030;
-  --secondary: #283355;
-  --secondary-hover: #35426d;
-  --secondary-foreground: #f0f3ff;
-  --accent-foreground: #f0f3ff;
-  --link: #b2bcff;
-  --link-hover: #d1d6ff;
-  --ring: #af9bff;
-  --selection: #2c2861;
-  --success: #71e0a5;
-  --success-background: #13392d;
-  --warning: #f8ca77;
-  --warning-background: #42301b;
-  --destructive: #ff97aa;
-  --destructive-background: #462333;
-  --info: #95bfff;
-  --info-background: #172f55;
-  --disabled-background: #1b2237;
-  --disabled-foreground: #73809d;
-  --overlay: #000000c2;
   --progress-gradient: linear-gradient(
     90deg,
-    var(--brand-motion),
+    var(--ct-brand-motion-blue),
     var(--editor-waveform),
     var(--primary)
   );
@@ -199,6 +140,7 @@
   --color-sidebar-primary: var(--sidebar-primary);
   --color-sidebar-primary-foreground: var(--sidebar-primary-foreground);
   --color-sidebar-accent: var(--sidebar-accent);
+  --color-sidebar-active: var(--sidebar-active);
   --color-sidebar-accent-foreground: var(--sidebar-accent-foreground);
   --color-sidebar-border: var(--sidebar-border);
   --color-sidebar-ring: var(--sidebar-ring);
