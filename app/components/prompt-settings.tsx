@@ -10,10 +10,6 @@ import {
   FieldGroup,
   FieldLabel,
 } from "@/components/ui/field";
-import {
-  NativeSelect,
-  NativeSelectOption,
-} from "@/components/ui/native-select";
 import { Textarea } from "@/components/ui/textarea";
 import { Alert, AlertDescription } from "@/components/ui/alert";
 import { Skeleton } from "@/components/ui/skeleton";
@@ -42,7 +38,6 @@ type Settings = {
 export function PromptSettings() {
   const [saved, setSaved] = useState<Settings | null>(null);
   const [drafts, setDrafts] = useState<Record<string, string>>({});
-  const [selected, setSelected] = useState("highlights");
   const [reload, setReload] = useState(0);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState("");
@@ -80,13 +75,9 @@ export function PromptSettings() {
     setError("");
     setReload((value) => value + 1);
   }
-  const prompt = saved?.prompts.find((value) => value.key === selected);
-  const value = drafts[selected] ?? "";
-  const encodedBytes = new TextEncoder().encode(
-    JSON.stringify(value.trim()),
-  ).length;
-  async function save() {
-    if (!saved || !prompt) return;
+  async function save(prompt: Prompt) {
+    if (!saved) return;
+    const value = drafts[prompt.key] ?? "";
     setBusy(true);
     setError("");
     setNotice("");
@@ -95,7 +86,7 @@ export function PromptSettings() {
         method: "PATCH",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
-          key: selected,
+          key: prompt.key,
           revision: saved.revision,
           prompt: value,
         }),
@@ -103,7 +94,7 @@ export function PromptSettings() {
       setSaved(result);
       setDrafts((current) => ({
         ...current,
-        [selected]: result.prompts.find((p) => p.key === selected)!.value,
+        [prompt.key]: result.prompts.find((p) => p.key === prompt.key)!.value,
       }));
       setNotice(`${prompt.label} saved. Future requests will use it.`);
     } catch (e) {
@@ -136,107 +127,97 @@ export function PromptSettings() {
         </Alert>
       ) : null}
       {!saved && !error ? <Skeleton className="h-80 w-full" /> : null}
-      {saved && prompt ? (
-        <form
-          className="flex flex-col gap-4"
-          onSubmit={(event) => {
-            event.preventDefault();
-            void save();
-          }}
-        >
-          <FieldGroup>
-            <Field>
-              <FieldLabel htmlFor="prompt-task">Prompt</FieldLabel>
-              <NativeSelect
-                id="prompt-task"
-                value={selected}
-                disabled={busy}
-                onChange={(event) => {
-                  setSelected(event.target.value);
-                  setNotice("");
-                }}
-              >
-                {saved.prompts.map((p) => (
-                  <NativeSelectOption key={p.key} value={p.key}>
-                    {p.label}
-                    {p.customized ? " (custom)" : ""}
-                  </NativeSelectOption>
-                ))}
-              </NativeSelect>
-              <FieldDescription>{prompt.description}</FieldDescription>
-            </Field>
-            <div className="flex flex-wrap items-center gap-2">
-              <Badge variant="secondary">
-                {value === prompt.value ? "Saved" : "Unsaved changes"}
-              </Badge>
-              <span className="text-sm text-muted-foreground">
-                {encodedBytes.toLocaleString()} / 14,000 encoded bytes
-              </span>
-            </div>
-            <Field data-invalid={encodedBytes > 14000}>
-              <FieldLabel htmlFor="prompt-content">Instructions</FieldLabel>
-              <Textarea
-                id="prompt-content"
-                className="min-h-80"
-                value={value}
-                maxLength={12000}
-                aria-invalid={encodedBytes > 14000}
-                disabled={busy}
-                onChange={(event) => {
-                  setDrafts((current) => ({
-                    ...current,
-                    [selected]: event.target.value,
-                  }));
-                  setNotice("");
-                }}
-              />
-              <FieldDescription>
-                Plain text; no template syntax required. Project-specific
-                instructions are supplied separately when present.
-              </FieldDescription>
-            </Field>
-          </FieldGroup>
-          <div className="flex flex-wrap gap-2">
-            <Button
-              type="submit"
-              disabled={
-                busy ||
-                value === prompt.value ||
-                !value.trim() ||
-                encodedBytes > 14000
-              }
-            >
-              {busy ? "Saving…" : "Save prompt"}
-            </Button>
-            <Button
-              type="button"
-              variant="outline"
-              disabled={busy}
-              onClick={() => {
-                setDrafts((current) => ({
-                  ...current,
-                  [selected]: prompt.default,
-                }));
-                setNotice("Default restored in the editor. Save to apply.");
-              }}
-            >
-              Restore default
-            </Button>
-            <Button
-              type="button"
-              variant="ghost"
-              disabled={busy || value === prompt.value}
-              onClick={() => {
-                setDrafts((current) => ({
-                  ...current,
-                  [selected]: prompt.value,
-                }));
-                setNotice("");
-              }}
-            >
-              Discard this draft
-            </Button>
-          </div>
+      {saved ? (
+        <div className="flex flex-col gap-4">
+          {saved.prompts.map((prompt) => {
+            const value = drafts[prompt.key] ?? "";
+            const encodedBytes = new TextEncoder().encode(
+              JSON.stringify(value.trim()),
+            ).length;
+            return (
+              <FieldGroup key={prompt.key} className="rounded-lg border p-4">
+                <div className="flex flex-wrap items-center justify-between gap-2">
+                  <div>
+                    <h3>{prompt.label}</h3>
+                    <FieldDescription>{prompt.description}</FieldDescription>
+                  </div>
+                  <Badge variant="secondary">
+                    {value === prompt.value ? "Saved" : "Unsaved changes"}
+                  </Badge>
+                </div>
+                <div className="text-sm text-muted-foreground">
+                  {encodedBytes.toLocaleString()} / 14,000 bytes
+                </div>
+                <Field data-invalid={encodedBytes > 14000}>
+                  <FieldLabel htmlFor={`prompt-${prompt.key}`}>
+                    Instructions
+                  </FieldLabel>
+                  <Textarea
+                    id={`prompt-${prompt.key}`}
+                    className="min-h-24 max-h-[200px] overflow-y-auto"
+                    value={value}
+                    maxLength={12000}
+                    aria-invalid={encodedBytes > 14000}
+                    disabled={busy}
+                    onChange={(event) => {
+                      setDrafts((current) => ({
+                        ...current,
+                        [prompt.key]: event.target.value,
+                      }));
+                      setNotice("");
+                    }}
+                  />
+                  <FieldDescription>
+                    Plain text. Project instructions are supplied separately
+                    when present.
+                  </FieldDescription>
+                </Field>
+                <div className="flex flex-wrap gap-2">
+                  <Button
+                    type="button"
+                    disabled={
+                      busy ||
+                      value === prompt.value ||
+                      !value.trim() ||
+                      encodedBytes > 14000
+                    }
+                    onClick={() => void save(prompt)}
+                  >
+                    {busy ? "Saving?" : "Save"}
+                  </Button>
+                  <Button
+                    type="button"
+                    variant="outline"
+                    disabled={busy || value === prompt.default}
+                    onClick={() => {
+                      setDrafts((current) => ({
+                        ...current,
+                        [prompt.key]: prompt.default,
+                      }));
+                      setNotice(
+                        "Default restored in the editor. Save to apply.",
+                      );
+                    }}
+                  >
+                    Restore default
+                  </Button>
+                  <Button
+                    type="button"
+                    variant="ghost"
+                    disabled={busy || value === prompt.value}
+                    onClick={() =>
+                      setDrafts((current) => ({
+                        ...current,
+                        [prompt.key]: prompt.value,
+                      }))
+                    }
+                  >
+                    Discard draft
+                  </Button>
+                </div>
+              </FieldGroup>
+            );
+          })}
           {notice ? (
             <p role="status" className="text-sm text-muted-foreground">
               {notice}
@@ -259,7 +240,7 @@ export function PromptSettings() {
               </AccordionContent>
             </AccordionItem>
           </Accordion>
-        </form>
+        </div>
       ) : null}
     </section>
   );
