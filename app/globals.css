@@ -171,6 +171,9 @@
   .framing-editor {
     @apply max-w-3xl;
   }
+  .framing-pictures {
+    @apply grid min-w-0 grid-cols-[minmax(0,1fr)_minmax(0,0.6fr)] items-start gap-3;
+  }
   .new-project-workspace .project-fields {
     @apply max-w-3xl gap-x-8 gap-y-5;
   }

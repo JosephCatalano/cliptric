@@ -15,7 +15,7 @@ from .config import Settings
 from .editing import QualityOptions, edit_filter, retained_intervals, smart_filter
 from .encoding import encoding_profile
 from .files import require_space
-from .framing import SplitLayout, split_filter, validate_framing
+from .framing import SourceRegion, SplitLayout, split_filter, validate_framing
 
 
 class MediaError(Exception):
@@ -183,6 +183,7 @@ class Media:
         caption_path: Path | None = None,
         headline_path: Path | None = None,
         split_layout: SplitLayout | None = None,
+        crop_region: SourceRegion | None = None,
         quality: QualityOptions | None = None,
         cover_path: Path | None = None,
     ) -> MediaInfo:
@@ -233,16 +234,29 @@ class Media:
             if not overlay_path.is_file() or not 0 < overlay_path.stat().st_size <= 4 * 1024**2:
                 raise MediaError("The caption snapshot is missing, empty, or too large.")
         try:
-            validate_framing(mode, split_layout)
+            validate_framing(mode, split_layout, crop_region)
+            if crop_region and quality.smart_framing:
+                raise ValueError("Choose manual crop regions or smart framing, not both.")
         except ValueError as exc:
             raise MediaError(str(exc)) from exc
         active = (
             self.active_picture(source, original, start, end, cancel)
-            if mode != "split" and quality.smart_framing is None
+            if mode != "split" and quality.smart_framing is None and crop_region is None
             else None
         )
         prefix = f"[0:{original.video_index}]" + (f"crop={active}," if active else "")
-        if quality.smart_framing and quality.smart_framing.strategy == "crop":
+        if crop_region is not None:
+            try:
+                region = crop_region.pixels(
+                    original.width // 2 * 2, original.height // 2 * 2, (1080, 1920)
+                )
+            except ValueError as exc:
+                raise MediaError(str(exc)) from exc
+            framing = (
+                prefix
+                + f"scale={original.width // 2 * 2}:{original.height // 2 * 2},setsar=1,crop={region},scale=1080:1920"
+            )
+        elif quality.smart_framing and quality.smart_framing.strategy == "crop":
             if mode == "split":
                 raise MediaError("Smart framing cannot be combined with a manual split layout.")
             try:
@@ -296,6 +310,8 @@ class Media:
                     first.y + (last.y - first.y) * fraction,
                 )
                 cover_crop = f"crop=iw*{path.width:.8f}:ih*{path.height:.8f}:iw*{x:.8f}:ih*{y:.8f},"
+            if crop_region is not None:
+                cover_crop = f"scale={original.width // 2 * 2}:{original.height // 2 * 2},setsar=1,crop={region},"
             framing += f"[main_picture];[1:v]{cover_crop}scale=iw:ih:in_range=pc:out_range=tv,format=yuv420p,setparams=range=limited,split=2[cover_back][cover_front];"
             framing += "[cover_back]scale=270:480:force_original_aspect_ratio=increase:force_divisible_by=2,crop=270:480,boxblur=12:2,scale=1080:1920[cover_blur];"
             framing += "[cover_front]scale=1080:1920:force_original_aspect_ratio=decrease:force_divisible_by=2[cover_fit];"

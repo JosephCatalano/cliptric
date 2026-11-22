@@ -112,6 +112,8 @@ class Jobs:
             )
             if clip.quality != QualityOptions():
                 render_options["quality"] = clip.quality
+            if clip.crop_region is not None:
+                render_options["crop_region"] = clip.crop_region
             if clip.split_layout is not None:
                 render_options["split_layout"] = clip.split_layout
             if clip.captions is not None:

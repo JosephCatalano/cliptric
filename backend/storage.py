@@ -24,7 +24,15 @@ def _headline_snapshot(raw: str | None) -> dict | None:
 
 
 def _caption_snapshot(raw: str | None) -> dict | None:
-    return {"presentation_version": 1, **json.loads(raw)} if raw is not None else None
+    if raw is None:
+        return None
+    saved = {"presentation_version": 1, **json.loads(raw)}
+    customization = saved.get("customization", {})
+    if isinstance(customization, dict):
+        # Exports written before explicit font snapshots used 64px. New defaults
+        # must not relabel their already-rendered media as 80px.
+        saved["customization"] = {"font_size": 64, **customization}
+    return saved
 
 
 class Store:
@@ -78,6 +86,9 @@ class Store:
                 );
                 CREATE TABLE IF NOT EXISTS clip_framing (
                     clip_id TEXT PRIMARY KEY REFERENCES clips(id), options TEXT NOT NULL
+                );
+                CREATE TABLE IF NOT EXISTS clip_crop (
+                    clip_id TEXT PRIMARY KEY REFERENCES clips(id) ON DELETE CASCADE, options TEXT NOT NULL
                 );
                 CREATE TABLE IF NOT EXISTS clip_quality (
                     clip_id TEXT PRIMARY KEY REFERENCES clips(id), options TEXT NOT NULL
@@ -177,6 +188,11 @@ class Store:
                     "INSERT INTO clip_headlines VALUES (?, ?)",
                     (clip_id, request.headline.model_dump_json()),
                 )
+            if request.crop_region is not None:
+                db.execute(
+                    "INSERT INTO clip_crop VALUES (?, ?)",
+                    (clip_id, request.crop_region.model_dump_json()),
+                )
             if request.split_layout is not None:
                 db.execute(
                     "INSERT INTO clip_framing VALUES (?, ?)",
@@ -223,6 +239,9 @@ class Store:
         framing = db.execute(
             "SELECT options FROM clip_framing WHERE clip_id = ?", (row["id"],)
         ).fetchone()
+        crop = db.execute(
+            "SELECT options FROM clip_crop WHERE clip_id = ?", (row["id"],)
+        ).fetchone()
         quality = db.execute(
             "SELECT options FROM clip_quality WHERE clip_id=?", (row["id"],)
         ).fetchone()
@@ -235,6 +254,7 @@ class Store:
                 "headline": _headline_snapshot(headline[0] if headline else None),
                 "overlays": json.loads(overlays[0]) if overlays else [],
                 "split_layout": json.loads(framing[0]) if framing else None,
+                "crop_region": json.loads(crop[0]) if crop else None,
                 "quality": json.loads(quality[0]) if quality else {},
             }
         )
@@ -253,6 +273,9 @@ class Store:
                         "split_layout": json.loads(row["framing_options"])
                         if row["framing_options"]
                         else None,
+                        "crop_region": json.loads(row["crop_options"])
+                        if row["crop_options"]
+                        else None,
                         "quality": json.loads(row["quality_options"])
                         if row["quality_options"]
                         else {},
@@ -263,7 +286,8 @@ class Store:
                     }
                 )
                 for row in db.execute(
-                    "SELECT clips.*, clip_performance.payload AS render_performance, COALESCE(clip_posted.posted, 0) AS posted, clip_captions.options AS caption_options, clip_headlines.options AS headline_options, clip_overlays.options AS overlay_options, clip_framing.options AS framing_options, clip_quality.options AS quality_options FROM clips "
+                    "SELECT clips.*, clip_crop.options AS crop_options, clip_performance.payload AS render_performance, COALESCE(clip_posted.posted, 0) AS posted, clip_captions.options AS caption_options, clip_headlines.options AS headline_options, clip_overlays.options AS overlay_options, clip_framing.options AS framing_options, clip_quality.options AS quality_options FROM clips "
+                    "LEFT JOIN clip_crop ON clips.id=clip_crop.clip_id "
                     "LEFT JOIN clip_performance ON clips.id=clip_performance.clip_id "
                     "LEFT JOIN clip_posted ON clips.id = clip_posted.clip_id "
                     "LEFT JOIN clip_captions ON clips.id = clip_captions.clip_id "

@@ -1,4 +1,5 @@
 "use client";
+import { FramingEditor } from "./framing-editor";
 
 import { useEffect, useRef, useState } from "react";
 import { api, message } from "@/lib/client-api";
@@ -148,6 +149,18 @@ function ReviewItem({
   const [headline, setHeadline] = useState(item.headline_enabled);
   const [position, setPosition] = useState(item.headline_position);
   const [captions, setCaptions] = useState(item.caption_position);
+  const originalFraming = {
+    mode: item.framing ?? project.settings.framing,
+    layout: item.framing
+      ? (item.split_layout ?? null)
+      : (project.settings.split_layout ?? null),
+    crop: item.framing
+      ? (item.crop_region ?? null)
+      : (project.settings.crop_region ?? null),
+  };
+  const [framing, setFraming] = useState(originalFraming);
+  const framingChanged =
+    JSON.stringify(framing) !== JSON.stringify(originalFraming);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState("");
   const [videoError, setVideoError] = useState(false);
@@ -157,7 +170,8 @@ function ReviewItem({
     text !== (item.opening_text ?? "") ||
     headline !== item.headline_enabled ||
     position !== item.headline_position ||
-    captions !== item.caption_position;
+    captions !== item.caption_position ||
+    framingChanged;
   useEffect(() => {
     onDirty(dirty);
   }, [dirty, onDirty]);
@@ -185,6 +199,14 @@ function ReviewItem({
                   headline_enabled: headline,
                   headline_position: position,
                   caption_position: captions,
+                  ...(framingChanged
+                    ? {
+                        framing: framing.mode,
+                        split_layout: framing.layout,
+                        crop_region: framing.crop,
+                        quality: { ...item.quality, smart_framing: null },
+                      }
+                    : {}),
                 }
               : {
                   targets: [{ id: item.id, revision: item.revision }],
@@ -276,6 +298,20 @@ function ReviewItem({
         <p>
           {item.start.toFixed(1)}–{item.end.toFixed(1)}s in the source
         </p>
+        <FramingEditor
+          mode={framing.mode}
+          layout={framing.layout}
+          cropRegion={framing.crop}
+          sourceUrl={
+            project.recording_id || item.recording_id
+              ? `/api/recordings/${item.recording_id ?? project.recording_id}/media`
+              : undefined
+          }
+          timestamp={item.start}
+          end={item.end}
+          disabled={locked || busy}
+          onChange={(mode, layout, crop) => setFraming({ mode, layout, crop })}
+        />
         <div className="flex flex-wrap gap-2">
           <Badge variant="secondary">{item.review}</Badge>
           <Badge variant="outline">{item.posted ? "Posted" : "Unposted"}</Badge>

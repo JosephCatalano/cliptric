@@ -203,6 +203,7 @@ class Deletions:
                         "clip_headlines",
                         "clip_overlays",
                         "clip_framing",
+                        "clip_crop",
                         "clip_quality",
                     ):
                         db.execute(f"DELETE FROM {table} WHERE clip_id=?", (identifier,))

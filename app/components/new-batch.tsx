@@ -55,6 +55,7 @@ import {
   type Project,
   type ProjectSettings,
   type Recording,
+  type SourceRegion,
 } from "@/lib/projects";
 import { CaptionStylePicker } from "./caption-style-picker";
 import { CaptionCustomizationFields } from "./caption-customization-fields";
@@ -97,6 +98,7 @@ export function NewBatch() {
   const [aiInstructions, setAiInstructions] = useState("");
   const [cleanup, setCleanup] = useState<"off" | "light" | "standard">("off");
   const [normalize, setNormalize] = useState(false);
+  const [cropRegion, setCropRegion] = useState<SourceRegion | null>(null);
   const [framing, setFraming] = useState<"pad" | "crop">("pad");
   const [busy, setBusy] = useState<"importing" | "saving" | null>(null);
   const [error, setError] = useState("");
@@ -282,6 +284,7 @@ export function NewBatch() {
     caption_customization: style.customization,
     emphasis_words: [],
     framing,
+    crop_region: cropRegion,
     headline_enabled: headline,
     headline_position: headlinePosition,
     audio_cleanup: cleanup,
@@ -316,6 +319,7 @@ export function NewBatch() {
     setCleanup(value.audio_cleanup ?? "off");
     setNormalize(value.normalize_audio ?? false);
     setFraming(value.framing === "crop" ? "crop" : "pad");
+    setCropRegion(value.crop_region ?? null);
     setReviewConsent(false);
     setAiTitles(false);
   }
@@ -421,6 +425,13 @@ export function NewBatch() {
           flow={flow}
           preview={
             <BatchSourcePreview
+              mode={framing}
+              cropRegion={cropRegion}
+              disabled={busy !== null}
+              onChange={(mode, crop) => {
+                setFraming(mode);
+                setCropRegion(crop);
+              }}
               recordings={clips.flatMap((clip) =>
                 clip.recording ? [clip.recording] : [],
               )}
@@ -730,29 +741,7 @@ export function NewBatch() {
                       </NativeSelectOption>
                     </NativeSelect>
                   </Field>
-                  <Field>
-                    <FieldLabel htmlFor="batch-framing">
-                      Vertical framing
-                    </FieldLabel>
-                    <NativeSelect
-                      id="batch-framing"
-                      value={framing}
-                      onChange={(event) =>
-                        setFraming(event.target.value as "pad" | "crop")
-                      }
-                    >
-                      <NativeSelectOption value="pad">
-                        Fit full picture with blur fill
-                      </NativeSelectOption>
-                      <NativeSelectOption value="crop">
-                        Centre crop
-                      </NativeSelectOption>
-                    </NativeSelect>
-                    <FieldDescription>
-                      Fit keeps the full picture visible. Review crop on each
-                      clip.
-                    </FieldDescription>
-                  </Field>
+
                   <Field>
                     <FieldLabel htmlFor="batch-cleanup">
                       Audio cleanup

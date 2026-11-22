@@ -18,6 +18,7 @@ export const itemEdit = (item: ProjectItem) => ({
   quality: item.quality,
   framing: item.framing ?? null,
   split_layout: item.split_layout ?? null,
+  crop_region: item.crop_region ?? null,
 });
 
 export const reviewNeeded = (item: ProjectItem) =>

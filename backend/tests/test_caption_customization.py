@@ -1,5 +1,6 @@
 """Saved caption settings and manual timing; inference/provider fixtures are synthetic."""
 
+import json
 import threading
 from uuid import uuid4
 
@@ -72,11 +73,20 @@ def test_reject_invalid_customization(invalid):
         CaptionCustomization(**invalid)
 
 
-def test_legacy_defaults():
+def test_default_caption_size_and_legacy_export_snapshots():
+    from backend.storage import _caption_snapshot
+
+    assert CaptionCustomization().font_size == 80
     assert (
         CaptionOptions(transcription_id=uuid4(), revision=1).customization == CaptionCustomization()
     )
     assert SelectionDraft(start=0.0, end=5.0).caption_customization == CaptionCustomization()
+    saved = {"transcription_id": str(uuid4()), "revision": 1}
+    legacy = CaptionOptions.model_validate(_caption_snapshot(json.dumps(saved)))
+    assert legacy.customization.font_size == 64
+    saved["customization"] = {"font_size": 48}
+    explicit = CaptionOptions.model_validate(_caption_snapshot(json.dumps(saved)))
+    assert explicit.customization.font_size == 48
 
 
 def test_project_customization_persists_and_only_rerenders_affected_clip(context):

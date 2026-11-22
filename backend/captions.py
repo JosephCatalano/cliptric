@@ -22,7 +22,7 @@ class CaptionCustomization(BaseModel):
     model_config = ConfigDict(extra="forbid")
     grouping: Literal["auto", "one", "two", "three", "four"] = "auto"
     capitalization: Literal["original", "upper", "lower"] = "original"
-    font_size: int = Field(default=64, ge=32, le=96, strict=True)
+    font_size: int = Field(default=80, ge=32, le=96, strict=True)
     font_family: Literal["Arial", "Georgia", "Courier New"] = "Arial"
     font_weight: Literal["preset", "regular", "bold"] = "preset"
     text_colour: str | None = Field(default=None, pattern=r"^#[0-9a-fA-F]{6}$")
@@ -284,7 +284,7 @@ def _ass_text(text: str) -> str:
 
 def _font_size(lines: Sequence[str], maximum: int = 64) -> int:
     # Conservative glyph widths keep unusually long corrections inside the safe area.
-    # Ordinary speech uses the single 64px preset; dense text scales down as needed.
+    # Caption callers supply the configured maximum; dense text scales down as needed.
     def width(line: str) -> float:
         return sum(
             1.0

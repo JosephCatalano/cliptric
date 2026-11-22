@@ -72,7 +72,7 @@ const defaults: ProjectSettings = {
   caption_customization: {
     grouping: "auto",
     capitalization: "original",
-    font_size: 64,
+    font_size: 80,
   },
   emphasis_words: [],
   caption_position: "auto",
@@ -93,7 +93,6 @@ export function NewProject({
   const [settings, setSettings] = useState(defaults);
   const [emphasisText, setEmphasisText] = useState("");
   const [error, setError] = useState("");
-  const [previewError, setPreviewError] = useState(false);
   const [busy, setBusy] = useState(false);
   const [refresh, setRefresh] = useState(0);
   const player = useRef<HTMLVideoElement>(null);
@@ -312,30 +311,30 @@ export function NewProject({
                     </p>
                   </>
                 ) : (
-                  <video
-                    ref={player}
-                    className="setup-preview"
-                    controls
-                    preload="metadata"
-                    poster={`/api/recordings/${mediaSource!.id}/thumbnail`}
-                    src={`/api/recordings/${mediaSource!.id}/media`}
-                    onError={() => setPreviewError(true)}
-                    onPlay={() => {
-                      if (
-                        player.current &&
-                        (player.current.currentTime < settings.analysis_start ||
-                          player.current.currentTime >= settings.analysis_end)
-                      )
-                        player.current.currentTime = settings.analysis_start;
+                  <FramingEditor
+                    mode={settings.framing}
+                    layout={settings.split_layout ?? null}
+                    cropRegion={settings.crop_region ?? null}
+                    onPlayer={(node) => {
+                      player.current = node;
                     }}
-                    onTimeUpdate={() => {
-                      if (
-                        player.current &&
-                        !player.current.paused &&
-                        player.current.currentTime >= settings.analysis_end
-                      )
-                        player.current.pause();
-                    }}
+                    end={settings.analysis_end}
+                    sourceUrl={
+                      mediaSource
+                        ? `/api/recordings/${mediaSource.id}/media`
+                        : undefined
+                    }
+                    downloadProgress={download.percent}
+                    timestamp={settings.analysis_start}
+                    disabled={busy}
+                    onChange={(framing, split_layout, crop_region) =>
+                      setSettings((current) => ({
+                        ...current,
+                        framing,
+                        split_layout,
+                        crop_region,
+                      }))
+                    }
                   />
                 )}
                 {youtube ? (
@@ -369,12 +368,6 @@ export function NewProject({
                       </Alert>
                     ) : null}
                   </div>
-                ) : null}
-                {previewError ? (
-                  <p>
-                    Browser playback is unavailable for this source. You can
-                    still use the thumbnails and generate clips.
-                  </p>
                 ) : null}
               </FieldSet>
             }
@@ -611,25 +604,7 @@ export function NewProject({
                       </NativeSelectOption>
                     </NativeSelect>
                   </Field>
-                  <FramingEditor
-                    mode={settings.framing}
-                    layout={settings.split_layout ?? null}
-                    sourceUrl={
-                      mediaSource
-                        ? `/api/recordings/${mediaSource.id}/media`
-                        : undefined
-                    }
-                    downloadProgress={download.percent}
-                    timestamp={settings.analysis_start}
-                    disabled={busy}
-                    onChange={(framing, split_layout) =>
-                      setSettings((current) => ({
-                        ...current,
-                        framing,
-                        split_layout,
-                      }))
-                    }
-                  />
+
                   <CaptionStyleLibrary
                     disabled={busy}
                     value={{

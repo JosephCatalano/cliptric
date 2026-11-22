@@ -48,7 +48,7 @@ export type CaptionSource = {
 export const defaultCaptionCustomization: CaptionCustomization = {
   grouping: "auto",
   capitalization: "original",
-  font_size: 64,
+  font_size: 80,
 };
 export type YouTubeSource = Recording & {
   url: string;
@@ -123,6 +123,7 @@ export type ProjectSettings = {
   caption_position: "auto" | "lower" | "centre" | "upper";
   framing: FramingMode;
   split_layout?: SplitLayout | null;
+  crop_region?: SourceRegion | null;
 };
 export type TextOverlay = {
   text: string;
@@ -168,6 +169,7 @@ export type ProjectItem = {
   } | null;
   framing?: FramingMode | null;
   split_layout?: SplitLayout | null;
+  crop_region?: SourceRegion | null;
   overlays: TextOverlay[];
   opening_text: string | null;
   headline_enabled: boolean;

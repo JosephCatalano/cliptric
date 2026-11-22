@@ -45,11 +45,15 @@ class SplitLayout(BaseModel):
     gameplay_fit: Literal["fit", "fill"] = "fit"
 
 
-def validate_framing(mode: FramingMode | None, options: SplitLayout | None) -> None:
+def validate_framing(
+    mode: FramingMode | None, options: SplitLayout | None, crop: SourceRegion | None = None
+) -> None:
     if (mode == "split") != (options is not None):
         raise ValueError(
             "Webcam/gameplay framing requires its crop regions; other modes must omit them."
         )
+    if crop is not None and mode != "crop":
+        raise ValueError("A manual crop region requires Fill frame layout.")
 
 
 def split_filter(video_index: int, width: int, height: int, options: SplitLayout) -> str:

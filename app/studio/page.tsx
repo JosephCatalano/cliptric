@@ -68,6 +68,7 @@ import {
   type CaptionCustomization,
   type FramingMode,
   type SplitLayout,
+  type SourceRegion,
 } from "../../lib/projects";
 import { FramingEditor } from "../components/framing-editor";
 import { EditorTools } from "../components/editor-tools";
@@ -120,6 +121,7 @@ type SelectionDraft = {
   end: number;
   mode: FramingMode;
   split_layout?: SplitLayout | null;
+  crop_region?: SourceRegion | null;
   captions_enabled: boolean;
   caption_position: CaptionPosition;
   caption_customization: CaptionCustomization;
@@ -150,6 +152,7 @@ export default function Workspace() {
   const [start, setStart] = useState("0");
   const [end, setEnd] = useState("10");
   const [mode, setMode] = useState<FramingMode>("pad");
+  const [cropRegion, setCropRegion] = useState<SourceRegion | null>(null);
   const [splitLayout, setSplitLayout] = useState<SplitLayout | null>(null);
   const [loading, setLoading] = useState(true);
   const [importing, setImporting] = useState(false);
@@ -215,6 +218,8 @@ export default function Workspace() {
       rangeStart !== draft.start ||
       rangeEnd !== draft.end ||
       mode !== draft.mode ||
+      JSON.stringify(cropRegion) !==
+        JSON.stringify(draft.crop_region ?? null) ||
       JSON.stringify(splitLayout) !==
         JSON.stringify(draft.split_layout ?? null) ||
       captionsEnabled !== draft.captions_enabled ||
@@ -260,6 +265,7 @@ export default function Workspace() {
         setEnd(String(result.end));
         setMode(result.mode);
         setSplitLayout(result.split_layout ?? null);
+        setCropRegion(result.crop_region ?? null);
         setCaptionsEnabled(result.captions_enabled);
         setCaptionPosition(result.caption_position);
         setQuality(result.quality ?? defaultQuality);
@@ -461,6 +467,7 @@ export default function Workspace() {
           end: rangeEnd,
           mode,
           split_layout: splitLayout,
+          crop_region: cropRegion,
           headline,
           quality,
           captions:
@@ -516,6 +523,7 @@ export default function Workspace() {
             end: rangeEnd,
             mode,
             split_layout: splitLayout,
+            crop_region: cropRegion,
             headline,
             quality,
             captions_enabled: captionsEnabled,
@@ -1131,6 +1139,8 @@ export default function Workspace() {
                         <FramingEditor
                           mode={mode}
                           layout={splitLayout}
+                          cropRegion={cropRegion}
+                          end={rangeEnd}
                           sourceUrl={
                             selected
                               ? `/api/recordings/${selected.id}/media`
@@ -1143,9 +1153,14 @@ export default function Workspace() {
                             importing ||
                             settingsLocked
                           }
-                          onChange={(nextMode, layout) => {
+                          onChange={(nextMode, layout, crop) => {
                             setMode(nextMode);
                             setSplitLayout(layout);
+                            setCropRegion(crop);
+                            setQuality((value) => ({
+                              ...value,
+                              smart_framing: null,
+                            }));
                           }}
                         />
                         <div className="caption-settings">
@@ -1224,7 +1239,7 @@ export default function Workspace() {
                             recordingId={selectedId}
                             start={rangeStart}
                             end={rangeEnd}
-                            allowSmart={mode !== "split"}
+                            allowSmart={mode !== "split" && cropRegion === null}
                             disabled={
                               !selected ||
                               submitting ||

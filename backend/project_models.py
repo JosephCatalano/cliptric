@@ -8,7 +8,7 @@ from pydantic import BaseModel, ConfigDict, Field, field_validator, model_valida
 from .ai_instructions import AIInstructions
 from .captions import CaptionCustomization, CaptionPreset
 from .editing import QualityOptions, mapped_overlays, retained_intervals
-from .framing import FramingMode, SplitLayout, validate_framing
+from .framing import FramingMode, SourceRegion, SplitLayout, validate_framing
 from .headlines import HeadlineOptions
 from .highlight_models import EditorialQuality, SourceRange
 from .limits import MAX_MEDIA_SECONDS
@@ -45,12 +45,13 @@ class ProjectSettingsDraft(BaseModel):
     caption_position: Literal["auto", "lower", "centre", "upper"] = "lower"
     framing: FramingMode = "pad"
     split_layout: SplitLayout | None = None
+    crop_region: SourceRegion | None = None
 
 
 class ProjectSettings(ProjectSettingsDraft):
     @model_validator(mode="after")
     def valid_range(self):
-        validate_framing(self.framing, self.split_layout)
+        validate_framing(self.framing, self.split_layout, self.crop_region)
         minimum = (
             0.1
             if self.duration_mode == "full"
@@ -144,6 +145,7 @@ class ProjectItem(BaseModel):
     quality: QualityOptions = Field(default_factory=QualityOptions)
     framing: FramingMode | None = None
     split_layout: SplitLayout | None = None
+    crop_region: SourceRegion | None = None
     overlays: Overlays = Field(default_factory=list)
     opening_text: str | None = Field(default=None, min_length=1, max_length=120)
     headline_enabled: bool = Field(default=True, strict=True)
@@ -219,6 +221,7 @@ class ItemEdit(BaseModel):
     quality: QualityOptions = Field(default_factory=QualityOptions)
     framing: FramingMode | None = None
     split_layout: SplitLayout | None = None
+    crop_region: SourceRegion | None = None
     overlays: Overlays = Field(default_factory=list)
     opening_text: str | None = Field(default=None, min_length=1, max_length=120, strict=True)
     headline_enabled: bool = Field(default=True, strict=True)
@@ -250,9 +253,9 @@ class ItemEdit(BaseModel):
             raise ValueError(
                 "An edit removes a text overlay entirely or leaves it too short. Adjust the overlay or restore that interval."
             )
-        if self.quality.smart_framing and self.framing == "split":
-            raise ValueError("Smart framing cannot be combined with a webcam/gameplay split.")
-        validate_framing(self.framing, self.split_layout)
+        if self.quality.smart_framing and (self.framing == "split" or self.crop_region):
+            raise ValueError("Smart framing cannot be combined with manual crop regions.")
+        validate_framing(self.framing, self.split_layout, self.crop_region)
         if not 0.1 <= self.end - self.start <= MAX_MEDIA_SECONDS:
             raise ValueError("Exports must be between 0.1 seconds and six hours long.")
         layout(

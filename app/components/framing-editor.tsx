@@ -8,6 +8,13 @@ import {
   type PointerEvent,
   type KeyboardEvent,
 } from "react";
+import { Move, Scaling } from "lucide-react";
+import {
+  fitPortraitRegion,
+  pixelRegion,
+  portraitRegion,
+  resizePortraitRegion,
+} from "@/lib/video-framing";
 import { Button } from "@/components/ui/button";
 import { Alert, AlertDescription } from "@/components/ui/alert";
 import {
@@ -35,25 +42,43 @@ function clamp(value: number, min: number, max: number) {
 export function FramingEditor({
   mode,
   layout,
+  cropRegion = null,
+  onPlayer,
+  end,
   onChange,
   sourceUrl,
   timestamp = 0,
   disabled = false,
   downloadProgress,
+  allowSplit = true,
 }: {
   mode: FramingMode;
   layout: SplitLayout | null;
-  onChange(mode: FramingMode, layout: SplitLayout | null): void;
+  cropRegion?: SourceRegion | null;
+  onPlayer?: (player: HTMLVideoElement | null) => void;
+  end?: number;
+  onChange(
+    mode: FramingMode,
+    layout: SplitLayout | null,
+    crop: SourceRegion | null,
+  ): void;
   sourceUrl?: string;
   timestamp?: number;
   disabled?: boolean;
   downloadProgress?: number | null;
+  allowSplit?: boolean;
 }) {
   const id = useId();
   const [regionName, setRegionName] = useState<"webcam" | "gameplay">("webcam");
   const [mediaError, setMediaError] = useState(false);
   const picture = useRef<HTMLDivElement>(null);
   const video = useRef<HTMLVideoElement>(null);
+  const [dimensions, setDimensions] = useState({
+    width: 16,
+    height: 9,
+    source: "",
+  });
+  const [reload, setReload] = useState(0);
   const canvas = useRef<HTMLCanvasElement>(null);
   const drag = useRef<{
     pointer: number;
@@ -65,17 +90,32 @@ export function FramingEditor({
     resize: boolean;
   } | null>(null);
   const options = layout ?? defaultSplitLayout();
-  const region = options[regionName];
+  const region =
+    mode === "crop"
+      ? cropRegion
+        ? fitPortraitRegion(cropRegion, dimensions.width, dimensions.height)
+        : portraitRegion(dimensions.width, dimensions.height)
+      : options[regionName];
+  const rangeStart =
+    Number.isFinite(timestamp) && timestamp >= 0 ? timestamp : 0;
+  const rangeEnd =
+    end !== undefined && Number.isFinite(end) && end > rangeStart
+      ? end
+      : undefined;
+  const regionLabel = mode === "crop" ? "portrait crop" : regionName;
 
   useEffect(() => {
     const player = video.current;
     const target = canvas.current;
-    if (mode !== "split" || !player || !target || !layout) return;
-    const configuration = layout;
+    if (!player || !target) return;
+    const configuration = layout ?? defaultSplitLayout();
     const context = target.getContext("2d");
     if (!context) return;
     context.clearRect(0, 0, 270, 480);
     let frame: number | undefined;
+    const cancelFrame = () => {
+      if (frame !== undefined) window.cancelAnimationFrame(frame);
+    };
     function draw() {
       if (!context || !player || player.readyState < 2) return;
       const panel = (
@@ -84,10 +124,14 @@ export function FramingEditor({
         height: number,
         fit: boolean,
       ) => {
-        const sw = crop.width * player.videoWidth,
-          sh = crop.height * player.videoHeight;
-        const sx = crop.x * player.videoWidth,
-          sy = crop.y * player.videoHeight;
+        const pixels = pixelRegion(
+          crop,
+          player.videoWidth,
+          player.videoHeight,
+          fit ? undefined : [270, height],
+        );
+        const { x: sx, y: sy, width: sw, height: sh } = pixels;
+        if (sw < 2 || sh < 2) return;
         context.save();
         context.beginPath();
         context.rect(0, top, 270, height);
@@ -116,21 +160,34 @@ export function FramingEditor({
         paint(!fit);
         context.restore();
       };
-      panel(configuration.webcam, 0, 160, false);
-      panel(
-        configuration.gameplay,
-        160,
-        320,
-        configuration.gameplay_fit === "fit",
-      );
+      context.clearRect(0, 0, 270, 480);
+      if (mode === "split") {
+        panel(configuration.webcam, 0, 160, false);
+        panel(
+          configuration.gameplay,
+          160,
+          320,
+          configuration.gameplay_fit === "fit",
+        );
+      } else {
+        panel(
+          mode === "crop"
+            ? (cropRegion ??
+                portraitRegion(player.videoWidth, player.videoHeight))
+            : { x: 0, y: 0, width: 1, height: 1 },
+          0,
+          480,
+          mode === "pad",
+        );
+      }
     }
     function next() {
       draw();
       if (player && !player.paused && !player.ended)
-        frame = player.requestVideoFrameCallback(next);
+        frame = window.requestAnimationFrame(next);
     }
     function play() {
-      if (frame !== undefined) player?.cancelVideoFrameCallback(frame);
+      cancelFrame();
       next();
     }
     player.addEventListener("play", play);
@@ -139,15 +196,27 @@ export function FramingEditor({
     draw();
     if (!player.paused) play();
     return () => {
-      if (frame !== undefined) player.cancelVideoFrameCallback(frame);
+      cancelFrame();
       player.removeEventListener("play", play);
       player.removeEventListener("seeked", draw);
       player.removeEventListener("loadeddata", draw);
     };
-  }, [mode, layout, sourceUrl]);
+  }, [mode, layout, cropRegion, sourceUrl, video, reload]);
+
+  useEffect(() => {
+    const player = video.current;
+    if (player && player.readyState >= 1 && Number.isFinite(timestamp)) {
+      player.currentTime = clamp(
+        timestamp,
+        0,
+        Math.max(0, player.duration - 0.01),
+      );
+    }
+  }, [timestamp, sourceUrl, video]);
 
   function updateRegion(next: SourceRegion) {
-    onChange("split", { ...options, [regionName]: next });
+    if (mode === "crop") onChange("crop", null, next);
+    else onChange("split", { ...options, [regionName]: next }, null);
   }
   function keyboard(event: KeyboardEvent<HTMLButtonElement>, resize: boolean) {
     const directions: Record<string, [number, number]> = {
@@ -162,17 +231,24 @@ export function FramingEditor({
     const step = event.shiftKey ? 0.02 : 0.005;
     const [dx, dy] = direction.map((value) => value * step);
     updateRegion(
-      resize
-        ? {
-            ...region,
-            width: clamp(region.width + dx, 0.01, 1 - region.x),
-            height: clamp(region.height + dy, 0.01, 1 - region.y),
-          }
-        : {
-            ...region,
-            x: clamp(region.x + dx, 0, 1 - region.width),
-            y: clamp(region.y + dy, 0, 1 - region.height),
-          },
+      resize && mode === "crop"
+        ? resizePortraitRegion(
+            region,
+            dx,
+            dy,
+            dimensions.width / dimensions.height,
+          )
+        : resize
+          ? {
+              ...region,
+              width: clamp(region.width + dx, 0.01, 1 - region.x),
+              height: clamp(region.height + dy, 0.01, 1 - region.y),
+            }
+          : {
+              ...region,
+              x: clamp(region.x + dx, 0, 1 - region.width),
+              y: clamp(region.y + dy, 0, 1 - region.height),
+            },
     );
   }
   function startDrag(event: PointerEvent<HTMLElement>, resize: boolean) {
@@ -198,17 +274,19 @@ export function FramingEditor({
     const dy = (event.clientY - current.y) / current.boxHeight;
     const r = current.region;
     updateRegion(
-      current.resize
-        ? {
-            ...r,
-            width: clamp(r.width + dx, 0.01, 1 - r.x),
-            height: clamp(r.height + dy, 0.01, 1 - r.y),
-          }
-        : {
-            ...r,
-            x: clamp(r.x + dx, 0, 1 - r.width),
-            y: clamp(r.y + dy, 0, 1 - r.height),
-          },
+      current.resize && mode === "crop"
+        ? resizePortraitRegion(r, dx, dy, dimensions.width / dimensions.height)
+        : current.resize
+          ? {
+              ...r,
+              width: clamp(r.width + dx, 0.01, 1 - r.x),
+              height: clamp(r.height + dy, 0.01, 1 - r.y),
+            }
+          : {
+              ...r,
+              x: clamp(r.x + dx, 0, 1 - r.width),
+              y: clamp(r.y + dy, 0, 1 - r.height),
+            },
     );
   }
   function stop(event: PointerEvent<HTMLElement>) {
@@ -228,6 +306,12 @@ export function FramingEditor({
             onChange(
               next,
               next === "split" ? (layout ?? defaultSplitLayout()) : null,
+              next === "crop"
+                ? (cropRegion ??
+                    (dimensions.source === sourceUrl
+                      ? portraitRegion(dimensions.width, dimensions.height)
+                      : null))
+                : null,
             );
           }}
         >
@@ -235,141 +319,233 @@ export function FramingEditor({
             Fit video with blur fill
           </NativeSelectOption>
           <NativeSelectOption value="crop">
-            Fill frame with centre crop
+            Fill frame (move and zoom)
           </NativeSelectOption>
-          <NativeSelectOption value="split">
-            Webcam above gameplay
-          </NativeSelectOption>
+          {allowSplit ? (
+            <NativeSelectOption value="split">
+              Webcam above gameplay
+            </NativeSelectOption>
+          ) : null}
         </NativeSelect>
       </Field>
-      {mode === "split" ? (
-        <>
+      <>
+        {mode !== "pad" ? (
           <p>
-            Select the webcam and gameplay regions from the original picture.
-            Use the move handle and corner to transform the box. Arrow keys move
-            or resize the focused handle; Shift makes larger adjustments. The
-            webcam fills the top third; its edges may be cropped. Regions remain
-            fixed throughout the clip.
+            {mode === "crop"
+              ? "Drag the move handle to choose what fills the clip. Resize its corner to zoom."
+              : "Choose the webcam and gameplay regions. The webcam fills the top third."}{" "}
+            Arrow keys move or resize a focused handle; Shift makes larger
+            adjustments.
           </p>
-          {sourceUrl ? (
-            <Field>
-              <FieldLabel htmlFor={`${id}-region`}>Region to adjust</FieldLabel>
-              <NativeSelect
-                id={`${id}-region`}
-                value={regionName}
-                onChange={(event) =>
-                  setRegionName(event.target.value as "webcam" | "gameplay")
-                }
-              >
-                <NativeSelectOption value="webcam">Webcam</NativeSelectOption>
-                <NativeSelectOption value="gameplay">
-                  Gameplay
-                </NativeSelectOption>
-              </NativeSelect>
-            </Field>
-          ) : null}
+        ) : null}
+        {sourceUrl && mode === "split" ? (
+          <Field>
+            <FieldLabel htmlFor={`${id}-region`}>Region to adjust</FieldLabel>
+            <NativeSelect
+              id={`${id}-region`}
+              value={regionName}
+              onChange={(event) =>
+                setRegionName(event.target.value as "webcam" | "gameplay")
+              }
+            >
+              <NativeSelectOption value="webcam">Webcam</NativeSelectOption>
+              <NativeSelectOption value="gameplay">Gameplay</NativeSelectOption>
+            </NativeSelect>
+          </Field>
+        ) : null}
+        <div className="framing-pictures">
           {sourceUrl ? (
             <div
               ref={picture}
               className="relative overflow-hidden rounded-md bg-muted"
+              style={{
+                width: "100%",
+                maxWidth: `${(55 * dimensions.width) / dimensions.height}dvh`,
+              }}
             >
               <video
-                ref={video}
+                ref={(node) => {
+                  video.current = node;
+                  onPlayer?.(node);
+                }}
+                key={`${sourceUrl}-${reload}`}
                 controls
                 muted
                 playsInline
                 preload="metadata"
                 className="block w-full"
+                style={{ maxHeight: "none", height: "auto" }}
                 src={sourceUrl}
                 onError={() => setMediaError(true)}
+                onSeeking={(event) => {
+                  const player = event.currentTarget;
+                  const last = Math.max(
+                    rangeStart,
+                    Math.min(rangeEnd ?? player.duration, player.duration) -
+                      0.01,
+                  );
+                  const at = clamp(player.currentTime, rangeStart, last);
+                  if (Math.abs(at - player.currentTime) > 0.001)
+                    player.currentTime = at;
+                }}
+                onPlay={(event) => {
+                  const player = event.currentTarget;
+                  if (
+                    player.currentTime < rangeStart ||
+                    (rangeEnd !== undefined && player.currentTime >= rangeEnd)
+                  )
+                    player.currentTime = rangeStart;
+                }}
+                onTimeUpdate={(event) => {
+                  const player = event.currentTarget;
+                  if (
+                    rangeEnd !== undefined &&
+                    !player.paused &&
+                    player.currentTime >= rangeEnd
+                  ) {
+                    player.pause();
+                    player.currentTime = rangeEnd;
+                  }
+                }}
                 onLoadedMetadata={(event) => {
                   setMediaError(false);
                   const player = event.currentTarget;
-                  if (Number.isFinite(timestamp))
+                  setDimensions({
+                    width: player.videoWidth,
+                    height: player.videoHeight,
+                    source: sourceUrl,
+                  });
+                  if (Number.isFinite(rangeStart))
                     player.currentTime = clamp(
-                      timestamp,
+                      rangeStart,
                       0,
                       Math.max(0, player.duration - 0.01),
                     );
                 }}
               />
-              <div
-                className="pointer-events-none absolute border-2 border-primary bg-primary/10"
-                style={{
-                  left: `${region.x * 100}%`,
-                  top: `${region.y * 100}%`,
-                  width: `${region.width * 100}%`,
-                  height: `${region.height * 100}%`,
-                }}
-              >
-                <span className="bg-background px-1 text-xs text-foreground">
-                  {regionName === "webcam" ? "Webcam" : "Gameplay"}
-                </span>
-                <Button
-                  type="button"
-                  variant="secondary"
-                  size="icon-sm"
-                  className="pointer-events-auto absolute left-0 top-6 cursor-move touch-none"
-                  aria-label={`Move ${regionName} region with arrow keys or drag`}
-                  onKeyDown={(event) => keyboard(event, false)}
-                  onPointerDown={(event) => startDrag(event, false)}
-                  onPointerMove={move}
-                  onPointerUp={stop}
-                  onPointerCancel={stop}
+              {mode !== "pad" ? (
+                <div
+                  className="pointer-events-none absolute border-2 border-primary bg-primary/10"
+                  style={{
+                    left: `${region.x * 100}%`,
+                    top: `${region.y * 100}%`,
+                    width: `${region.width * 100}%`,
+                    height: `${region.height * 100}%`,
+                  }}
                 >
-                  ↔
-                </Button>
-                <Button
-                  type="button"
-                  variant="secondary"
-                  size="icon-sm"
-                  className="pointer-events-auto absolute right-0 bottom-0 cursor-se-resize touch-none"
-                  aria-label={`Resize ${regionName} region with arrow keys or drag`}
-                  onKeyDown={(event) => keyboard(event, true)}
-                  onPointerDown={(event) => startDrag(event, true)}
-                  onPointerMove={move}
-                  onPointerUp={stop}
-                  onPointerCancel={stop}
-                >
-                  ↘
-                </Button>
-              </div>
+                  <span className="bg-background px-1 text-xs text-foreground">
+                    {mode === "crop"
+                      ? "Captured area"
+                      : regionName === "webcam"
+                        ? "Webcam"
+                        : "Gameplay"}
+                  </span>
+                  <Button
+                    type="button"
+                    disabled={
+                      disabled || mediaError || dimensions.source !== sourceUrl
+                    }
+                    variant="secondary"
+                    size="icon-sm"
+                    className="pointer-events-auto absolute left-0 top-6 cursor-move touch-none"
+                    aria-label={`Move ${regionLabel} region with arrow keys or drag`}
+                    onKeyDown={(event) => keyboard(event, false)}
+                    onPointerDown={(event) => startDrag(event, false)}
+                    onPointerMove={move}
+                    onPointerUp={stop}
+                    onPointerCancel={stop}
+                    onLostPointerCapture={stop}
+                  >
+                    <Move />
+                  </Button>
+                  <Button
+                    type="button"
+                    disabled={
+                      disabled || mediaError || dimensions.source !== sourceUrl
+                    }
+                    variant="secondary"
+                    size="icon-sm"
+                    className="pointer-events-auto absolute right-0 bottom-0 cursor-se-resize touch-none"
+                    aria-label={`Resize ${regionLabel} region with arrow keys or drag`}
+                    onKeyDown={(event) => keyboard(event, true)}
+                    onPointerDown={(event) => startDrag(event, true)}
+                    onPointerMove={move}
+                    onPointerUp={stop}
+                    onPointerCancel={stop}
+                    onLostPointerCapture={stop}
+                  >
+                    <Scaling />
+                  </Button>
+                </div>
+              ) : null}
             </div>
           ) : null}
-          {mediaError ? (
-            <Alert>
-              <AlertDescription>
-                Source preview could not load. Reload the page to retry before
-                adjusting the crop.
-              </AlertDescription>
-            </Alert>
-          ) : null}
-          {!sourceUrl ? (
-            <div className="flex max-w-sm flex-col gap-2" role="status">
+          {sourceUrl ? (
+            <div className="flex flex-col gap-2">
               <p>
-                Webcam crop selection will be available when the video finishes
-                downloading.{" "}
-                {downloadProgress == null
-                  ? "Waiting for download progress…"
-                  : `${downloadProgress}% downloaded`}
+                Live framing preview. Save to render captions and headlines.
               </p>
-              <Progress
-                value={downloadProgress ?? undefined}
-                aria-label="Video download for webcam cropping"
+              <canvas
+                ref={canvas}
+                width={270}
+                height={480}
+                className="w-full max-w-[270px] rounded-md bg-muted"
+                aria-label="Live clip framing preview"
               />
             </div>
           ) : null}
+        </div>
+        {sourceUrl && dimensions.source !== sourceUrl && !mediaError ? (
+          <p role="status">Loading clip preview...</p>
+        ) : null}
+        {mediaError ? (
+          <Alert>
+            <AlertDescription>
+              Source preview could not load.{" "}
+              <Button
+                type="button"
+                variant="link"
+                onClick={() => {
+                  setMediaError(false);
+                  setReload((value) => value + 1);
+                }}
+              >
+                Retry preview
+              </Button>
+            </AlertDescription>
+          </Alert>
+        ) : null}
+        {!sourceUrl ? (
+          <div className="flex max-w-sm flex-col gap-2" role="status">
+            <p>
+              Video preview and crop selection will be available when the video
+              finishes downloading.{" "}
+              {downloadProgress == null
+                ? "Waiting for download progress…"
+                : `${downloadProgress}% downloaded`}
+            </p>
+            <Progress
+              value={downloadProgress ?? undefined}
+              aria-label="Video download for preview"
+            />
+          </div>
+        ) : null}
+        {mode === "split" ? (
           <Field>
             <FieldLabel htmlFor={`${id}-fit`}>Gameplay in its panel</FieldLabel>
             <NativeSelect
               id={`${id}-fit`}
               value={options.gameplay_fit}
               onChange={(event) =>
-                onChange("split", {
-                  ...options,
-                  gameplay_fit: event.target
-                    .value as SplitLayout["gameplay_fit"],
-                })
+                onChange(
+                  "split",
+                  {
+                    ...options,
+                    gameplay_fit: event.target
+                      .value as SplitLayout["gameplay_fit"],
+                  },
+                  null,
+                )
               }
             >
               <NativeSelectOption value="fit">
@@ -380,29 +556,33 @@ export function FramingEditor({
               </NativeSelectOption>
             </NativeSelect>
           </Field>
-          {sourceUrl ? (
-            <div className="flex flex-col gap-2">
-              <p>
-                Layout preview (captions and text overlays appear in the
-                rendered export)
-              </p>
-              <canvas
-                ref={canvas}
-                width={270}
-                height={480}
-                className="max-w-full rounded-md bg-muted"
-                aria-label="Webcam above gameplay preview"
-              />
-            </div>
-          ) : null}
+        ) : null}
+        {mode === "crop" ? (
+          <Button
+            type="button"
+            variant="outline"
+            disabled={disabled || dimensions.source !== sourceUrl || mediaError}
+            onClick={() =>
+              onChange(
+                "crop",
+                null,
+                portraitRegion(dimensions.width, dimensions.height),
+              )
+            }
+          >
+            Reset crop
+          </Button>
+        ) : null}
+
+        {mode === "split" ? (
           <p>
             To keep the original webcam out of the gameplay panel, select a
             gameplay region that excludes it. Captions and headlines are applied
             after composition; review their positions so they do not cover the
             webcam.
           </p>
-        </>
-      ) : null}
+        ) : null}
+      </>
     </FieldSet>
   );
 }

@@ -515,11 +515,13 @@ class Projects:
         current_export = self.store.clip(item.export_id) if item.export_id else None
         old_mode = item.framing or settings.framing
         old_split = item.split_layout if item.framing is not None else settings.split_layout
+        old_crop = item.crop_region if item.framing is not None else settings.crop_region
+        new_crop = request.crop_region if request.framing is not None else settings.crop_region
         new_mode = request.framing or settings.framing
-        if request.quality.smart_framing and new_mode == "split":
+        if request.quality.smart_framing and (new_mode == "split" or new_crop):
             raise HTTPException(
                 422,
-                "Smart framing cannot be combined with the project's webcam/gameplay layout.",
+                "Smart framing cannot be combined with the project's manual crop regions.",
             )
         new_split = request.split_layout if request.framing is not None else settings.split_layout
         expected_headline = (
@@ -536,7 +538,7 @@ class Projects:
                 and settings.batch_mode in {"auto", "highlights"}
                 and not item.analysis_complete
             )
-            or (old_mode, old_split) != (new_mode, new_split)
+            or (old_mode, old_split, old_crop) != (new_mode, new_split, new_crop)
             or bool(
                 current_export
                 and (
@@ -544,6 +546,7 @@ class Projects:
                     or current_export.overlays != request.overlays
                     or current_export.mode != new_mode
                     or current_export.split_layout != new_split
+                    or current_export.crop_region != new_crop
                 )
             )
             or any(
@@ -582,6 +585,7 @@ class Projects:
             "opening_text",
             "framing",
             "split_layout",
+            "crop_region",
         ):
             setattr(item, name, getattr(request, name))
         item.revision += 1
@@ -984,6 +988,7 @@ class Projects:
                         review=c.review,
                         framing=project.settings.framing,
                         split_layout=project.settings.split_layout,
+                        crop_region=project.settings.crop_region,
                     )
                     for c in candidates
                 ][: project.settings.max_clips]
@@ -1015,6 +1020,9 @@ class Projects:
             split_layout = (
                 item.split_layout if item.framing is not None else project.settings.split_layout
             )
+            crop_region = (
+                item.crop_region if item.framing is not None else project.settings.crop_region
+            )
             clip = self.store.clip(existing_id) if existing_id else None
             captions = (
                 CaptionOptions(
@@ -1039,6 +1047,7 @@ class Projects:
                 and clip.overlays == item.overlays
                 and clip.mode == mode
                 and clip.split_layout == split_layout
+                and clip.crop_region == crop_region
                 and self.store.export_path(clip.id).is_file()
             ):
                 item.export_id, item.pending_export_id, item.error = clip.id, None, None
@@ -1061,6 +1070,7 @@ class Projects:
                 end=item.end,
                 mode=mode,
                 split_layout=split_layout,
+                crop_region=crop_region,
                 captions=captions,
                 headline=headline,
                 overlays=item.overlays,
@@ -1416,19 +1426,23 @@ class Projects:
             project = self._check(identifier)
             target = next(i for i in project.items if i.id == item_id)
             previous_caption, previous_headline = target.caption_position, target.headline_position
-            if (target.framing or project.settings.framing) == "split":
-                plan.summary = (
-                    "Manual webcam/gameplay split preserved; opening cover selected locally."
-                )
+            manual_crop = (
+                target.crop_region if target.framing is not None else project.settings.crop_region
+            )
+            if (target.framing or project.settings.framing) == "split" or manual_crop:
+                plan.summary = "Manual framing preserved; opening cover selected locally."
                 plan.smart_framing = None
                 plan.caption_position = (
                     "lower" if target.caption_position == "auto" else target.caption_position
                 )
                 plan.headline_position = (
-                    "centre" if target.headline_position == "auto" else target.headline_position
+                    ("upper" if manual_crop else "centre")
+                    if target.headline_position == "auto"
+                    else target.headline_position
                 )
             else:
                 target.framing, target.split_layout = plan.framing, plan.split_layout
+                target.crop_region = None
             target.quality = target.quality.model_copy(
                 # Cover selection must survive any already accepted pacing edits.
                 update={

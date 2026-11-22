@@ -93,7 +93,11 @@ import { parseEmphasis } from "../../lib/projects";
 import { Progress } from "@/components/ui/progress";
 import { HookSuggestions } from "./hook-suggestions";
 import { FramingEditor } from "./framing-editor";
-import { type FramingMode, type SplitLayout } from "../../lib/projects";
+import {
+  type FramingMode,
+  type SourceRegion,
+  type SplitLayout,
+} from "../../lib/projects";
 import { TextOverlayFields, readOverlays } from "./text-overlay-fields";
 import { WorkspaceLoading } from "./workspace-loading";
 
@@ -814,6 +818,11 @@ function ClipCard({
       ? (item.split_layout ?? null)
       : (project.settings.split_layout ?? null),
   );
+  const [cropRegion, setCropRegion] = useState<SourceRegion | null>(
+    item.framing
+      ? (item.crop_region ?? null)
+      : (project.settings.crop_region ?? null),
+  );
   const [error, setError] = useState("");
   const [saving, setSaving] = useState(false);
   const [dirty, setDirty] = useState(false);
@@ -847,6 +856,7 @@ function ClipCard({
             overlays: readOverlays(form),
             framing,
             split_layout: splitLayout,
+            crop_region: cropRegion,
             quality:
               form.get("auto_presentation") === "on"
                 ? { ...quality, smart_framing: null, cover_at: null }
@@ -892,6 +902,11 @@ function ClipCard({
     setDraftEnd(String(item.end));
     setOpeningText(item.opening_text ?? "");
     setFraming(item.framing ?? project.settings.framing);
+    setCropRegion(
+      item.framing
+        ? (item.crop_region ?? null)
+        : (project.settings.crop_region ?? null),
+    );
     setSplitLayout(
       item.framing
         ? (item.split_layout ?? null)
@@ -1355,16 +1370,24 @@ function ClipCard({
                   <FramingEditor
                     mode={framing}
                     layout={splitLayout}
+                    cropRegion={cropRegion}
+                    end={Number(draftEnd)}
                     sourceUrl={
                       project.recording_id
                         ? `/api/recordings/${project.recording_id}/media`
                         : undefined
                     }
-                    timestamp={editing.start}
+                    timestamp={Number(draftStart)}
                     disabled={locked || saving}
-                    onChange={(mode, layout) => {
+                    onChange={(mode, layout, crop) => {
+                      setDirty(true);
                       setFraming(mode);
                       setSplitLayout(layout);
+                      setCropRegion(crop);
+                      setQuality((value) => ({
+                        ...value,
+                        smart_framing: null,
+                      }));
                     }}
                   />
                   <FieldSet>
@@ -1432,7 +1455,8 @@ function ClipCard({
                     end={Number(draftEnd)}
                     disabled={locked || saving}
                     allowSmart={
-                      (framing ?? project.settings.framing) !== "split"
+                      (framing ?? project.settings.framing) !== "split" &&
+                      cropRegion === null
                     }
                     allowedStart={project.settings.analysis_start}
                     allowedEnd={project.settings.analysis_end}

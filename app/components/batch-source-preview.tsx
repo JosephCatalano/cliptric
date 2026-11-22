@@ -1,6 +1,7 @@
 "use client";
 import { useId, useState } from "react";
-import type { Recording } from "@/lib/projects";
+import { FramingEditor } from "./framing-editor";
+import type { Recording, SourceRegion } from "@/lib/projects";
 import { Field, FieldLabel } from "@/components/ui/field";
 import {
   NativeSelect,
@@ -12,18 +13,22 @@ import {
   EmptyTitle,
   EmptyDescription,
 } from "@/components/ui/empty";
-import { Alert, AlertDescription } from "@/components/ui/alert";
-import { Button } from "@/components/ui/button";
 
 export function BatchSourcePreview({
   recordings,
+  mode,
+  cropRegion,
+  disabled,
+  onChange,
 }: {
   recordings: Recording[];
+  mode: "pad" | "crop";
+  cropRegion: SourceRegion | null;
+  disabled: boolean;
+  onChange(mode: "pad" | "crop", crop: SourceRegion | null): void;
 }) {
   const id = useId();
   const [selected, setSelected] = useState("");
-  const [failed, setFailed] = useState<string | null>(null);
-  const [reload, setReload] = useState(0);
   const source =
     recordings.find((recording) => recording.id === selected) ?? recordings[0];
   return source ? (
@@ -42,35 +47,23 @@ export function BatchSourcePreview({
           ))}
         </NativeSelect>
       </Field>
-      <video
-        key={`${source.id}-${reload}`}
-        controls
-        playsInline
-        preload="metadata"
-        className="w-full rounded-lg object-contain"
-        src={`/api/recordings/${source.id}/media`}
-        poster={`/api/recordings/${source.id}/thumbnail`}
-        aria-label={source.name}
-        onError={() => setFailed(source.id)}
+      <FramingEditor
+        key={source.id}
+        mode={mode}
+        layout={null}
+        cropRegion={cropRegion}
+        sourceUrl={`/api/recordings/${source.id}/media`}
+        end={source.duration}
+        disabled={disabled}
+        allowSplit={false}
+        onChange={(next, _layout, crop) => {
+          if (next !== "split") onChange(next, crop);
+        }}
       />
-      {failed === source.id ? (
-        <Alert>
-          <AlertDescription>
-            Browser preview is unavailable. The imported source is still
-            available for processing.{" "}
-            <Button
-              type="button"
-              variant="link"
-              onClick={() => {
-                setFailed(null);
-                setReload((value) => value + 1);
-              }}
-            >
-              Retry preview
-            </Button>
-          </AlertDescription>
-        </Alert>
-      ) : null}
+      <p className="text-muted-foreground text-sm">
+        Shared framing applies to all videos. You can adjust each generated clip
+        afterward.
+      </p>
     </div>
   ) : (
     <Empty>
