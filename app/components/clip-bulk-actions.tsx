@@ -57,7 +57,7 @@ export function ClipBulkActions({
       });
       onSaved(value);
       setNotice(
-        `Applied to ${targets.length} clips. ${operation.action === "headline" ? "Changed clips will render again; saved analysis is reused." : "No new AI analysis was requested."}`,
+        `Updated ${targets.length} clips.${operation.action === "headline" ? " Changed clips are rendering again." : ""}`,
       );
     } catch (error) {
       setError(message(error));
@@ -66,9 +66,9 @@ export function ClipBulkActions({
     }
   }
   return (
-    <FieldGroup>
+    <FieldGroup className="selection-actions">
       <Field>
-        <FieldLabel htmlFor="clip-bulk-action">
+        <FieldLabel className="sr-only" htmlFor="clip-bulk-action">
           Action for {count} selected clips
         </FieldLabel>
         <NativeSelect
@@ -129,7 +129,7 @@ export function ClipBulkActions({
           disabled={disabled || !count}
           onClick={() => void apply()}
         >
-          Apply to {count} clips
+          Apply
         </Button>
       </div>
       {notice ? <p role="status">{notice}</p> : null}

@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useState } from "react";
+import { useEffect, useState, type RefObject } from "react";
 import { api, message } from "@/lib/client-api";
 import type { Project, ProjectItem } from "@/lib/projects";
 import { Button } from "@/components/ui/button";
@@ -33,23 +33,36 @@ export function ClipVersions({
   item,
   locked,
   onSaved,
+  open: controlledOpen,
+  onOpenChange,
+  hideTrigger = false,
+  returnFocus,
 }: {
   project: Project;
   item: ProjectItem;
   locked: boolean;
   onSaved: (project: Project) => void;
+  open?: boolean;
+  onOpenChange?: (open: boolean) => void;
+  hideTrigger?: boolean;
+  returnFocus?: RefObject<HTMLButtonElement | null>;
 }) {
-  const [open, setOpen] = useState(false);
+  const [internalOpen, setInternalOpen] = useState(false);
+  const open = controlledOpen ?? internalOpen;
+  const setOpen = onOpenChange ?? setInternalOpen;
   const [values, setValues] = useState<Version[]>([]);
   const [selected, setSelected] = useState("");
   const [busy, setBusy] = useState(false);
-  const [loading, setLoading] = useState(false);
+  const [loading, setLoading] = useState(true);
   const [error, setError] = useState("");
   const [refresh, setRefresh] = useState(0);
   const path = `/api/projects/${project.id}/clips/${item.id}`;
   useEffect(() => {
     if (!open) return;
     const controller = new AbortController();
+    Promise.resolve().then(() => {
+      if (!controller.signal.aborted) setLoading(true);
+    });
     api<Version[]>(`${path}/versions`, { signal: controller.signal })
       .then((versions) => {
         if (controller.signal.aborted) return;
@@ -66,9 +79,10 @@ export function ClipVersions({
       });
     return () => controller.abort();
   }, [open, path, refresh]);
-  const version = loading
-    ? undefined
-    : values.find((value) => value.id === selected);
+  const version =
+    loading || (open && values.length === 0)
+      ? undefined
+      : values.find((value) => value.id === selected);
   async function restore() {
     if (!version) return;
     setBusy(true);
@@ -97,12 +111,22 @@ export function ClipVersions({
         }
       }}
     >
-      <DialogTrigger asChild>
-        <Button type="button" variant="outline" disabled={locked}>
-          Versions / undo
-        </Button>
-      </DialogTrigger>
-      <DialogContent className="max-h-[90dvh] overflow-y-auto sm:max-w-3xl">
+      {!hideTrigger && (
+        <DialogTrigger asChild>
+          <Button type="button" variant="outline" disabled={locked}>
+            Versions / undo
+          </Button>
+        </DialogTrigger>
+      )}
+      <DialogContent
+        onCloseAutoFocus={(event) => {
+          if (returnFocus?.current) {
+            event.preventDefault();
+            returnFocus.current.focus();
+          }
+        }}
+        className="max-h-[90dvh] overflow-y-auto sm:max-w-3xl"
+      >
         <DialogHeader>
           <DialogTitle>Restore a previous version</DialogTitle>
           <DialogDescription>

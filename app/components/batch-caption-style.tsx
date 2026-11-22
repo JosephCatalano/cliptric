@@ -2,6 +2,8 @@
 import { useState } from "react";
 import { Button } from "@/components/ui/button";
 import { Alert, AlertDescription } from "@/components/ui/alert";
+import { CaptionStylePicker } from "./caption-style-picker";
+import { AdvancedOptions } from "./creation-flow";
 import { CaptionStyleLibrary } from "./caption-style-library";
 import { api, message } from "../../lib/client-api";
 import { type CaptionStyle, type Project } from "../../lib/projects";
@@ -12,12 +14,14 @@ export function BatchCaptionStyle({
   disabled,
   onBusy,
   onSaved,
+  selectedOnly = false,
 }: {
   project: Project;
   selected: Set<string>;
   disabled: boolean;
   onBusy: (busy: boolean) => void;
   onSaved: (project: Project) => void;
+  selectedOnly?: boolean;
 }) {
   const [style, setStyle] = useState<CaptionStyle>({
     preset: project.settings.caption_preset,
@@ -52,32 +56,24 @@ export function BatchCaptionStyle({
     }
   }
   return (
-    <details>
-      <summary>Apply a caption style across clips</summary>
+    <>
       <div className="flex flex-col gap-3">
-        <CaptionStyleLibrary
-          value={style}
-          onApply={setStyle}
+        <CaptionStylePicker
+          name="selected-caption-preset"
+          value={style.preset}
           disabled={disabled}
+          onChange={(preset) => setStyle((value) => ({ ...value, preset }))}
         />
+        <AdvancedOptions label="Saved caption styles">
+          <CaptionStyleLibrary
+            value={style}
+            onApply={setStyle}
+            disabled={disabled}
+          />
+        </AdvancedOptions>
         <p>
-          Style to apply: {style.preset}, {style.position},{" "}
-          {style.customization.font_size}px. Initially uses the project
-          defaults; load a saved style to change it.
-        </p>
-        <p>
-          Applying replaces caption styling overrides, including caption censor
-          settings. Clip-specific emphasis words, transcripts, framing,
-          overlays, and previous exports are preserved. Rejected clips are
-          excluded.
-        </p>
-        <p>
-          Selected targets ({chosen.length}):{" "}
-          {chosen.map((item) => item.title).join(", ") || "None"}.
-        </p>
-        <p>
-          All eligible targets ({eligible.length}):{" "}
-          {eligible.map((item) => item.title).join(", ") || "None"}.
+          Applying replaces selected caption styling, including censor settings.
+          Rejected clips are excluded.
         </p>
         <Button
           type="button"
@@ -87,20 +83,22 @@ export function BatchCaptionStyle({
         >
           Replace style on {chosen.length} selected clips
         </Button>
-        <Button
-          type="button"
-          variant="outline"
-          disabled={disabled || !eligible.length}
-          onClick={() => void apply(true)}
-        >
-          Replace style on all {eligible.length} eligible clips
-        </Button>
+        {!selectedOnly && (
+          <Button
+            type="button"
+            variant="outline"
+            disabled={disabled || !eligible.length}
+            onClick={() => void apply(true)}
+          >
+            Replace style on all {eligible.length} eligible clips
+          </Button>
+        )}
         {error && (
           <Alert variant="destructive">
             <AlertDescription>{error}</AlertDescription>
           </Alert>
         )}
       </div>
-    </details>
+    </>
   );
 }

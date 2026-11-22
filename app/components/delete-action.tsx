@@ -1,6 +1,6 @@
 "use client";
 
-import { useState } from "react";
+import { useState, type RefObject } from "react";
 import { Trash2Icon } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Alert, AlertDescription } from "@/components/ui/alert";
@@ -23,6 +23,10 @@ export function DeleteAction({
   description,
   disabled,
   onDeleted,
+  open: controlledOpen,
+  onOpenChange,
+  hideTrigger = false,
+  returnFocus,
 }: {
   path: string;
   label: string;
@@ -30,8 +34,14 @@ export function DeleteAction({
   description: string;
   disabled?: boolean;
   onDeleted(): void;
+  open?: boolean;
+  onOpenChange?: (open: boolean) => void;
+  hideTrigger?: boolean;
+  returnFocus?: RefObject<HTMLButtonElement | null>;
 }) {
-  const [open, setOpen] = useState(false);
+  const [internalOpen, setInternalOpen] = useState(false);
+  const open = controlledOpen ?? internalOpen;
+  const setOpen = onOpenChange ?? setInternalOpen;
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState("");
   const [deleted, setDeleted] = useState(false);
@@ -66,13 +76,22 @@ export function DeleteAction({
         if (value) setError("");
       }}
     >
-      <AlertDialogTrigger asChild>
-        <Button type="button" variant="destructive" disabled={disabled}>
-          <Trash2Icon data-icon="inline-start" />
-          {label}
-        </Button>
-      </AlertDialogTrigger>
-      <AlertDialogContent>
+      {!hideTrigger && (
+        <AlertDialogTrigger asChild>
+          <Button type="button" variant="destructive" disabled={disabled}>
+            <Trash2Icon data-icon="inline-start" />
+            {label}
+          </Button>
+        </AlertDialogTrigger>
+      )}
+      <AlertDialogContent
+        onCloseAutoFocus={(event) => {
+          if (returnFocus?.current) {
+            event.preventDefault();
+            returnFocus.current.focus();
+          }
+        }}
+      >
         <AlertDialogHeader>
           <AlertDialogTitle>
             {deleted ? "Deleted" : `${label}?`}

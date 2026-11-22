@@ -142,7 +142,28 @@
     @apply max-w-5xl;
   }
   .new-project-workspace {
-    @apply max-w-5xl;
+    @apply max-w-7xl;
+  }
+  .creation-layout {
+    @apply grid items-start gap-6 lg:grid-cols-2;
+  }
+  .creation-preview {
+    @apply min-w-0 lg:sticky lg:top-6;
+  }
+  .new-project-workspace .creation-preview .setup-preview,
+  .creation-preview video {
+    @apply max-h-[55dvh] w-full max-w-full rounded-lg object-contain;
+  }
+  .selection-toolbar {
+    @apply sticky top-4 z-10 flex flex-col gap-3 rounded-xl border bg-card p-4 text-card-foreground shadow-sm;
+  }
+  .selection-actions {
+    @apply grid grid-cols-[minmax(0,1fr)_auto] items-end gap-3;
+  }
+  .selection-actions > [data-slot="field"]:not(:first-child),
+  .selection-actions > p,
+  .selection-actions > [role="alert"] {
+    grid-column: 1 / -1;
   }
   .new-project-workspace .setup-preview {
     @apply max-h-none max-w-3xl;
@@ -440,36 +461,71 @@
     overflow-wrap: anywhere;
   }
   @media (prefers-reduced-motion: no-preference) {
-    .caption-style-card:is(:hover, :focus-within) .caption-appearance-text[data-effect="pop"],
-    .caption-appearance-stage:hover .caption-appearance-text[data-effect="pop"] {
+    .caption-style-card:is(:hover, :focus-within)
+      .caption-appearance-text[data-effect="pop"],
+    .caption-appearance-stage:hover
+      .caption-appearance-text[data-effect="pop"] {
       animation: caption-sample-pop 1.2s ease-out 1;
     }
-    .caption-style-card:is(:hover, :focus-within) .caption-appearance-text[data-effect="fade"],
-    .caption-appearance-stage:hover .caption-appearance-text[data-effect="fade"] {
+    .caption-style-card:is(:hover, :focus-within)
+      .caption-appearance-text[data-effect="fade"],
+    .caption-appearance-stage:hover
+      .caption-appearance-text[data-effect="fade"] {
       animation: caption-sample-fade 1.2s ease-out 1;
     }
-    .caption-style-card:is(:hover, :focus-within) .caption-appearance-text[data-effect="flow"] > span {
+    .caption-style-card:is(:hover, :focus-within)
+      .caption-appearance-text[data-effect="flow"]
+      > span {
       animation: caption-sample-flow 2s linear 1;
     }
-    .caption-style-card:is(:hover, :focus-within) .caption-appearance-text[data-effect="glow"] > span {
+    .caption-style-card:is(:hover, :focus-within)
+      .caption-appearance-text[data-effect="glow"]
+      > span {
       animation: caption-sample-glow 2s linear 1;
     }
   }
   @keyframes caption-sample-pop {
-    0% { transform: scale(0.8); opacity: 0; }
-    20%, 100% { transform: scale(1); opacity: 1; }
+    0% {
+      transform: scale(0.8);
+      opacity: 0;
+    }
+    20%,
+    100% {
+      transform: scale(1);
+      opacity: 1;
+    }
   }
   @keyframes caption-sample-fade {
-    0%, 100% { opacity: 0; }
-    20%, 80% { opacity: 1; }
+    0%,
+    100% {
+      opacity: 0;
+    }
+    20%,
+    80% {
+      opacity: 1;
+    }
   }
   @keyframes caption-sample-flow {
-    0%, 25%, 100% { color: var(--caption-sample-colour); }
-    4%, 21% { color: var(--caption-sample-accent); }
+    0%,
+    25%,
+    100% {
+      color: var(--caption-sample-colour);
+    }
+    4%,
+    21% {
+      color: var(--caption-sample-accent);
+    }
   }
   @keyframes caption-sample-glow {
-    0%, 25%, 100% { text-shadow: none; }
-    4%, 21% { text-shadow: 0 0 6px var(--caption-sample-glow); }
+    0%,
+    25%,
+    100% {
+      text-shadow: none;
+    }
+    4%,
+    21% {
+      text-shadow: 0 0 6px var(--caption-sample-glow);
+    }
   }
   .caption-style-description {
     @apply text-xs leading-relaxed text-muted-foreground;
@@ -512,21 +568,41 @@
     .caption-style-card:is(:hover, :focus-within) .caption-example-studio {
       animation: caption-studio 1.8s ease-out 1;
     }
-    .caption-style-card:is(:hover, :focus-within) .caption-example-focus .caption-preview-word {
+    .caption-style-card:is(:hover, :focus-within)
+      .caption-example-focus
+      .caption-preview-word {
       animation: caption-focus 2s linear 1;
     }
   }
   @keyframes caption-impact {
-    0% { transform: scale(0.85); }
-    7%, 100% { transform: scale(1); }
+    0% {
+      transform: scale(0.85);
+    }
+    7%,
+    100% {
+      transform: scale(1);
+    }
   }
   @keyframes caption-studio {
-    0%, 100% { opacity: 0; }
-    8%, 92% { opacity: 1; }
+    0%,
+    100% {
+      opacity: 0;
+    }
+    8%,
+    92% {
+      opacity: 1;
+    }
   }
   @keyframes caption-focus {
-    0%, 25%, 100% { color: white; }
-    4%, 21% { color: #66ddee; }
+    0%,
+    25%,
+    100% {
+      color: white;
+    }
+    4%,
+    21% {
+      color: #66ddee;
+    }
   }
   .caption-example-bold {
     color: #ffef00;
@@ -550,23 +626,45 @@
     color: #ffef00;
   }
   .caption-example-glow .caption-preview-word:last-child {
-    text-shadow: 0 0 8px #bb99ff, 0 0 14px #bb99ff;
+    text-shadow:
+      0 0 8px #bb99ff,
+      0 0 14px #bb99ff;
   }
   @media (prefers-reduced-motion: no-preference) {
-    .caption-style-card:is(:hover, :focus-within) .caption-example-flow .caption-preview-word {
+    .caption-style-card:is(:hover, :focus-within)
+      .caption-example-flow
+      .caption-preview-word {
       animation: caption-flow-word 2s linear 1;
     }
-    .caption-style-card:is(:hover, :focus-within) .caption-example-glow .caption-preview-word {
+    .caption-style-card:is(:hover, :focus-within)
+      .caption-example-glow
+      .caption-preview-word {
       animation: caption-glow-word 2s linear 1;
     }
   }
   @keyframes caption-flow-word {
-    0%, 25%, 100% { color: white; }
-    4%, 21% { color: #ffef00; }
+    0%,
+    25%,
+    100% {
+      color: white;
+    }
+    4%,
+    21% {
+      color: #ffef00;
+    }
   }
   @keyframes caption-glow-word {
-    0%, 25%, 100% { text-shadow: 0 1px 2px #101010; }
-    4%, 21% { text-shadow: 0 0 8px #bb99ff, 0 0 14px #bb99ff; }
+    0%,
+    25%,
+    100% {
+      text-shadow: 0 1px 2px #101010;
+    }
+    4%,
+    21% {
+      text-shadow:
+        0 0 8px #bb99ff,
+        0 0 14px #bb99ff;
+    }
   }
 
   .app-shell {

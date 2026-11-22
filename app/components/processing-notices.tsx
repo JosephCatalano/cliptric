@@ -4,6 +4,23 @@ import { useEffect, useRef, useState } from "react";
 import { usePathname, useRouter } from "next/navigation";
 import { confirmWorkspaceNavigation } from "./use-unsaved-edits";
 import Link from "next/link";
+import { BellIcon } from "lucide-react";
+import { Badge } from "@/components/ui/badge";
+import {
+  Sheet,
+  SheetTrigger,
+  SheetContent,
+  SheetHeader,
+  SheetTitle,
+  SheetDescription,
+} from "@/components/ui/sheet";
+import {
+  Empty,
+  EmptyHeader,
+  EmptyTitle,
+  EmptyDescription,
+} from "@/components/ui/empty";
+import { useWorkspaceNavigation } from "./workspace-navigation";
 import { api, ApiError, message } from "@/lib/client-api";
 import { active, deliverable, type Project } from "@/lib/projects";
 import { Button } from "@/components/ui/button";
@@ -22,6 +39,7 @@ function completionText(project: Project) {
 
 export function ProcessingNotices() {
   const path = usePathname();
+  const { locked } = useWorkspaceNavigation();
   const router = useRouter();
   const legal = path === "/terms" || path === "/privacy";
   const pending = useRef(new Map<string, Project>());
@@ -164,66 +182,126 @@ export function ProcessingNotices() {
   }
   if (legal) return null;
   return (
-    <section
-      className="flex flex-col gap-2 px-4 py-2"
-      aria-label="Processing updates"
-    >
-      <div className="flex flex-wrap items-center gap-3 text-sm text-muted-foreground">
-        {count ? (
-          <Link href="/projects">
-            {count} {count === 1 ? "project" : "projects"} processing
-          </Link>
-        ) : (
-          <span>
-            {connected ? "Processing updates enabled" : "Checking processing…"}
-          </span>
-        )}
+    <Sheet>
+      <SheetTrigger asChild>
         <Button
           variant="ghost"
-          size="sm"
-          disabled={checkingPermission}
-          onClick={() => void toggleDesktop()}
+          size="icon"
+          aria-label={`Notifications: ${notices.length} new updates${count ? `, ${count} projects processing` : ""}${error ? ", status unavailable" : ""}`}
+          className="relative"
         >
-          {checkingPermission
-            ? "Checking permission…"
-            : desktop
-              ? "Turn desktop alerts off"
-              : "Enable desktop alerts"}
+          <BellIcon />
+          {notices.length || error ? (
+            <Badge
+              variant={error ? "destructive" : "secondary"}
+              className="absolute -top-1 -right-1"
+            >
+              {error ? "!" : notices.length}
+            </Badge>
+          ) : null}
         </Button>
-        {permissionNote ? <span role="status">{permissionNote}</span> : null}
-      </div>
-      {error ? (
-        <Alert>
-          <AlertDescription>
-            Processing updates unavailable: {error} Reconnecting automatically.{" "}
-            <Link href="/projects">Open Projects</Link>
-          </AlertDescription>
-        </Alert>
-      ) : null}
-      {notices.map((project) => (
-        <Alert key={project.id}>
-          <AlertDescription>
-            <span role="status">
-              {project.title}: {completionText(project)}.
-            </span>
-            <div className="flex flex-wrap gap-2">
-              <Button asChild variant="link">
-                <Link href={`/projects/${project.id}`}>Open project</Link>
-              </Button>
-              <Button
-                variant="ghost"
-                onClick={() =>
-                  setNotices((values) =>
-                    values.filter((value) => value.id !== project.id),
-                  )
-                }
+      </SheetTrigger>
+      <span className="sr-only" role="status">
+        {notices[0]
+          ? `${notices[0].title}: ${completionText(notices[0])}`
+          : count
+            ? `${count} projects processing`
+            : ""}
+      </span>
+      <SheetContent className="overflow-y-auto">
+        <SheetHeader>
+          <SheetTitle>Notifications</SheetTitle>
+          <SheetDescription>
+            Recent processing updates while Cliptric is open.
+          </SheetDescription>
+        </SheetHeader>
+        <div className="flex flex-col gap-4 px-4 pb-6">
+          {count ? (
+            <Button asChild variant="outline">
+              <Link
+                href="/projects"
+                aria-disabled={locked}
+                onClick={(event) => {
+                  if (locked) event.preventDefault();
+                }}
               >
-                Dismiss
-              </Button>
-            </div>
-          </AlertDescription>
-        </Alert>
-      ))}
-    </section>
+                {count} projects processing
+              </Link>
+            </Button>
+          ) : null}
+          {!connected && !error ? (
+            <p role="status">Checking processing...</p>
+          ) : null}
+          {error ? (
+            <Alert>
+              <AlertDescription>
+                Cannot refresh processing status. {error} Reconnecting
+                automatically.
+              </AlertDescription>
+            </Alert>
+          ) : null}
+          {notices.map((project) => (
+            <Alert key={project.id}>
+              <AlertDescription>
+                <p>
+                  {project.title}: {completionText(project)}.
+                </p>
+                <div className="flex flex-wrap gap-2">
+                  <Button asChild variant="link">
+                    <Link
+                      href={`/projects/${project.id}`}
+                      aria-disabled={locked}
+                      onClick={(event) => {
+                        if (locked) event.preventDefault();
+                      }}
+                    >
+                      Open project
+                    </Link>
+                  </Button>
+                  <Button
+                    variant="ghost"
+                    onClick={() =>
+                      setNotices((values) =>
+                        values.filter((value) => value.id !== project.id),
+                      )
+                    }
+                  >
+                    Dismiss
+                  </Button>
+                </div>
+              </AlertDescription>
+            </Alert>
+          ))}
+          {connected && !notices.length && !error ? (
+            <Empty>
+              <EmptyHeader>
+                <EmptyTitle>No new updates</EmptyTitle>
+                <EmptyDescription>
+                  Completed jobs will appear here.
+                </EmptyDescription>
+              </EmptyHeader>
+            </Empty>
+          ) : null}
+          {locked ? (
+            <p>Save or discard studio edits before opening another project.</p>
+          ) : null}
+          <Button
+            variant="outline"
+            disabled={checkingPermission}
+            onClick={() => void toggleDesktop()}
+          >
+            {checkingPermission
+              ? "Checking permission..."
+              : desktop
+                ? "Turn desktop alerts off"
+                : "Enable desktop alerts"}
+          </Button>
+          <p className="text-sm text-muted-foreground">
+            Alerts require the browser and backend to stay available.
+          </p>
+          {permissionNote ? <p role="status">{permissionNote}</p> : null}
+        </div>
+      </SheetContent>
+    </Sheet>
   );
 }

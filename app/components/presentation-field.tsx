@@ -44,10 +44,8 @@ export function PresentationField({
         </NativeSelectOption>
       </NativeSelect>
       <FieldDescription>
-        Chooses an opening cover frame, checks caption/title placement, and
-        follows a face when a safe crop is clear. Preserves the full picture
-        when uncertain. Runs locally and keeps your chosen caption style. Review
-        the result in Trim / edit.
+        Locally suggests framing, a cover and text placement. Keeps the full
+        picture when uncertain. Review the result before publishing.
       </FieldDescription>
     </Field>
   );

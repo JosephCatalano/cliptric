@@ -3,6 +3,14 @@
 import { useEffect, useRef, useState, type FormEvent } from "react";
 import Link from "next/link";
 import { useRouter } from "next/navigation";
+import {
+  useCreationFlow,
+  CreationFlow,
+  CreationPanel,
+  CreationFooter,
+  AdvancedOptions,
+} from "./creation-flow";
+import { BatchSourcePreview } from "./batch-source-preview";
 import { ProjectPresets } from "./project-presets";
 import {
   useSetupDraft,
@@ -113,6 +121,11 @@ export function NewBatch() {
   const ready =
     clips.length > 0 && clips.every((clip) => clip.recording && !clip.error);
 
+  const flow = useCreationFlow(
+    ready && Boolean(title.trim()),
+    true,
+    busy !== null,
+  );
   function addFiles(files: FileList | null) {
     if (limits.maxBytes === null) {
       setError(
@@ -391,244 +404,289 @@ export function NewBatch() {
         </Button>
       </header>
       <h1>Batch edit supplied clips</h1>
-      <p>
-        Upload up to 15 clips, choose one style, and finish each as a separate
-        video. AI can keep each video whole or choose a tighter cut.
-      </p>
+      <p>Turn up to 15 videos into styled clips.</p>
       {error && (
         <Alert role="alert" variant="destructive">
           <AlertDescription>{error}</AlertDescription>
         </Alert>
       )}
       <SetupDraftNotice draft={draft} onRestore={restoreSetup} />
-      <form onSubmit={create} className="flex flex-col gap-6">
-        <ProjectPresets
-          workflow="batch"
-          settings={savedSettings}
-          disabled={busy !== null}
-          onApply={applySettings}
-        />
-        <Field>
-          <FieldLabel htmlFor="batch-headline-position">
-            Headline position
-          </FieldLabel>
-          <NativeSelect
-            id="batch-headline-position"
-            value={headlinePosition}
-            onChange={(event) =>
-              setHeadlinePosition(event.target.value as typeof headlinePosition)
-            }
-          >
-            <NativeSelectOption value="auto">Auto</NativeSelectOption>
-            <NativeSelectOption value="upper">Upper</NativeSelectOption>
-            <NativeSelectOption value="centre">Centre</NativeSelectOption>
-          </NativeSelect>
-        </Field>
-        <FieldSet disabled={busy !== null}>
-          <FieldGroup>
-            <Field>
-              <FieldLabel htmlFor="batch-title">Batch name</FieldLabel>
-              <Input
-                id="batch-title"
-                value={title}
-                onChange={(event) => setTitle(event.target.value)}
-                required
-                maxLength={120}
-              />
-            </Field>
-            <Card>
-              <CardHeader>
-                <CardTitle>1. Add your clips</CardTitle>
-                <CardDescription>
-                  MP4, MOV, MKV, M4V or WebM. Videos can be minutes long, up to
-                  six hours each. Up to {limits.label} per file. Import videos
-                  you have permission to edit.
-                </CardDescription>
-              </CardHeader>
-              <CardContent className="flex flex-col gap-4">
-                <ImportLimitNotice limits={limits} />
-                <Field>
-                  <FieldLabel htmlFor="batch-files">Select videos</FieldLabel>
-                  <Input
-                    id="batch-files"
-                    type="file"
-                    multiple
-                    accept=".mp4,.m4v,.mov,.mkv,.webm"
-                    disabled={
-                      busy !== null ||
-                      limits.maxBytes === null ||
-                      clips.length >= 15
-                    }
-                    onChange={(event) => {
-                      addFiles(event.target.files);
-                      event.target.value = "";
-                    }}
-                  />
-                </Field>
-                <Button
-                  type="button"
-                  variant="outline"
-                  disabled={loadingSources || busy !== null}
-                  onClick={() => void loadSources()}
-                >
-                  {loadingSources
-                    ? "Loading imports…"
-                    : "Choose from recent imports"}
-                </Button>
-                {sources.length > 0 && (
-                  <FieldSet>
-                    <FieldLegend>Recent clips</FieldLegend>
-                    <FieldDescription>
-                      Up to 50 recent imports. Reuse these without uploading
-                      again.
-                    </FieldDescription>
-                    <FieldGroup>
-                      {sources.map((source) => (
-                        <Field key={source.id} orientation="horizontal">
-                          <Checkbox
-                            id={`batch-source-${source.id}`}
-                            checked={clips.some(
-                              (clip) => clip.recording?.id === source.id,
-                            )}
-                            disabled={
-                              busy !== null ||
-                              (clips.length >= 15 &&
-                                !clips.some(
-                                  (clip) => clip.recording?.id === source.id,
-                                ))
-                            }
-                            onCheckedChange={(checked) => {
-                              if (checked === true)
-                                setClips((previous) =>
-                                  previous.some(
+      <form
+        id={flow.formId}
+        onSubmit={(event) => flow.submit(event, create)}
+        onInvalidCapture={flow.onInvalid}
+        className="flex flex-col gap-5"
+      >
+        <CreationFlow
+          flow={flow}
+          preview={
+            <BatchSourcePreview
+              recordings={clips.flatMap((clip) =>
+                clip.recording ? [clip.recording] : [],
+              )}
+            />
+          }
+        >
+          <FieldSet disabled={busy !== null}>
+            <CreationPanel value={0} active={flow.step}>
+              <h2>Add your videos</h2>
+              <Field>
+                <FieldLabel htmlFor="batch-title">Batch name</FieldLabel>
+                <Input
+                  id="batch-title"
+                  value={title}
+                  onChange={(event) => setTitle(event.target.value)}
+                  required
+                  maxLength={120}
+                />
+              </Field>
+              <Card>
+                <CardHeader>
+                  <CardTitle>Videos</CardTitle>
+                  <CardDescription>
+                    MP4, MOV, MKV, M4V or WebM. Videos can be minutes long, up
+                    to six hours each. Up to {limits.label} per file. Import
+                    videos you have permission to edit.
+                  </CardDescription>
+                </CardHeader>
+                <CardContent className="flex flex-col gap-4">
+                  <ImportLimitNotice limits={limits} />
+                  <Field>
+                    <FieldLabel htmlFor="batch-files">Select videos</FieldLabel>
+                    <Input
+                      id="batch-files"
+                      type="file"
+                      multiple
+                      accept=".mp4,.m4v,.mov,.mkv,.webm"
+                      disabled={
+                        busy !== null ||
+                        limits.maxBytes === null ||
+                        clips.length >= 15
+                      }
+                      onChange={(event) => {
+                        addFiles(event.target.files);
+                        event.target.value = "";
+                      }}
+                    />
+                  </Field>
+                  <Button
+                    type="button"
+                    variant="outline"
+                    disabled={loadingSources || busy !== null}
+                    onClick={() => void loadSources()}
+                  >
+                    {loadingSources
+                      ? "Loading imports…"
+                      : "Choose from recent imports"}
+                  </Button>
+                  {sources.length > 0 && (
+                    <FieldSet>
+                      <FieldLegend>Recent clips</FieldLegend>
+                      <FieldDescription>
+                        Reuse imported videos.
+                      </FieldDescription>
+                      <FieldGroup>
+                        {sources.map((source) => (
+                          <Field key={source.id} orientation="horizontal">
+                            <Checkbox
+                              id={`batch-source-${source.id}`}
+                              checked={clips.some(
+                                (clip) => clip.recording?.id === source.id,
+                              )}
+                              disabled={
+                                busy !== null ||
+                                (clips.length >= 15 &&
+                                  !clips.some(
                                     (clip) => clip.recording?.id === source.id,
-                                  ) || previous.length >= 15
-                                    ? previous
-                                    : [
-                                        ...previous,
-                                        {
-                                          id: crypto.randomUUID(),
-                                          name: source.name,
-                                          file: null,
-                                          recording: source,
-                                          error: "",
-                                        },
-                                      ],
-                                );
-                              else
+                                  ))
+                              }
+                              onCheckedChange={(checked) => {
+                                if (checked === true)
+                                  setClips((previous) =>
+                                    previous.some(
+                                      (clip) =>
+                                        clip.recording?.id === source.id,
+                                    ) || previous.length >= 15
+                                      ? previous
+                                      : [
+                                          ...previous,
+                                          {
+                                            id: crypto.randomUUID(),
+                                            name: source.name,
+                                            file: null,
+                                            recording: source,
+                                            error: "",
+                                          },
+                                        ],
+                                  );
+                                else
+                                  setClips((previous) =>
+                                    previous.filter(
+                                      (clip) =>
+                                        clip.recording?.id !== source.id,
+                                    ),
+                                  );
+                              }}
+                            />
+                            <FieldLabel htmlFor={`batch-source-${source.id}`}>
+                              {source.name} ({source.duration.toFixed(1)}s
+                              {source.has_audio ? "" : ", no audio"})
+                            </FieldLabel>
+                          </Field>
+                        ))}
+                      </FieldGroup>
+                    </FieldSet>
+                  )}
+                  {clips.length > 0 && (
+                    <ul
+                      className="flex flex-col gap-3"
+                      aria-label="Supplied clips"
+                    >
+                      {clips.map((clip, index) => (
+                        <li key={clip.id} className="flex flex-col gap-2">
+                          <div className="flex flex-wrap items-center gap-3">
+                            <span className="min-w-0 break-words">
+                              {index + 1}. {clip.name}
+                            </span>
+                            <Badge variant="secondary">
+                              {current === clip.id
+                                ? "Importing"
+                                : clip.error
+                                  ? "Needs attention"
+                                  : clip.recording
+                                    ? `${clip.recording.duration.toFixed(1)}s imported`
+                                    : "Waiting to import"}
+                            </Badge>
+                            <Button
+                              type="button"
+                              variant="ghost"
+                              size="sm"
+                              disabled={busy !== null}
+                              onClick={() =>
                                 setClips((previous) =>
                                   previous.filter(
-                                    (clip) => clip.recording?.id !== source.id,
+                                    (value) => value.id !== clip.id,
                                   ),
-                                );
-                            }}
-                          />
-                          <FieldLabel htmlFor={`batch-source-${source.id}`}>
-                            {source.name} ({source.duration.toFixed(1)}s
-                            {source.has_audio ? "" : ", no audio"})
-                          </FieldLabel>
-                        </Field>
+                                )
+                              }
+                              aria-label={`Remove ${clip.name}`}
+                            >
+                              Remove
+                            </Button>
+                          </div>
+                          {clip.error && (
+                            <Alert variant="destructive">
+                              <AlertDescription>{clip.error}</AlertDescription>
+                            </Alert>
+                          )}
+                          {current === clip.id && (
+                            <>
+                              <Progress
+                                value={progress}
+                                aria-label={`Import progress for ${clip.name}`}
+                              />
+                              <p role="status">
+                                {progress < 100
+                                  ? `${Math.floor(progress)}% transferred`
+                                  : "Validating video…"}
+                              </p>
+                            </>
+                          )}
+                        </li>
                       ))}
-                    </FieldGroup>
-                  </FieldSet>
-                )}
-                {clips.length > 0 && (
-                  <ul
-                    className="flex flex-col gap-3"
-                    aria-label="Supplied clips"
+                    </ul>
+                  )}
+                  <Button
+                    type="button"
+                    variant="outline"
+                    disabled={
+                      busy !== null ||
+                      !clips.some((clip) => clip.file && !clip.recording)
+                    }
+                    onClick={() => void importFiles()}
                   >
-                    {clips.map((clip, index) => (
-                      <li key={clip.id} className="flex flex-col gap-2">
-                        <div className="flex flex-wrap items-center gap-3">
-                          <span className="min-w-0 break-words">
-                            {index + 1}. {clip.name}
-                          </span>
-                          <Badge variant="secondary">
-                            {current === clip.id
-                              ? "Importing"
-                              : clip.error
-                                ? "Needs attention"
-                                : clip.recording
-                                  ? `${clip.recording.duration.toFixed(1)}s imported`
-                                  : "Waiting to import"}
-                          </Badge>
-                          <Button
-                            type="button"
-                            variant="ghost"
-                            size="sm"
-                            disabled={busy !== null}
-                            onClick={() =>
-                              setClips((previous) =>
-                                previous.filter(
-                                  (value) => value.id !== clip.id,
-                                ),
-                              )
-                            }
-                            aria-label={`Remove ${clip.name}`}
-                          >
-                            Remove
-                          </Button>
-                        </div>
-                        {clip.error && (
-                          <Alert variant="destructive">
-                            <AlertDescription>{clip.error}</AlertDescription>
-                          </Alert>
-                        )}
-                        {current === clip.id && (
-                          <>
-                            <Progress
-                              value={progress}
-                              aria-label={`Import progress for ${clip.name}`}
-                            />
-                            <p role="status">
-                              {progress < 100
-                                ? `${Math.floor(progress)}% transferred`
-                                : "Validating video…"}
-                            </p>
-                          </>
-                        )}
-                      </li>
-                    ))}
-                  </ul>
-                )}
-                <Button
-                  type="button"
-                  variant="outline"
-                  disabled={
-                    busy !== null ||
-                    !clips.some((clip) => clip.file && !clip.recording)
-                  }
-                  onClick={() => void importFiles()}
+                    Import selected clips
+                  </Button>
+                  <p className="text-sm text-muted-foreground">
+                    Keep this page open while importing. Once processing starts,
+                    you can leave and reopen the batch in Projects. Removing a
+                    clip from this list preserves its imported source.
+                  </p>
+                </CardContent>
+              </Card>
+            </CreationPanel>
+            <CreationPanel value={1} active={flow.step}>
+              <h2>Choose a shared style</h2>
+              <CaptionStylePicker
+                name="batch-preset"
+                value={style.preset}
+                onChange={(preset) =>
+                  setStyle((previous) => ({ ...previous, preset }))
+                }
+                disabled={busy !== null}
+              />
+              <Field>
+                <FieldLabel htmlFor="batch-mode">
+                  How should each video be processed?
+                </FieldLabel>
+                <NativeSelect
+                  id="batch-mode"
+                  value={batchMode}
+                  onChange={(event) => {
+                    setBatchMode(
+                      event.target.value as "auto" | "keep" | "highlights",
+                    );
+                    setReviewConsent(false);
+                  }}
                 >
-                  Import selected clips
-                </Button>
-                <p className="text-sm text-muted-foreground">
-                  Keep this page open while importing. Once processing starts,
-                  you can leave and reopen the batch in Projects. Removing a
-                  clip from this list preserves its imported source.
-                </p>
-              </CardContent>
-            </Card>
-            <Card>
-              <CardHeader>
-                <CardTitle>2. Choose shared settings</CardTitle>
-                <CardDescription>
-                  Each video gets its own transcript and one or more exports.
-                  You can adjust individual clips after processing.
-                </CardDescription>
-              </CardHeader>
-              <CardContent className="flex flex-col gap-5">
+                  <NativeSelectOption value="highlights">
+                    Find multiple highlights per video
+                  </NativeSelectOption>
+                  <NativeSelectOption value="auto">
+                    AI review: keep whole or select a tighter cut
+                  </NativeSelectOption>
+                  <NativeSelectOption value="keep">
+                    Keep full length
+                  </NativeSelectOption>
+                </NativeSelect>
+                <FieldDescription>
+                  AI reviews up to 6,000 words per video. Review results before
+                  publishing; longer sources may need manual editing.
+                </FieldDescription>
+              </Field>
+              {batchMode === "highlights" && (
+                <Field>
+                  <FieldLabel htmlFor="batch-clip-count">
+                    Maximum clips per video
+                  </FieldLabel>
+                  <NativeSelect
+                    id="batch-clip-count"
+                    value={clipsPerSource}
+                    onChange={(event) =>
+                      setClipsPerSource(Number(event.target.value))
+                    }
+                  >
+                    {[1, 2, 3, 4, 5].map((count) => (
+                      <NativeSelectOption key={count} value={count}>
+                        {count}
+                      </NativeSelectOption>
+                    ))}
+                  </NativeSelect>
+                  <FieldDescription>
+                    AI may return fewer clips or keep one complete video.
+                  </FieldDescription>
+                </Field>
+              )}
+              <AiInstructionsField
+                value={aiInstructions}
+                onChange={setAiInstructions}
+                mode={batchMode !== "keep" ? "review" : "titles"}
+                disabled={busy !== null}
+              />
+              <AdvancedOptions>
                 <PresentationField
                   value={presentation}
                   onChange={setPresentation}
-                  disabled={busy !== null}
-                />
-                <CaptionStylePicker
-                  name="batch-preset"
-                  value={style.preset}
-                  onChange={(preset) =>
-                    setStyle((previous) => ({ ...previous, preset }))
-                  }
                   disabled={busy !== null}
                 />
                 <CaptionStyleLibrary
@@ -728,141 +786,126 @@ export function NewBatch() {
                     </FieldLabel>
                   </Field>
                 </FieldGroup>
-                <FieldSet>
-                  <FieldLegend>AI review and titles</FieldLegend>
-                  <FieldGroup>
-                    <Field>
-                      <FieldLabel htmlFor="batch-mode">
-                        How should each video be processed?
-                      </FieldLabel>
-                      <NativeSelect
-                        id="batch-mode"
-                        value={batchMode}
-                        onChange={(event) => {
-                          setBatchMode(
-                            event.target.value as
-                              "auto" | "keep" | "highlights",
-                          );
-                          setReviewConsent(false);
-                        }}
-                      >
-                        <NativeSelectOption value="highlights">
-                          Find multiple highlights per video
-                        </NativeSelectOption>
-                        <NativeSelectOption value="auto">
-                          AI review: keep whole or select a tighter cut
-                        </NativeSelectOption>
-                        <NativeSelectOption value="keep">
-                          Keep full length
-                        </NativeSelectOption>
-                      </NativeSelect>
-                      <FieldDescription>
-                        AI can find several complete moments, choose one tighter
-                        cut, or keep a strong story whole. Each result has an
-                        editable title and saved reasoning. Review before
-                        posting. Speech review supports up to 6,000 words / 128
-                        KiB per source; keep/edit longer material manually.
-                      </FieldDescription>
-                    </Field>
-                    {batchMode === "highlights" && (
-                      <Field>
-                        <FieldLabel htmlFor="batch-clip-count">
-                          Maximum clips per video
-                        </FieldLabel>
-                        <NativeSelect
-                          id="batch-clip-count"
-                          value={clipsPerSource}
-                          onChange={(event) =>
-                            setClipsPerSource(Number(event.target.value))
-                          }
-                        >
-                          {[1, 2, 3, 4, 5].map((count) => (
-                            <NativeSelectOption key={count} value={count}>
-                              {count}
-                            </NativeSelectOption>
-                          ))}
-                        </NativeSelect>
-                        <FieldDescription>
-                          AI selects up to this many distinct moments, or keeps
-                          one complete video when appropriate. It may return
-                          fewer clips. Up to 75 outputs per batch.
-                        </FieldDescription>
-                      </Field>
-                    )}
-                    <AiInstructionsField
-                      value={aiInstructions}
-                      onChange={setAiInstructions}
-                      mode={batchMode !== "keep" ? "review" : "titles"}
-                      disabled={busy !== null}
-                    />
-                    {batchMode !== "keep" && (
-                      <Field orientation="horizontal">
-                        <Checkbox
-                          id="batch-review-consent"
-                          checked={reviewConsent}
-                          onCheckedChange={(value) =>
-                            setReviewConsent(value === true)
-                          }
-                        />
-                        <FieldLabel htmlFor="batch-review-consent">
-                          I agree to send each saved transcript and project
-                          instructions to OpenAI for billed video review and
-                          title generation.
-                        </FieldLabel>
-                      </Field>
-                    )}
-                    <Field orientation="horizontal">
-                      <Checkbox
-                        id="batch-headline"
-                        checked={headline}
-                        onCheckedChange={(value) => setHeadline(value === true)}
-                      />
-                      <FieldLabel htmlFor="batch-headline">
-                        Add an opening title card to each video
-                      </FieldLabel>
-                    </Field>
-                    {batchMode === "keep" && (
-                      <Field orientation="horizontal">
-                        <Checkbox
-                          id="batch-ai"
-                          checked={aiTitles}
-                          onCheckedChange={(value) =>
-                            setAiTitles(value === true)
-                          }
-                        />
-                        <FieldLabel htmlFor="batch-ai">
-                          Generate titles with AI. I agree to send each clip’s
-                          saved transcript text to OpenAI using my configured
-                          backend account and billed API usage.
-                        </FieldLabel>
-                      </Field>
-                    )}
-                    <FieldDescription>
-                      Without AI, titles start from filenames. Titles stay
-                      editable. Transcription and video rendering run locally.
-                      Clips without recognized speech need manual titles; failed
-                      AI titles keep the filename and show a warning. Choose No
-                      captions for footage that already has subtitles.
-                    </FieldDescription>
-                  </FieldGroup>
-                </FieldSet>
-              </CardContent>
-            </Card>
-            <Button
-              type="submit"
-              disabled={
-                !ready ||
-                busy !== null ||
-                !title.trim() ||
-                (batchMode !== "keep" && !reviewConsent)
+                <Field orientation="horizontal">
+                  <Checkbox
+                    id="batch-headline"
+                    checked={headline}
+                    onCheckedChange={(value) => setHeadline(value === true)}
+                  />
+                  <FieldLabel htmlFor="batch-headline">
+                    Add an opening title card to each video
+                  </FieldLabel>
+                </Field>
+                <Field>
+                  <FieldLabel htmlFor="batch-headline-position">
+                    Headline position
+                  </FieldLabel>
+                  <NativeSelect
+                    id="batch-headline-position"
+                    value={headlinePosition}
+                    onChange={(event) =>
+                      setHeadlinePosition(
+                        event.target.value as typeof headlinePosition,
+                      )
+                    }
+                  >
+                    <NativeSelectOption value="auto">Auto</NativeSelectOption>
+                    <NativeSelectOption value="upper">Upper</NativeSelectOption>
+                    <NativeSelectOption value="centre">
+                      Centre
+                    </NativeSelectOption>
+                  </NativeSelect>
+                </Field>
+              </AdvancedOptions>
+              <AdvancedOptions label="Project presets">
+                <ProjectPresets
+                  workflow="batch"
+                  settings={savedSettings}
+                  disabled={busy !== null}
+                  onApply={applySettings}
+                />
+              </AdvancedOptions>
+            </CreationPanel>
+            <CreationPanel value={2} active={flow.step}>
+              <h2>Ready to create</h2>
+              <dl className="grid grid-cols-2 gap-4">
+                <div>
+                  <dt className="text-muted-foreground">Batch</dt>
+                  <dd>{title}</dd>
+                </div>
+                <div>
+                  <dt className="text-muted-foreground">Videos</dt>
+                  <dd>{clips.length}</dd>
+                </div>
+                <div>
+                  <dt className="text-muted-foreground">Processing</dt>
+                  <dd>
+                    {batchMode === "keep"
+                      ? "Keep full length"
+                      : batchMode === "highlights"
+                        ? "Find highlights"
+                        : "Review and trim"}
+                  </dd>
+                </div>
+                <div>
+                  <dt className="text-muted-foreground">Captions</dt>
+                  <dd>{style.preset}</dd>
+                </div>
+              </dl>
+              {batchMode !== "keep" && (
+                <Field orientation="horizontal">
+                  <Checkbox
+                    id="batch-review-consent"
+                    checked={reviewConsent}
+                    onCheckedChange={(value) =>
+                      setReviewConsent(value === true)
+                    }
+                  />
+                  <FieldLabel htmlFor="batch-review-consent">
+                    I agree to share saved transcripts with OpenAI for analysis.
+                    API charges apply.
+                  </FieldLabel>
+                </Field>
+              )}
+              {batchMode === "keep" && (
+                <Field orientation="horizontal">
+                  <Checkbox
+                    id="batch-ai"
+                    checked={aiTitles}
+                    onCheckedChange={(value) => setAiTitles(value === true)}
+                  />
+                  <FieldLabel htmlFor="batch-ai">
+                    Generate titles with OpenAI from saved transcripts. API
+                    charges apply.
+                  </FieldLabel>
+                </Field>
+              )}
+              <p>
+                Transcription and rendering stay local. AI may return fewer
+                highlights; review every clip before publishing.
+              </p>
+            </CreationPanel>
+            <CreationFooter
+              flow={flow}
+              busy={busy !== null}
+              action={
+                <Button
+                  type="submit"
+                  disabled={
+                    !ready ||
+                    busy !== null ||
+                    !title.trim() ||
+                    (batchMode !== "keep" && !reviewConsent)
+                  }
+                >
+                  {busy === "saving"
+                    ? "Saving batch…"
+                    : `Process ${clips.length || "your"} clips`}
+                </Button>
               }
-            >
-              {busy === "saving"
-                ? "Saving batch…"
-                : `Process ${clips.length || "your"} clips`}
-            </Button>
-          </FieldGroup>
-        </FieldSet>
+            />
+          </FieldSet>
+        </CreationFlow>
       </form>
       {busy === "importing" && (
         <Button variant="outline" onClick={() => controller.current?.abort()}>

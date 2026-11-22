@@ -53,7 +53,7 @@ export function useSetupDraft(
     const timer = setTimeout(() => {
       try {
         localStorage.setItem(key, serialized);
-        setStatus("Setup saved on this browser.");
+        setStatus("Draft saved");
         setLastSaved(serialized);
         setStorageError("");
       } catch {
@@ -157,14 +157,14 @@ export function SetupDraftNotice({
       {draft.candidate ? (
         <Alert>
           <AlertDescription>
-            An unfinished setup is saved on this browser. Imported videos can be
-            recovered; files that were not imported must be selected again.
-            Sharing consent must be confirmed again.
+            {existing
+              ? "This setup already created a project."
+              : "Unfinished setup found. Restore imported videos, reselect unfinished uploads and confirm sharing again."}
             <div className="flex flex-wrap gap-2">
               {existing ? (
                 <Button asChild variant="outline">
                   <Link href={`/projects/${existing}`} onClick={draft.clear}>
-                    Open the project already created from this setup
+                    Open saved project
                   </Link>
                 </Button>
               ) : (

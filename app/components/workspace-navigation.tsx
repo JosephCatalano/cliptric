@@ -3,6 +3,7 @@
 import {
   createContext,
   useContext,
+  useEffect,
   useMemo,
   useState,
   type ReactNode,
@@ -19,6 +20,13 @@ export function WorkspaceNavigationProvider({
   children: ReactNode;
 }) {
   const [locked, setLocked] = useState(false);
+  useEffect(() => {
+    if (!locked) return;
+    const protect = (event: Event) => event.preventDefault();
+    window.addEventListener("cliptric:before-navigate", protect);
+    return () =>
+      window.removeEventListener("cliptric:before-navigate", protect);
+  }, [locked]);
   const value = useMemo(() => ({ locked, setLocked }), [locked]);
   return (
     <NavigationContext.Provider value={value}>

@@ -1,4 +1,5 @@
 "use client";
+import { ProcessingNotices } from "./processing-notices";
 
 import Image from "next/image";
 import Link from "next/link";
@@ -140,16 +141,21 @@ export function AppHeader() {
   const pathname = usePathname();
   const { locked } = useWorkspaceNavigation();
   const current = currentDestination(pathname);
-  const title = pathname.startsWith("/publish/instagram/")
-    ? "Review Instagram Reel"
-    : pathname.startsWith("/publish/youtube/")
-      ? "Review YouTube upload"
-      : pathname.startsWith("/publish/tiktok/")
-        ? "Review TikTok post"
-        : pathname.startsWith("/projects/new/")
-          ? "Set up your project"
-          : (destinations.find((destination) => destination.href === current)
-              ?.label ?? "Workspace");
+  const title = pathname.startsWith("/publish/x/")
+    ? "Review X post"
+    : pathname.startsWith("/publish/facebook/")
+      ? "Review Facebook Reel"
+      : pathname.startsWith("/publish/instagram/")
+        ? "Review Instagram Reel"
+        : pathname.startsWith("/publish/youtube/")
+          ? "Review YouTube upload"
+          : pathname.startsWith("/publish/tiktok/")
+            ? "Review TikTok post"
+            : pathname.startsWith("/projects/new/")
+              ? "Set up your project"
+              : (destinations.find(
+                  (destination) => destination.href === current,
+                )?.label ?? "Workspace");
   return (
     <header className="flex h-14 shrink-0 items-center gap-3 border-b px-4 md:px-6">
       <SidebarTrigger className="hidden md:inline-flex" />
@@ -157,9 +163,10 @@ export function AppHeader() {
       <span className="min-w-0 flex-1 truncate text-sm font-medium">
         {title}
       </span>
-      <Badge variant="outline">
-        {locked ? "Save or discard studio edits" : "Local workspace"}
-      </Badge>
+      {locked ? (
+        <Badge variant="outline">Save or discard studio edits</Badge>
+      ) : null}
+      <ProcessingNotices />
     </header>
   );
 }

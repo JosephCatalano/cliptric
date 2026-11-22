@@ -35,15 +35,9 @@ export function AiInstructionsField({
         }
       />
       <FieldDescription id={`${id}-help`}>
-        {mode === "review"
-          ? "Guides whether to keep each video whole or select a tighter cut, and its title."
-          : mode === "highlights"
-            ? "Guides AI moment selection and titles."
-            : "Guides titles when Generate titles with AI is enabled."}{" "}
-        Saved with this project and shared with OpenAI during those AI requests.
-        Use the editing controls for caption styling, framing and audio changes.
-        Leave blank to use the default instructions. {value.length}/2,000
-        characters.
+        Saved with this project and shared with OpenAI for{" "}
+        {mode === "titles" ? "titles" : "selection and titles"}. {value.length}
+        /2,000 characters.
       </FieldDescription>
     </Field>
   );

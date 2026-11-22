@@ -1,5 +1,12 @@
 "use client";
 
+import {
+  useCreationFlow,
+  CreationFlow,
+  CreationPanel,
+  CreationFooter,
+  AdvancedOptions,
+} from "./creation-flow";
 import { ProjectPresets } from "./project-presets";
 import {
   useSetupDraft,
@@ -234,6 +241,11 @@ export function NewProject({
   }
   const minimum = settings.duration_mode === "auto" ? 8 : settings.min_seconds;
   const validRange = settings.analysis_end - settings.analysis_start >= minimum;
+  const flow = useCreationFlow(
+    Boolean(source?.has_audio && title.trim() && validRange),
+    validRange && (settings.framing !== "split" || Boolean(mediaSource)),
+    busy,
+  );
   return (
     <section className="project-workspace new-project-workspace">
       <header className="project-heading">
@@ -264,462 +276,548 @@ export function NewProject({
         <WorkspaceLoading label="Loading your video…" />
       ) : null}
       {source ? (
-        <form onSubmit={create}>
+        <form
+          id={flow.formId}
+          onSubmit={(event) => flow.submit(event, create)}
+          onInvalidCapture={flow.onInvalid}
+          className="flex flex-col gap-5"
+        >
           <SetupDraftNotice draft={draft} onRestore={restoreSetup} />
-          <FieldSet disabled={busy}>
-            <ProjectPresets
-              workflow="long"
-              settings={settings}
-              disabled={busy}
-              onApply={(value) => {
-                setSettings(value);
-                setEmphasisText(value.emphasis_words.join(", "));
-              }}
-            />
-            <Field orientation="horizontal">
-              <Checkbox
-                id={`${fieldId}-headline`}
-                checked={settings.headline_enabled ?? true}
-                onCheckedChange={(value) =>
-                  setSettings((current) => ({
-                    ...current,
-                    headline_enabled: value === true,
-                  }))
-                }
-              />
-              <FieldLabel htmlFor={`${fieldId}-headline`}>
-                Opening headline
-              </FieldLabel>
-            </Field>
-            <Field>
-              <FieldLabel htmlFor={`${fieldId}-headline-position`}>
-                Headline position
-              </FieldLabel>
-              <NativeSelect
-                id={`${fieldId}-headline-position`}
-                value={settings.headline_position ?? "auto"}
-                onChange={(event) =>
-                  setSettings((current) => ({
-                    ...current,
-                    headline_position: event.target
-                      .value as ProjectSettings["headline_position"],
-                  }))
-                }
-              >
-                <NativeSelectOption value="auto">Auto</NativeSelectOption>
-                <NativeSelectOption value="upper">Upper</NativeSelectOption>
-                <NativeSelectOption value="centre">Centre</NativeSelectOption>
-              </NativeSelect>
-            </Field>
-            <Field className="project-title-field">
-              <FieldLabel htmlFor={`${fieldId}-1`}>Project title</FieldLabel>
-              <Input
-                id={`${fieldId}-1`}
-                type="text"
-                required
-                maxLength={120}
-                value={title}
-                onChange={(event) => setTitle(event.target.value)}
-              />
-            </Field>
-            {youtube && "url" in source && !mediaSource ? (
-              <>
-                {source.preview_image_url ||
-                new URL(source.url).searchParams.has("v") ? (
-                  <Image
-                    unoptimized
-                    src={
-                      source.preview_image_url ||
-                      `https://i.ytimg.com/vi/${new URL(source.url).searchParams.get("v")}/hqdefault.jpg`
-                    }
-                    width={480}
-                    height={360}
-                    alt={source.name}
-                    className="setup-preview object-contain"
-                  />
+          <CreationFlow
+            flow={flow}
+            preview={
+              <FieldSet disabled={busy}>
+                {youtube && "url" in source && !mediaSource ? (
+                  <>
+                    {source.preview_image_url ||
+                    new URL(source.url).searchParams.has("v") ? (
+                      <Image
+                        unoptimized
+                        src={
+                          source.preview_image_url ||
+                          `https://i.ytimg.com/vi/${new URL(source.url).searchParams.get("v")}/hqdefault.jpg`
+                        }
+                        width={480}
+                        height={360}
+                        alt={source.name}
+                        className="setup-preview object-contain"
+                      />
+                    ) : (
+                      <p>Video preview will be available after download.</p>
+                    )}
+                    <p>
+                      Duration: {Math.floor(source.duration / 60)}m{" "}
+                      {Math.floor(source.duration % 60)}s. Downloading while you
+                      configure your clips.
+                    </p>
+                  </>
                 ) : (
-                  <p>Video preview will be available after download.</p>
+                  <video
+                    ref={player}
+                    className="setup-preview"
+                    controls
+                    preload="metadata"
+                    poster={`/api/recordings/${mediaSource!.id}/thumbnail`}
+                    src={`/api/recordings/${mediaSource!.id}/media`}
+                    onError={() => setPreviewError(true)}
+                    onPlay={() => {
+                      if (
+                        player.current &&
+                        (player.current.currentTime < settings.analysis_start ||
+                          player.current.currentTime >= settings.analysis_end)
+                      )
+                        player.current.currentTime = settings.analysis_start;
+                    }}
+                    onTimeUpdate={() => {
+                      if (
+                        player.current &&
+                        !player.current.paused &&
+                        player.current.currentTime >= settings.analysis_end
+                      )
+                        player.current.pause();
+                    }}
+                  />
                 )}
-                <p>
-                  Duration: {Math.floor(source.duration / 60)}m{" "}
-                  {Math.floor(source.duration % 60)}s. Downloading while you
-                  configure your clips.
-                </p>
-              </>
-            ) : (
-              <video
-                ref={player}
-                className="setup-preview"
-                controls
-                preload="metadata"
-                poster={`/api/recordings/${mediaSource!.id}/thumbnail`}
-                src={`/api/recordings/${mediaSource!.id}/media`}
-                onError={() => setPreviewError(true)}
-                onPlay={() => {
-                  if (
-                    player.current &&
-                    (player.current.currentTime < settings.analysis_start ||
-                      player.current.currentTime >= settings.analysis_end)
-                  )
-                    player.current.currentTime = settings.analysis_start;
-                }}
-                onTimeUpdate={() => {
-                  if (
-                    player.current &&
-                    !player.current.paused &&
-                    player.current.currentTime >= settings.analysis_end
-                  )
-                    player.current.pause();
-                }}
-              />
-            )}
-            {youtube ? (
-              <div
-                className="setup-download flex max-w-lg flex-col gap-2"
-                role="status"
-              >
-                <p>
-                  {download.recording
-                    ? "Video ready for preview and cropping"
-                    : download.job?.status === "processing"
-                      ? "Download complete. Preparing your video…"
-                      : `Downloading video${download.percent == null ? "…" : ` · ${download.percent}%`}`}
-                </p>
-                <Progress
-                  value={download.percent ?? undefined}
-                  aria-label="Source video download"
+                {youtube ? (
+                  <div
+                    className="setup-download flex max-w-lg flex-col gap-2"
+                    role="status"
+                  >
+                    <p>
+                      {download.recording
+                        ? "Video ready for preview and cropping"
+                        : download.job?.status === "processing"
+                          ? "Download complete. Preparing your video…"
+                          : `Downloading video${download.percent == null ? "…" : ` · ${download.percent}%`}`}
+                    </p>
+                    <Progress
+                      value={download.percent ?? undefined}
+                      aria-label="Source video download"
+                    />
+                    {download.error ? (
+                      <Alert variant="destructive">
+                        <AlertDescription>
+                          {download.error}{" "}
+                          <Button
+                            type="button"
+                            variant="outline"
+                            onClick={download.retry}
+                          >
+                            Retry download
+                          </Button>
+                        </AlertDescription>
+                      </Alert>
+                    ) : null}
+                  </div>
+                ) : null}
+                {previewError ? (
+                  <p>
+                    Browser playback is unavailable for this source. You can
+                    still use the thumbnails and generate clips.
+                  </p>
+                ) : null}
+              </FieldSet>
+            }
+          >
+            <FieldSet disabled={busy}>
+              <CreationPanel value={0} active={flow.step}>
+                <h2>Choose your source</h2>
+                <Field className="project-title-field">
+                  <FieldLabel htmlFor={`${fieldId}-1`}>
+                    Project title
+                  </FieldLabel>
+                  <Input
+                    id={`${fieldId}-1`}
+                    type="text"
+                    required
+                    maxLength={120}
+                    value={title}
+                    onChange={(event) => setTitle(event.target.value)}
+                  />
+                </Field>
+                <AnalysisRange
+                  recordingId={mediaSource?.id}
+                  duration={mediaSource?.duration ?? source.duration}
+                  start={settings.analysis_start}
+                  end={settings.analysis_end}
+                  disabled={busy}
+                  onChange={(analysis_start, analysis_end) =>
+                    setSettings((s) => ({ ...s, analysis_start, analysis_end }))
+                  }
+                  onPreview={preview}
                 />
-                {download.error ? (
-                  <Alert variant="destructive">
+                {!validRange ? (
+                  <Alert role="alert" variant="destructive">
                     <AlertDescription>
-                      {download.error}{" "}
-                      <Button
-                        type="button"
-                        variant="outline"
-                        onClick={download.retry}
-                      >
-                        Retry download
-                      </Button>
+                      Choose at least {minimum} seconds to analyze.
                     </AlertDescription>
                   </Alert>
                 ) : null}
-              </div>
-            ) : null}
-            {previewError ? (
-              <p>
-                Browser playback is unavailable for this source. You can still
-                use the thumbnails and generate clips.
-              </p>
-            ) : null}
-            <h2>Choose the part to analyze</h2>
-            <AnalysisRange
-              recordingId={mediaSource?.id}
-              duration={mediaSource?.duration ?? source.duration}
-              start={settings.analysis_start}
-              end={settings.analysis_end}
-              disabled={busy}
-              onChange={(analysis_start, analysis_end) =>
-                setSettings((s) => ({ ...s, analysis_start, analysis_end }))
-              }
-              onPreview={preview}
-            />
-            <h2>Clip settings</h2>
-            <FieldGroup className="project-fields grid gap-4 sm:grid-cols-2">
-              <Field>
-                <FieldLabel htmlFor={`${fieldId}-2`}>Clip duration</FieldLabel>
-                <NativeSelect
-                  id={`${fieldId}-2`}
-                  value={settings.duration_mode}
-                  onChange={(event) =>
-                    setSettings((s) => ({
-                      ...s,
-                      duration_mode: event.target
-                        .value as ProjectSettings["duration_mode"],
-                    }))
-                  }
-                  className="w-full"
-                >
-                  <NativeSelectOption value="auto">
-                    Auto: AI chooses each clip’s length
-                  </NativeSelectOption>
-                  <NativeSelectOption value="manual">
-                    Manual duration bounds
-                  </NativeSelectOption>
-                </NativeSelect>
-              </Field>
-              <Field>
-                <FieldLabel htmlFor={`${fieldId}-3`}>Maximum clips</FieldLabel>
-                <Input
-                  id={`${fieldId}-3`}
-                  required
-                  type="number"
-                  min={1}
-                  max={20}
-                  value={
-                    Number.isNaN(settings.max_clips) ? "" : settings.max_clips
-                  }
-                  onChange={(event) =>
-                    setSettings((s) => ({
-                      ...s,
-                      max_clips: event.target.valueAsNumber,
-                    }))
-                  }
-                />
-              </Field>
-              {settings.duration_mode === "manual" ? (
-                <>
+                {!source.has_audio ? (
+                  <Alert role="alert" variant="destructive">
+                    <AlertDescription>
+                      This video has no audio.{" "}
+                      <Link href="/studio">Use the manual studio</Link> to clip
+                      it.
+                    </AlertDescription>
+                  </Alert>
+                ) : null}
+              </CreationPanel>
+              <CreationPanel value={1} active={flow.step}>
+                <h2>Make it your style</h2>
+                <FieldGroup className="grid gap-4 sm:grid-cols-2">
                   <Field>
-                    <FieldLabel htmlFor={`${fieldId}-4`}>
-                      Minimum seconds
+                    <FieldLabel htmlFor={`${fieldId}-2`}>
+                      Clip duration
+                    </FieldLabel>
+                    <NativeSelect
+                      id={`${fieldId}-2`}
+                      value={settings.duration_mode}
+                      onChange={(event) =>
+                        setSettings((s) => ({
+                          ...s,
+                          duration_mode: event.target
+                            .value as ProjectSettings["duration_mode"],
+                        }))
+                      }
+                      className="w-full"
+                    >
+                      <NativeSelectOption value="auto">
+                        Auto: AI chooses each clip’s length
+                      </NativeSelectOption>
+                      <NativeSelectOption value="manual">
+                        Manual duration bounds
+                      </NativeSelectOption>
+                    </NativeSelect>
+                  </Field>
+                  <Field>
+                    <FieldLabel htmlFor={`${fieldId}-3`}>
+                      Maximum clips
                     </FieldLabel>
                     <Input
-                      id={`${fieldId}-4`}
+                      id={`${fieldId}-3`}
                       required
                       type="number"
-                      min={8}
-                      max={MAX_VIDEO_SECONDS}
+                      min={1}
+                      max={20}
                       value={
-                        Number.isNaN(settings.min_seconds)
+                        Number.isNaN(settings.max_clips)
                           ? ""
-                          : settings.min_seconds
+                          : settings.max_clips
                       }
                       onChange={(event) =>
                         setSettings((s) => ({
                           ...s,
-                          min_seconds: event.target.valueAsNumber,
+                          max_clips: event.target.valueAsNumber,
                         }))
                       }
                     />
                   </Field>
-                  <Field>
-                    <FieldLabel htmlFor={`${fieldId}-5`}>
-                      Maximum seconds
-                    </FieldLabel>
-                    <Input
-                      id={`${fieldId}-5`}
-                      required
-                      type="number"
-                      min={settings.min_seconds}
-                      max={MAX_VIDEO_SECONDS}
-                      value={
-                        Number.isNaN(settings.max_seconds)
-                          ? ""
-                          : settings.max_seconds
+                  {settings.duration_mode === "manual" ? (
+                    <>
+                      <Field>
+                        <FieldLabel htmlFor={`${fieldId}-4`}>
+                          Minimum seconds
+                        </FieldLabel>
+                        <Input
+                          id={`${fieldId}-4`}
+                          required
+                          type="number"
+                          min={8}
+                          max={MAX_VIDEO_SECONDS}
+                          value={
+                            Number.isNaN(settings.min_seconds)
+                              ? ""
+                              : settings.min_seconds
+                          }
+                          onChange={(event) =>
+                            setSettings((s) => ({
+                              ...s,
+                              min_seconds: event.target.valueAsNumber,
+                            }))
+                          }
+                        />
+                      </Field>
+                      <Field>
+                        <FieldLabel htmlFor={`${fieldId}-5`}>
+                          Maximum seconds
+                        </FieldLabel>
+                        <Input
+                          id={`${fieldId}-5`}
+                          required
+                          type="number"
+                          min={settings.min_seconds}
+                          max={MAX_VIDEO_SECONDS}
+                          value={
+                            Number.isNaN(settings.max_seconds)
+                              ? ""
+                              : settings.max_seconds
+                          }
+                          onChange={(event) =>
+                            setSettings((s) => ({
+                              ...s,
+                              max_seconds: event.target.valueAsNumber,
+                            }))
+                          }
+                        />
+                      </Field>
+                    </>
+                  ) : null}
+                </FieldGroup>
+                <CaptionStylePicker
+                  key="caption-preset"
+                  disabled={busy}
+                  name="caption_preset"
+                  value={settings.caption_preset}
+                  onChange={(caption_preset) =>
+                    setSettings((s) => ({ ...s, caption_preset }))
+                  }
+                />
+                <AiInstructionsField
+                  value={settings.ai_instructions ?? ""}
+                  onChange={(ai_instructions) =>
+                    setSettings((current) => ({ ...current, ai_instructions }))
+                  }
+                  mode="highlights"
+                  disabled={busy}
+                />
+                <AdvancedOptions>
+                  <Field orientation="horizontal">
+                    <Checkbox
+                      id={`${fieldId}-headline`}
+                      checked={settings.headline_enabled ?? true}
+                      onCheckedChange={(value) =>
+                        setSettings((current) => ({
+                          ...current,
+                          headline_enabled: value === true,
+                        }))
                       }
+                    />
+                    <FieldLabel htmlFor={`${fieldId}-headline`}>
+                      Opening headline
+                    </FieldLabel>
+                  </Field>
+                  <Field>
+                    <FieldLabel htmlFor={`${fieldId}-headline-position`}>
+                      Headline position
+                    </FieldLabel>
+                    <NativeSelect
+                      id={`${fieldId}-headline-position`}
+                      value={settings.headline_position ?? "auto"}
+                      onChange={(event) =>
+                        setSettings((current) => ({
+                          ...current,
+                          headline_position: event.target
+                            .value as ProjectSettings["headline_position"],
+                        }))
+                      }
+                    >
+                      <NativeSelectOption value="auto">Auto</NativeSelectOption>
+                      <NativeSelectOption value="upper">
+                        Upper
+                      </NativeSelectOption>
+                      <NativeSelectOption value="centre">
+                        Centre
+                      </NativeSelectOption>
+                    </NativeSelect>
+                  </Field>
+                  <Field>
+                    <FieldLabel htmlFor={`${fieldId}-6`}>
+                      Caption position
+                    </FieldLabel>
+                    <NativeSelect
+                      id={`${fieldId}-6`}
+                      value={settings.caption_position}
                       onChange={(event) =>
                         setSettings((s) => ({
                           ...s,
-                          max_seconds: event.target.valueAsNumber,
+                          caption_position: event.target
+                            .value as ProjectSettings["caption_position"],
+                        }))
+                      }
+                      className="w-full"
+                    >
+                      <NativeSelectOption value="auto">
+                        Auto · avoid text and webcam
+                      </NativeSelectOption>
+                      <NativeSelectOption value="lower">
+                        Lower
+                      </NativeSelectOption>
+                      <NativeSelectOption value="centre">
+                        Centre
+                      </NativeSelectOption>
+                      <NativeSelectOption value="upper">
+                        Upper
+                      </NativeSelectOption>
+                    </NativeSelect>
+                  </Field>
+                  <FramingEditor
+                    mode={settings.framing}
+                    layout={settings.split_layout ?? null}
+                    sourceUrl={
+                      mediaSource
+                        ? `/api/recordings/${mediaSource.id}/media`
+                        : undefined
+                    }
+                    downloadProgress={download.percent}
+                    timestamp={settings.analysis_start}
+                    disabled={busy}
+                    onChange={(framing, split_layout) =>
+                      setSettings((current) => ({
+                        ...current,
+                        framing,
+                        split_layout,
+                      }))
+                    }
+                  />
+                  <CaptionStyleLibrary
+                    disabled={busy}
+                    value={{
+                      preset: settings.caption_preset,
+                      position: settings.caption_position,
+                      customization: settings.caption_customization,
+                    }}
+                    onApply={(style) =>
+                      setSettings((current) => ({
+                        ...current,
+                        caption_preset: style.preset,
+                        caption_position: style.position,
+                        caption_customization: style.customization,
+                      }))
+                    }
+                  />
+                  <CaptionCustomizationFields
+                    preset={settings.caption_preset}
+                    value={settings.caption_customization}
+                    disabled={busy}
+                    onChange={(caption_customization) =>
+                      setSettings((s) => ({ ...s, caption_customization }))
+                    }
+                  />
+                  <CaptionEmphasisField
+                    name="emphasis_words"
+                    value={emphasisText}
+                    disabled={busy || settings.caption_preset === "none"}
+                    onChange={(value) => {
+                      setEmphasisText(value);
+                      setSettings((s) => ({
+                        ...s,
+                        emphasis_words: parseEmphasis(value),
+                      }));
+                    }}
+                  />
+                  <Field>
+                    <FieldLabel htmlFor={fieldId + "-cleanup"}>
+                      Default speech cleanup
+                    </FieldLabel>
+                    <NativeSelect
+                      id={fieldId + "-cleanup"}
+                      value={settings.audio_cleanup ?? "off"}
+                      disabled={busy}
+                      onChange={(event) =>
+                        setSettings((current) => ({
+                          ...current,
+                          audio_cleanup: event.target
+                            .value as ProjectSettings["audio_cleanup"],
+                        }))
+                      }
+                    >
+                      <NativeSelectOption value="off">Off</NativeSelectOption>
+                      <NativeSelectOption value="light">
+                        Light noise reduction
+                      </NativeSelectOption>
+                      <NativeSelectOption value="standard">
+                        Standard noise reduction
+                      </NativeSelectOption>
+                    </NativeSelect>
+                  </Field>
+                  <Field orientation="horizontal">
+                    <Checkbox
+                      id={fieldId + "-quality"}
+                      checked={settings.quality_mode ?? false}
+                      disabled={busy}
+                      onCheckedChange={(checked) =>
+                        setSettings((current) => ({
+                          ...current,
+                          quality_mode: checked === true,
                         }))
                       }
                     />
+                    <FieldLabel htmlFor={fieldId + "-quality"}>
+                      Prioritize hook, context, payoff, and standalone clarity
+                      (may return fewer clips)
+                    </FieldLabel>
                   </Field>
-                </>
-              ) : null}
-              <Field>
-                <FieldLabel htmlFor={`${fieldId}-6`}>
-                  Caption position
-                </FieldLabel>
-                <NativeSelect
-                  id={`${fieldId}-6`}
-                  value={settings.caption_position}
-                  onChange={(event) =>
-                    setSettings((s) => ({
-                      ...s,
-                      caption_position: event.target
-                        .value as ProjectSettings["caption_position"],
-                    }))
-                  }
-                  className="w-full"
-                >
-                  <NativeSelectOption value="auto">
-                    Auto · avoid text and webcam
-                  </NativeSelectOption>
-                  <NativeSelectOption value="lower">Lower</NativeSelectOption>
-                  <NativeSelectOption value="centre">Centre</NativeSelectOption>
-                  <NativeSelectOption value="upper">Upper</NativeSelectOption>
-                </NativeSelect>
-              </Field>
-            </FieldGroup>
-            <FramingEditor
-              mode={settings.framing}
-              layout={settings.split_layout ?? null}
-              sourceUrl={
-                mediaSource
-                  ? `/api/recordings/${mediaSource.id}/media`
-                  : undefined
-              }
-              downloadProgress={download.percent}
-              timestamp={settings.analysis_start}
-              disabled={busy}
-              onChange={(framing, split_layout) =>
-                setSettings((current) => ({
-                  ...current,
-                  framing,
-                  split_layout,
-                }))
-              }
-            />
-            <CaptionStylePicker
-              key="caption-preset"
-              disabled={busy}
-              name="caption_preset"
-              value={settings.caption_preset}
-              onChange={(caption_preset) =>
-                setSettings((s) => ({ ...s, caption_preset }))
-              }
-            />
-            <CaptionStyleLibrary
-              disabled={busy}
-              value={{
-                preset: settings.caption_preset,
-                position: settings.caption_position,
-                customization: settings.caption_customization,
-              }}
-              onApply={(style) =>
-                setSettings((current) => ({
-                  ...current,
-                  caption_preset: style.preset,
-                  caption_position: style.position,
-                  caption_customization: style.customization,
-                }))
-              }
-            />
-            <CaptionCustomizationFields
-              preset={settings.caption_preset}
-              value={settings.caption_customization}
-              disabled={busy}
-              onChange={(caption_customization) =>
-                setSettings((s) => ({ ...s, caption_customization }))
-              }
-            />
-            <CaptionEmphasisField
-              name="emphasis_words"
-              value={emphasisText}
-              disabled={busy || settings.caption_preset === "none"}
-              onChange={(value) => {
-                setEmphasisText(value);
-                setSettings((s) => ({
-                  ...s,
-                  emphasis_words: parseEmphasis(value),
-                }));
-              }}
-            />
-            <Field orientation="horizontal">
-              <Checkbox
-                id={fieldId + "-quality"}
-                checked={settings.quality_mode ?? false}
-                disabled={busy}
-                onCheckedChange={(checked) =>
-                  setSettings((current) => ({
-                    ...current,
-                    quality_mode: checked === true,
-                  }))
+                  <PresentationField
+                    value={settings.presentation_mode ?? "off"}
+                    disabled={busy}
+                    onChange={(value) =>
+                      setSettings((current) => ({
+                        ...current,
+                        presentation_mode: value,
+                      }))
+                    }
+                  />
+                  <Field orientation="horizontal">
+                    <Checkbox
+                      id={fieldId + "-normalize"}
+                      checked={settings.normalize_audio ?? false}
+                      disabled={busy}
+                      onCheckedChange={(checked) =>
+                        setSettings((current) => ({
+                          ...current,
+                          normalize_audio: checked === true,
+                        }))
+                      }
+                    />
+                    <FieldLabel htmlFor={fieldId + "-normalize"}>
+                      Normalize speaking volume in new clips
+                    </FieldLabel>
+                  </Field>
+                </AdvancedOptions>
+                <AdvancedOptions label="Project presets">
+                  <ProjectPresets
+                    workflow="long"
+                    settings={settings}
+                    disabled={busy}
+                    onApply={(value) => {
+                      setSettings(value);
+                      setEmphasisText(value.emphasis_words.join(", "));
+                    }}
+                  />
+                </AdvancedOptions>
+                {!validRange ? (
+                  <Alert role="alert" variant="destructive">
+                    <AlertDescription>
+                      Choose at least {minimum} seconds to analyze.
+                    </AlertDescription>
+                  </Alert>
+                ) : null}
+                {!source.has_audio ? (
+                  <Alert role="alert" variant="destructive">
+                    <AlertDescription>
+                      This video has no audio.{" "}
+                      <Link href="/studio">Use the manual studio</Link> to clip
+                      it.
+                    </AlertDescription>
+                  </Alert>
+                ) : null}
+              </CreationPanel>
+              <CreationPanel value={2} active={flow.step}>
+                <h2>Ready to create</h2>
+                <dl className="grid grid-cols-2 gap-4">
+                  <div>
+                    <dt className="text-muted-foreground">Project</dt>
+                    <dd>{title}</dd>
+                  </div>
+                  <div>
+                    <dt className="text-muted-foreground">Maximum clips</dt>
+                    <dd>{settings.max_clips}</dd>
+                  </div>
+                  <div>
+                    <dt className="text-muted-foreground">Source range</dt>
+                    <dd>
+                      {Math.round(settings.analysis_start)}-
+                      {Math.round(settings.analysis_end)} seconds
+                    </dd>
+                  </div>
+                  <div>
+                    <dt className="text-muted-foreground">Captions</dt>
+                    <dd>{settings.caption_preset}</dd>
+                  </div>
+                </dl>
+                <p>
+                  Creating shares saved transcript text and timestamps with
+                  OpenAI. API charges apply. Your video stays local; AI may
+                  return fewer clips.
+                </p>
+              </CreationPanel>
+              <CreationFooter
+                flow={flow}
+                busy={busy}
+                action={
+                  <Button
+                    type="submit"
+                    disabled={
+                      !source.has_audio ||
+                      !validRange ||
+                      busy ||
+                      (settings.framing === "split" && !mediaSource)
+                    }
+                    variant="default"
+                  >
+                    {busy ? (
+                      <LoaderCircleIcon
+                        data-icon="inline-start"
+                        className="animate-spin"
+                      />
+                    ) : null}
+                    {busy ? "Saving project…" : "Create clips"}
+                  </Button>
                 }
               />
-              <FieldLabel htmlFor={fieldId + "-quality"}>
-                Prioritize hook, context, payoff, and standalone clarity (may
-                return fewer clips)
-              </FieldLabel>
-            </Field>
-            <PresentationField
-              value={settings.presentation_mode ?? "off"}
-              disabled={busy}
-              onChange={(value) =>
-                setSettings((current) => ({
-                  ...current,
-                  presentation_mode: value,
-                }))
-              }
-            />
-            <Field>
-              <FieldLabel htmlFor={fieldId + "-cleanup"}>
-                Default speech cleanup
-              </FieldLabel>
-              <NativeSelect
-                id={fieldId + "-cleanup"}
-                value={settings.audio_cleanup ?? "off"}
-                disabled={busy}
-                onChange={(event) =>
-                  setSettings((current) => ({
-                    ...current,
-                    audio_cleanup: event.target
-                      .value as ProjectSettings["audio_cleanup"],
-                  }))
-                }
-              >
-                <NativeSelectOption value="off">Off</NativeSelectOption>
-                <NativeSelectOption value="light">
-                  Light noise reduction
-                </NativeSelectOption>
-                <NativeSelectOption value="standard">
-                  Standard noise reduction
-                </NativeSelectOption>
-              </NativeSelect>
-            </Field>
-            <Field orientation="horizontal">
-              <Checkbox
-                id={fieldId + "-normalize"}
-                checked={settings.normalize_audio ?? false}
-                disabled={busy}
-                onCheckedChange={(checked) =>
-                  setSettings((current) => ({
-                    ...current,
-                    normalize_audio: checked === true,
-                  }))
-                }
-              />
-              <FieldLabel htmlFor={fieldId + "-normalize"}>
-                Normalize speaking volume in new clips
-              </FieldLabel>
-            </Field>
-            <AiInstructionsField
-              value={settings.ai_instructions ?? ""}
-              onChange={(ai_instructions) =>
-                setSettings((current) => ({ ...current, ai_instructions }))
-              }
-              mode="highlights"
-              disabled={busy}
-            />
-            {!validRange ? (
-              <Alert role="alert" variant="destructive">
-                <AlertDescription>
-                  Choose at least {minimum} seconds to analyze.
-                </AlertDescription>
-              </Alert>
-            ) : null}
-            {!source.has_audio ? (
-              <Alert role="alert" variant="destructive">
-                <AlertDescription>
-                  This video has no audio.{" "}
-                  <Link href="/studio">Use the manual studio</Link> to clip it.
-                </AlertDescription>
-              </Alert>
-            ) : null}
-            <p>
-              AI can return fewer clips or none. Creating sends saved transcript
-              text and timestamps to OpenAI with billed API usage. Your video
-              stays local.
-            </p>
-            <Button
-              type="submit"
-              disabled={
-                !source.has_audio ||
-                !validRange ||
-                busy ||
-                (settings.framing === "split" && !mediaSource)
-              }
-              variant="default"
-            >
-              {busy ? (
-                <LoaderCircleIcon
-                  data-icon="inline-start"
-                  className="animate-spin"
-                />
-              ) : null}
-              {busy ? "Saving project…" : "Create clips"}
-            </Button>
-          </FieldSet>
+            </FieldSet>
+          </CreationFlow>
         </form>
       ) : null}
     </section>

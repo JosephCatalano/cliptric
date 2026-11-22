@@ -6,7 +6,6 @@ import { SidebarInset, SidebarProvider } from "@/components/ui/sidebar";
 import { TooltipProvider } from "@/components/ui/tooltip";
 import { AppHeader, AppSidebar } from "./components/app-navigation";
 import { WorkspaceNavigationProvider } from "./components/workspace-navigation";
-import { ProcessingNotices } from "./components/processing-notices";
 
 const instrumentSans = localFont({
   src: "./fonts/InstrumentSans.ttf",
@@ -37,7 +36,6 @@ export default function RootLayout({
               <AppSidebar />
               <SidebarInset id="main-content" tabIndex={-1} className="min-w-0">
                 <AppHeader />
-                <ProcessingNotices />
                 {children}
                 <footer className="mt-auto flex flex-wrap items-center justify-center gap-x-6 gap-y-2 border-t px-4 py-4 text-sm text-muted-foreground">
                   <span>Cliptric</span>
