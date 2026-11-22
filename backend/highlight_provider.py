@@ -3,10 +3,10 @@ import json
 
 import httpx2
 
-from .ai_instructions import EDITORIAL_GUIDANCE
 from .config import Settings
 from .highlight_models import HighlightError, HighlightRequest, ProposedHighlights, ProviderResult
 from .highlight_selection import Segment, window_text
+from .prompt_settings import request_prompt
 
 ENDPOINT = "https://api.openai.com/v1/responses"
 MAX_RESPONSE_BYTES = 256 * 1024
@@ -97,7 +97,9 @@ class OpenAIHighlights:
         body = {
             "model": self.settings.highlight_model,
             "store": False,
-            "instructions": INSTRUCTIONS + (EDITORIAL_GUIDANCE if request.ai_instructions else ""),
+            "instructions": request_prompt(
+                self.settings, "highlights", INSTRUCTIONS, bool(request.ai_instructions)
+            ),
             "input": json.dumps(
                 {
                     "duration_mode": request.duration_mode,

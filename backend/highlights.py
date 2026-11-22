@@ -36,6 +36,7 @@ from .highlight_selection import (
     window_text,
 )
 from .highlight_store import HighlightStore
+from .prompt_settings import highlight_prompt_identity
 from .storage import Store, now
 from .transcription_models import TranscriptionError
 from .transcription_store import TranscriptStore
@@ -145,28 +146,29 @@ class Highlights:
             raise HighlightError(
                 "This transcript exceeds the highlight input budget. Use a shorter recording."
             )
-        key_data = {
-            "prompt": PROMPT_VERSION,
-            "model": self.settings.highlight_model,
-            "output_tokens": self.settings.highlight_output_tokens,
-            "request": request.model_dump(
-                mode="json",
-                exclude={"regenerate", "remote_consent"}
-                | ({"ai_instructions"} if not request.ai_instructions else set())
-                | ({"excluded_ranges"} if not request.excluded_ranges else set()),
-            ),
-        }
-        key = hashlib.sha256(json.dumps(key_data, sort_keys=True).encode()).hexdigest()
-        pool_data = {
-            **key_data,
-            "pool_policy": 1,
-            "request": request.model_dump(
-                mode="json",
-                exclude={"max_candidates", "regenerate", "remote_consent", "excluded_ranges"},
-            ),
-        }
-        pool_key = hashlib.sha256(json.dumps(pool_data, sort_keys=True).encode()).hexdigest()
         with self.lock:
+            key_data = {
+                "prompt": PROMPT_VERSION,
+                "prompt_settings": highlight_prompt_identity(self.settings),
+                "model": self.settings.highlight_model,
+                "output_tokens": self.settings.highlight_output_tokens,
+                "request": request.model_dump(
+                    mode="json",
+                    exclude={"regenerate", "remote_consent"}
+                    | ({"ai_instructions"} if not request.ai_instructions else set())
+                    | ({"excluded_ranges"} if not request.excluded_ranges else set()),
+                ),
+            }
+            key = hashlib.sha256(json.dumps(key_data, sort_keys=True).encode()).hexdigest()
+            pool_data = {
+                **key_data,
+                "pool_policy": 1,
+                "request": request.model_dump(
+                    mode="json",
+                    exclude={"max_candidates", "regenerate", "remote_consent", "excluded_ranges"},
+                ),
+            }
+            pool_key = hashlib.sha256(json.dumps(pool_data, sort_keys=True).encode()).hexdigest()
             if self.stopping:
                 raise HighlightError("Highlight service is stopping. Retry after restart.", 503)
             if self.active:

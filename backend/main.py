@@ -34,6 +34,7 @@ from .project_models import PostedUpdate
 from .project_routes import create_project_router
 from .project_workspace import create_workspace_router
 from .projects import Projects
+from .prompt_settings import PromptSettings, create_prompt_router
 from .quality_analysis import QualityAnalysis, create_quality_router
 from .scheduling import Scheduler, create_scheduling_router
 from .social_publishing import SocialPublisher
@@ -90,6 +91,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         scheduler,
         [tiktok, youtube_publishing, instagram, x_publishing, facebook],
     )
+    prompt_settings = PromptSettings(store)
     upload_lock = asyncio.Lock()
 
     @asynccontextmanager
@@ -98,6 +100,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         instance.acquire()
         try:
             store.initialize()
+            prompt_settings.initialize()
             store.recover()
             transcriptions.initialize()
             transcriptions.recover()
@@ -167,6 +170,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
     app.include_router(create_transcription_router(transcriptions))
     app.include_router(create_highlight_router(highlights))
     app.include_router(create_project_router(projects))
+    app.include_router(create_prompt_router(prompt_settings, projects, highlights))
     app.include_router(create_workspace_router(projects))
     app.include_router(create_caption_style_router(caption_styles, projects))
     app.include_router(create_emphasis_router(transcriptions, settings))

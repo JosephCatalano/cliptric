@@ -5,9 +5,9 @@ from typing import Literal
 
 from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
 
-from .ai_instructions import EDITORIAL_GUIDANCE
 from .highlight_models import HighlightError, ProposedCandidate
 from .highlight_selection import Segment, window_text
+from .prompt_settings import request_prompt
 from .structured_output import request_structured
 from .transcription_models import clean_text
 
@@ -67,6 +67,7 @@ class ReviewProposal(BaseModel):
 class BatchReview:
     multiple = False
     proposal_type = ReviewProposal
+    prompt_key = "batch_review"
     instructions = INSTRUCTIONS
     format_name = "supplied_video_review"
 
@@ -93,7 +94,9 @@ class BatchReview:
         body = {
             "model": self.settings.highlight_model,
             "store": False,
-            "instructions": self.instructions + (EDITORIAL_GUIDANCE if ai_instructions else ""),
+            "instructions": request_prompt(
+                self.settings, self.prompt_key, self.instructions, bool(ai_instructions)
+            ),
             "input": json.dumps(
                 {
                     "duration_seconds": duration,
@@ -183,6 +186,7 @@ class MultiReviewProposal(BaseModel):
 
 
 class MultiBatchReview(BatchReview):
+    prompt_key = "batch_highlights"
     multiple = True
     proposal_type = MultiReviewProposal
     format_name = "supplied_video_highlights"

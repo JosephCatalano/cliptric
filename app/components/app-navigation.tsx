@@ -13,6 +13,7 @@ import {
   MonitorCheckIcon,
   HouseIcon,
   ScissorsIcon,
+  SettingsIcon,
 } from "lucide-react";
 import {
   Sidebar,
@@ -38,6 +39,7 @@ const destinations = [
   { href: "/studio", label: "Clip editor", icon: ScissorsIcon },
   { href: "/calendar", label: "Schedule", icon: CalendarDaysIcon },
   { href: "/connections", label: "Accounts", icon: LinkIcon },
+  { href: "/settings", label: "Settings", icon: SettingsIcon },
 ];
 
 function currentDestination(pathname: string) {
