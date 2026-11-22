@@ -1,4 +1,11 @@
 <svg xmlns="http://www.w3.org/2000/svg" width="1024" height="1024" viewBox="0 0 32 32">
-  <rect width="32" height="32" rx="9" fill="oklch(54.1% 0.281 293.009)"/>
-  <path d="m19 6-6 20M10 6H5v7m0 6v7h5M22 6h5v7m0 6v7h-5" fill="none" stroke="white" stroke-width="2.3" stroke-linecap="round" stroke-linejoin="round"/>
+  <defs>
+    <linearGradient id="cliptric" x2="100%" y2="100%">
+      <stop stop-color="#1458FA"/>
+      <stop offset="56%" stop-color="#5B23F9"/>
+      <stop offset="100%" stop-color="#8107EE"/>
+    </linearGradient>
+  </defs>
+  <rect width="32" height="32" rx="9" fill="url(#cliptric)"/>
+  <path d="m19 6-6 20M10 6H5v7m0 6v7h5M22 6h5v7m0 6v7h-5" fill="none" stroke="#FAFBFF" stroke-width="2.3" stroke-linecap="round" stroke-linejoin="round"/>
 </svg>

@@ -4,46 +4,149 @@
 
 @custom-variant dark (&:is(.dark *));
 
-/* Cliptric currently ships one dark theme. Light mode is deferred. */
-:root,
-.dark {
-  color-scheme: dark;
+/* Brand and editing colours are shared by both themes. */
+:root {
   --radius: 0.625rem;
-  --background: oklch(0.145 0 0);
-  --foreground: oklch(0.985 0 0);
-  --card: oklch(0.205 0 0);
-  --card-foreground: oklch(0.985 0 0);
-  --popover: oklch(0.205 0 0);
-  --popover-foreground: oklch(0.985 0 0);
-  --primary: var(--color-violet-600);
-  --primary-foreground: var(--color-violet-50);
-  --secondary: oklch(0.269 0 0);
-  --secondary-foreground: oklch(0.985 0 0);
-  --muted: oklch(0.269 0 0);
-  --muted-foreground: oklch(0.708 0 0);
-  --accent: oklch(0.269 0 0);
-  --accent-foreground: oklch(0.985 0 0);
-  --destructive: oklch(0.704 0.191 22.216);
-  --border: oklch(1 0 0 / 10%);
-  --input: oklch(1 0 0 / 15%);
-  --ring: var(--color-violet-400);
-  --chart-1: var(--color-violet-300);
-  --chart-2: var(--color-violet-400);
-  --chart-3: var(--color-violet-500);
-  --chart-4: var(--color-violet-600);
-  --chart-5: var(--color-violet-700);
-  --sidebar: oklch(0.205 0 0);
-  --sidebar-foreground: oklch(0.985 0 0);
+  --brand-blue: #1458fa;
+  --brand-motion: #0078f9;
+  --brand-violet: #8107ee;
+  --brand-purple: #7900fa;
+  --brand-cyan: #00d5fa;
+  --brand-lavender: #b16cff;
+  --brand-ink: #07072f;
+  --brand-white: #fafbff;
+  --brand-gradient: linear-gradient(
+    135deg,
+    var(--brand-blue),
+    #5b23f9 56%,
+    var(--brand-violet)
+  );
+  --ribbon-gradient: linear-gradient(
+    100deg,
+    var(--brand-cyan),
+    #52c8ff 32%,
+    var(--brand-lavender) 75%,
+    #d35cff
+  );
+  --editor-canvas: #070916;
+  --editor-preview: #03040c;
+  --editor-timeline: #0e1429;
+  --editor-track: #222c4a;
+  --editor-selection: #5668ff;
+  --editor-playhead: #e5edff;
+  --editor-handle: #ba78ff;
+  --editor-waveform: #1bc9e8;
+  --editor-caption-text: #ffffff;
+  --editor-caption-outline: #050613;
+  --editor-caption-emphasis: #bb99ff;
+  --editor-caption-punchline: #ffe08a;
+  --editor-caption-backplate: #080a17cc;
+  --chart-1: #3e76ff;
+  --chart-2: #a06aff;
+  --chart-3: #22c5e8;
+  --chart-4: #35c9a0;
+  --chart-5: #f6b94d;
+  --chart-6: #f17b9c;
+  --chart-7: #c3a1ff;
+  --chart-8: #8193be;
+
+  color-scheme: light;
+  --background: var(--brand-white);
+  --foreground: var(--brand-ink);
+  --card: #ffffff;
+  --popover: #ffffff;
+  --sidebar: #f0f3fc;
+  --surface-alt: #f1f4fc;
+  --secondary-text: #283557;
+  --muted-foreground: #505f7b;
+  --border: #d4ddef;
+  --border-strong: #8c9bb9;
+  --divider: #e3e9f4;
+  --input-background: #ffffff;
+  --input: #8c9bb9;
+  --primary: var(--brand-blue);
+  --primary-hover: #1048d3;
+  --primary-foreground: #ffffff;
+  --secondary: #e6ecfc;
+  --secondary-hover: #d7e1fa;
+  --secondary-foreground: #1a2e59;
+  --accent: #e9edff;
+  --surface-active: #dee5ff;
+  --accent-foreground: #263777;
+  --link: #2448ac;
+  --link-hover: #5320bc;
+  --ring: var(--brand-purple);
+  --selection: #d9dfff;
+  --success: #176342;
+  --success-background: #def5e9;
+  --warning: #805117;
+  --warning-background: #fff2d7;
+  --destructive: #b92c46;
+  --destructive-background: #fce8ef;
+  --info: #245abb;
+  --info-background: #e7f1ff;
+  --disabled-background: #eff2f8;
+  --disabled-foreground: #8894a9;
+  --overlay: #080b26b3;
+  --progress-gradient: var(--brand-gradient);
+
+  --card-foreground: var(--foreground);
+  --popover-foreground: var(--foreground);
+  --muted: var(--surface-alt);
+  --sidebar-foreground: var(--secondary-text);
   --sidebar-primary: var(--primary);
   --sidebar-primary-foreground: var(--primary-foreground);
-  --sidebar-accent: color-mix(
-    in oklch,
-    var(--color-violet-500) 15%,
-    transparent
-  );
-  --sidebar-accent-foreground: var(--color-violet-300);
-  --sidebar-border: var(--border);
+  --sidebar-accent: var(--surface-active);
+  --sidebar-accent-foreground: var(--accent-foreground);
+  --sidebar-border: var(--divider);
   --sidebar-ring: var(--ring);
+}
+
+.dark {
+  color-scheme: dark;
+  --background: #090b1c;
+  --sidebar: #0d1025;
+  --card: #121832;
+  --popover: #171e39;
+  --surface-alt: #171e39;
+  --accent: #212a49;
+  --surface-active: #252b55;
+  --foreground: #f7f9ff;
+  --secondary-text: #d2daef;
+  --muted-foreground: #9eacc9;
+  --border: #2a3555;
+  --border-strong: #42506f;
+  --divider: #222c49;
+  --input-background: #0f152b;
+  --input: #405171;
+  --primary: #a8b1ff;
+  --primary-hover: #c0c6ff;
+  --primary-foreground: #0b1030;
+  --secondary: #283355;
+  --secondary-hover: #35426d;
+  --secondary-foreground: #f0f3ff;
+  --accent-foreground: #f0f3ff;
+  --link: #b2bcff;
+  --link-hover: #d1d6ff;
+  --ring: #af9bff;
+  --selection: #2c2861;
+  --success: #71e0a5;
+  --success-background: #13392d;
+  --warning: #f8ca77;
+  --warning-background: #42301b;
+  --destructive: #ff97aa;
+  --destructive-background: #462333;
+  --info: #95bfff;
+  --info-background: #172f55;
+  --disabled-background: #1b2237;
+  --disabled-foreground: #73809d;
+  --overlay: #000000c2;
+  --progress-gradient: linear-gradient(
+    90deg,
+    var(--brand-motion),
+    var(--editor-waveform),
+    var(--primary)
+  );
 }
 
 @theme inline {
@@ -56,6 +159,25 @@
   --color-popover: var(--popover);
   --color-popover-foreground: var(--popover-foreground);
   --color-primary: var(--primary);
+  --color-primary-hover: var(--primary-hover);
+  --color-secondary-hover: var(--secondary-hover);
+  --color-link: var(--link);
+  --color-link-hover: var(--link-hover);
+  --color-input-background: var(--input-background);
+  --color-disabled-background: var(--disabled-background);
+  --color-disabled-foreground: var(--disabled-foreground);
+  --color-overlay: var(--overlay);
+  --color-divider: var(--divider);
+  --color-border-strong: var(--border-strong);
+  --color-success: var(--success);
+  --color-success-background: var(--success-background);
+  --color-warning: var(--warning);
+  --color-warning-background: var(--warning-background);
+  --color-destructive-background: var(--destructive-background);
+  --color-info: var(--info);
+  --color-info-background: var(--info-background);
+  --color-editor-preview: var(--editor-preview);
+  --color-editor-selection: var(--editor-selection);
   --color-primary-foreground: var(--primary-foreground);
   --color-secondary: var(--secondary);
   --color-secondary-foreground: var(--secondary-foreground);
@@ -113,7 +235,11 @@
     overflow-wrap: anywhere;
   }
   a:not([data-slot]) {
-    @apply text-primary underline-offset-4;
+    @apply text-link underline-offset-4 hover:text-link-hover;
+  }
+  ::selection {
+    background-color: var(--selection);
+    color: var(--foreground);
   }
   a:focus-visible,
   summary:focus-visible {
@@ -200,6 +326,9 @@
   }
   .home-import {
     @apply min-w-0;
+    background-image: var(--ribbon-gradient);
+    background-size: 100% 2px;
+    background-repeat: no-repeat;
   }
   .home-import [data-slot="card-title"] {
     @apply text-2xl tracking-tight;
@@ -224,7 +353,8 @@
     @apply flex min-w-0 items-start gap-4;
   }
   .home-workflow li > svg {
-    @apply mt-1 size-5 text-muted-foreground;
+    @apply mt-1 size-5;
+    color: var(--link);
   }
   .home-workflow h3 {
     @apply mb-1 text-sm font-medium;
@@ -390,27 +520,43 @@
     @apply flex flex-col gap-4;
   }
   .range-readout {
-    @apply flex flex-wrap justify-between gap-2 text-sm tabular-nums;
+    @apply flex flex-wrap justify-between gap-2 rounded-md px-3 py-2 text-sm tabular-nums;
+    background-color: var(--editor-canvas);
+    color: var(--editor-caption-text);
+  }
+  .range-duration {
+    color: var(--editor-caption-punchline);
   }
   .analysis-track {
-    @apply relative isolate mx-3 h-24 touch-none select-none;
+    @apply relative isolate mx-3 h-24 rounded-md touch-none select-none;
+    background-color: var(--editor-timeline);
   }
   .analysis-filmstrip {
-    @apply grid size-full grid-cols-6 overflow-hidden rounded-md bg-muted;
+    @apply grid size-full grid-cols-6 overflow-hidden rounded-md;
+    background-color: var(--editor-track);
   }
   .analysis-filmstrip img {
     @apply pointer-events-none size-full object-cover;
   }
   .analysis-shade {
-    @apply pointer-events-none absolute inset-y-0 bg-background/70;
+    @apply pointer-events-none absolute inset-y-0;
+    background-color: var(--editor-caption-backplate);
   }
   .analysis-selection {
-    @apply pointer-events-none absolute inset-y-0 z-2 border-y-2 border-primary;
+    @apply pointer-events-none absolute inset-y-0 z-2 border-y-2 border-editor-selection;
   }
   .analysis-handle {
     @apply absolute -top-1 -bottom-1 z-3 w-6 -translate-x-1/2 cursor-ew-resize touch-none rounded-md
-      bg-primary p-0 text-primary-foreground outline-none disabled:cursor-not-allowed disabled:opacity-50
+      p-0 outline-none disabled:cursor-not-allowed disabled:opacity-50
       focus-visible:z-4 focus-visible:ring-3 focus-visible:ring-ring/50;
+    background-color: var(--editor-handle);
+    color: var(--editor-caption-outline);
+  }
+  .analysis-handle:active {
+    background-color: var(--editor-caption-emphasis);
+  }
+  .analysis-handle:focus-visible {
+    outline: 2px solid var(--editor-playhead);
   }
 
   .caption-style-picker {
@@ -749,7 +895,7 @@
     @apply hidden;
   }
   .source-video {
-    @apply aspect-video max-h-112 w-full rounded-lg bg-background object-contain;
+    @apply aspect-video max-h-112 w-full rounded-lg bg-editor-preview object-contain;
   }
   .empty-preview {
     @apply aspect-video;
@@ -767,10 +913,12 @@
     @apply flex flex-col gap-1;
   }
   .source-ruler {
-    @apply relative h-5 overflow-hidden rounded-sm bg-muted;
+    @apply relative h-5 overflow-hidden rounded-sm;
+    background-color: var(--editor-track);
   }
   .source-ruler > span {
-    @apply absolute inset-y-0 min-w-px border-x-2 border-primary bg-primary/30;
+    @apply absolute inset-y-0 min-w-px border-x-2 bg-editor-selection/50;
+    border-color: var(--editor-waveform);
   }
   .ruler-labels {
     @apply flex justify-between text-xs text-muted-foreground tabular-nums;
@@ -865,7 +1013,7 @@
     @apply min-w-0;
   }
   .export-item video {
-    @apply h-40 w-24 shrink-0 rounded-md bg-background object-contain;
+    @apply h-40 w-24 shrink-0 rounded-md bg-editor-preview object-contain;
   }
   .export-detail {
     @apply flex min-w-0 flex-1 flex-col gap-2;

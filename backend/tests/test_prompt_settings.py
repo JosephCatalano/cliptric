@@ -11,6 +11,7 @@ import pytest
 from backend.batch_review import BatchReview, MultiBatchReview
 from backend.batch_titles import BatchTitles
 from backend.caption_emphasis import EmphasisProvider
+from backend.editorial_review import EditorialReviewer
 from backend.highlight_models import HighlightError, HighlightRequest
 from backend.highlight_provider import OpenAIHighlights
 from backend.highlight_selection import Segment
@@ -32,22 +33,28 @@ def save(client, key, prompt, revision=None):
 def test_persistence_reset_conflict_and_cache_identity(context):
     client, _, _, _, configured = context
     initial = client.get(URL).json()
-    assert len(initial["prompts"]) == 7
+    assert {"highlight_discovery", "highlight_editorial"} <= {
+        prompt["key"] for prompt in initial["prompts"]
+    }
     assert all(not p["customized"] and p["value"] == p["default"] for p in initial["prompts"])
-    before = highlight_prompt_identity(configured)
+    before = highlight_prompt_identity(configured, discovery=True)
+    before_review = highlight_prompt_identity(configured, discovery=False)
+    assert save(client, "highlight_editorial", "Preserve the best payoff.").status_code == 200
+    assert highlight_prompt_identity(configured, discovery=False) != before_review
+    assert highlight_prompt_identity(configured, discovery=True) == before
     assert save(client, "titles", "Use concise titles.").status_code == 200
-    assert highlight_prompt_identity(configured) == before
-    assert save(client, "highlights", "Prefer complete stories.").status_code == 200
-    assert overrides(configured)["highlights"] == "Prefer complete stories."
-    changed = highlight_prompt_identity(configured)
+    assert highlight_prompt_identity(configured, discovery=True) == before
+    assert save(client, "highlight_discovery", "Prefer complete stories.").status_code == 200
+    assert overrides(configured)["highlight_discovery"] == "Prefer complete stories."
+    changed = highlight_prompt_identity(configured, discovery=True)
     assert changed != before
-    assert save(client, "highlights", "Stale edit", revision=0).status_code == 409
-    assert overrides(configured)["highlights"] == "Prefer complete stories."
+    assert save(client, "highlight_discovery", "Stale edit", revision=0).status_code == 409
+    assert overrides(configured)["highlight_discovery"] == "Prefer complete stories."
     assert save(client, "project_guidance", "Prioritize project tone.").status_code == 200
-    assert highlight_prompt_identity(configured) != changed
-    default = next(p["default"] for p in initial["prompts"] if p["key"] == "highlights")
-    assert save(client, "highlights", default).status_code == 200
-    assert "highlights" not in overrides(configured)
+    assert highlight_prompt_identity(configured, discovery=True) != changed
+    default = next(p["default"] for p in initial["prompts"] if p["key"] == "highlight_discovery")
+    assert save(client, "highlight_discovery", default).status_code == 200
+    assert "highlight_discovery" not in overrides(configured)
 
 
 @pytest.mark.parametrize(
@@ -97,7 +104,8 @@ def test_active_highlight_blocks_prompt_edits(context):
 @pytest.mark.parametrize(
     "key,provider_type",
     [
-        ("highlights", OpenAIHighlights),
+        ("highlight_discovery", OpenAIHighlights),
+        ("highlight_editorial", EditorialReviewer),
         ("batch_review", BatchReview),
         ("batch_highlights", MultiBatchReview),
         ("titles", BatchTitles),
@@ -119,7 +127,7 @@ def test_each_request_uses_saved_prompt_and_protected_schema(context, key, provi
     segments = [
         Segment(0, 0, 15, "This is enough source speech to support a grounded editorial request.")
     ]
-    if key == "highlights":
+    if key == "highlight_discovery":
         call = provider.suggest(
             segments,
             HighlightRequest(
@@ -128,6 +136,17 @@ def test_each_request_uses_saved_prompt_and_protected_schema(context, key, provi
                 remote_consent=True,
                 ai_instructions="Dry humor",
             ),
+        )
+    elif key == "highlight_editorial":
+        call = provider.review(
+            "[]",
+            HighlightRequest(
+                transcription_id=uuid4(),
+                revision=1,
+                remote_consent=True,
+                ai_instructions="Dry humor",
+            ),
+            1,
         )
     elif key in {"batch_review", "batch_highlights"}:
         call = provider.suggest(segments, 20, ai_instructions="Dry humor", quality_mode=False)

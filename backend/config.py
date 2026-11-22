@@ -71,6 +71,8 @@ class Settings:
     highlight_timeout_seconds: float = 3600
     highlight_concurrency: int = 3
     highlight_pool_size: int = 20
+    highlight_duplicate_iou: float = 0.65
+    highlight_duplicate_evidence: float = 0.5
 
     def __post_init__(self) -> None:
         if self.transcription_device not in {"auto", "cpu", "cuda"}:
@@ -83,6 +85,11 @@ class Settings:
             raise ValueError("Transcription worker idle timeout must be between 1 and 600 seconds.")
         if not 1 <= self.highlight_concurrency <= 4 or not 1 <= self.highlight_pool_size <= 100:
             raise ValueError("Highlight concurrency must be 1-4 and candidate pool size 1-100.")
+        if not all(
+            0 < threshold <= 1
+            for threshold in (self.highlight_duplicate_iou, self.highlight_duplicate_evidence)
+        ):
+            raise ValueError("Highlight duplicate thresholds must be in (0, 1].")
         if type(self.max_upload_bytes) is not int or not 0 < self.max_upload_bytes <= 100 * 1024**3:
             raise ValueError("Upload limit must be positive and at most 100 GiB.")
         origin = urlsplit(self.web_origin)
@@ -117,6 +124,18 @@ class Settings:
         if not 1 <= gib <= 100:
             raise ValueError("CLIPPING_MAX_UPLOAD_GIB must be between 1 and 100.")
         return cls(
+            highlight_duplicate_iou=float(
+                os.environ.get(
+                    "CLIPPING_HIGHLIGHT_DUPLICATE_IOU",
+                    values.get("CLIPPING_HIGHLIGHT_DUPLICATE_IOU", "0.65"),
+                )
+            ),
+            highlight_duplicate_evidence=float(
+                os.environ.get(
+                    "CLIPPING_HIGHLIGHT_DUPLICATE_EVIDENCE",
+                    values.get("CLIPPING_HIGHLIGHT_DUPLICATE_EVIDENCE", "0.5"),
+                )
+            ),
             highlight_pool_size=int(
                 os.environ.get(
                     "CLIPPING_HIGHLIGHT_POOL_SIZE", values.get("CLIPPING_HIGHLIGHT_POOL_SIZE", "20")

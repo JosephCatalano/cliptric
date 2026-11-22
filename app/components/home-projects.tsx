@@ -170,11 +170,13 @@ export function HomeProjects({ disabled }: { disabled: boolean }) {
                   <div className="absolute bottom-3 left-3">
                     <Badge
                       variant={
-                        project.error ||
-                        project.status === "failed" ||
                         project.status === "partial"
-                          ? "destructive"
-                          : "secondary"
+                          ? "warning"
+                          : project.error || project.status === "failed"
+                            ? "destructive"
+                            : project.status === "ready"
+                              ? "success"
+                              : "info"
                       }
                     >
                       {statusLabels[project.status] ??

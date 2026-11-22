@@ -18,6 +18,7 @@ from .caption_styles import CaptionStyles, create_caption_style_router
 from .captions import CaptionError, build_cues
 from .config import Settings
 from .deletion import Deletions
+from .editorial_review import EditorialReviewer
 from .facebook_api import FacebookAPI
 from .files import remove_artifact, require_space
 from .highlight_provider import OpenAIHighlights
@@ -59,7 +60,13 @@ def create_app(settings: Settings | None = None) -> FastAPI:
     settings = settings or Settings.load()
     store, media = Store(settings.data_dir, initialize=False), Media(settings)
     transcriptions = Transcriptions(store, media, settings)
-    highlights = Highlights(store, transcriptions.transcripts, settings, OpenAIHighlights(settings))
+    highlights = Highlights(
+        store,
+        transcriptions.transcripts,
+        settings,
+        OpenAIHighlights(settings),
+        reviewer=EditorialReviewer(settings),
+    )
     jobs = Jobs(store, media)
     youtube = YouTubeImports(store, media, settings)
     projects = Projects(store, media, transcriptions, highlights, jobs, youtube)

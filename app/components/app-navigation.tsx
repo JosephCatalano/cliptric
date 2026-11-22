@@ -4,6 +4,8 @@ import { ProcessingNotices } from "./processing-notices";
 import Image from "next/image";
 import Link from "next/link";
 import type { MouseEvent } from "react";
+import cliptricLogoDark from "@/assets/branding/cliptric-logo-dark.webp";
+import cliptricLogoLight from "@/assets/branding/cliptric-logo-light.webp";
 import { useWorkspaceNavigation } from "./workspace-navigation";
 import { usePathname } from "next/navigation";
 import {
@@ -11,9 +13,11 @@ import {
   FolderOpenIcon,
   LinkIcon,
   MonitorCheckIcon,
+  MoonIcon,
   HouseIcon,
   ScissorsIcon,
   SettingsIcon,
+  SunIcon,
 } from "lucide-react";
 import {
   Sidebar,
@@ -31,7 +35,9 @@ import {
   useSidebar,
 } from "@/components/ui/sidebar";
 import { Badge } from "@/components/ui/badge";
+import { Button } from "@/components/ui/button";
 import { Separator } from "@/components/ui/separator";
+import { toggleTheme } from "../lib/theme";
 
 const destinations = [
   { href: "/", label: "Home", icon: HouseIcon },
@@ -77,15 +83,26 @@ export function AppSidebar() {
                 onClick={navigate}
               >
                 <Image
-                  src="/icon.svg"
+                  src="/icon.png"
                   alt=""
                   width={32}
                   height={32}
                   unoptimized
-                  className="size-8 shrink-0"
+                  className="hidden size-8 shrink-0 max-md:block group-data-[collapsible=icon]:block"
                 />
-                <span className="truncate text-base font-semibold">
-                  Cliptric
+                <span className="block w-40 max-w-full max-md:hidden group-data-[collapsible=icon]:hidden">
+                  <Image
+                    src={cliptricLogoLight}
+                    alt=""
+                    unoptimized
+                    className="h-auto w-full dark:hidden"
+                  />
+                  <Image
+                    src={cliptricLogoDark}
+                    alt=""
+                    unoptimized
+                    className="hidden h-auto w-full dark:block"
+                  />
                 </span>
               </Link>
             </SidebarMenuButton>
@@ -159,7 +176,7 @@ export function AppHeader() {
                   (destination) => destination.href === current,
                 )?.label ?? "Workspace");
   return (
-    <header className="flex h-14 shrink-0 items-center gap-3 border-b px-4 md:px-6">
+    <header className="flex h-14 shrink-0 items-center gap-3 border-b border-divider px-4 md:px-6">
       <SidebarTrigger className="hidden md:inline-flex" />
       <Separator orientation="vertical" className="hidden h-4 md:block" />
       <span className="min-w-0 flex-1 truncate text-sm font-medium">
@@ -169,6 +186,16 @@ export function AppHeader() {
         <Badge variant="outline">Save or discard studio edits</Badge>
       ) : null}
       <ProcessingNotices />
+      <Button
+        type="button"
+        variant="ghost"
+        size="icon"
+        aria-label="Switch colour theme"
+        onClick={toggleTheme}
+      >
+        <SunIcon aria-hidden="true" className="hidden dark:block" />
+        <MoonIcon aria-hidden="true" className="dark:hidden" />
+      </Button>
     </header>
   );
 }

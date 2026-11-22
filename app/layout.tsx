@@ -6,6 +6,7 @@ import { SidebarInset, SidebarProvider } from "@/components/ui/sidebar";
 import { TooltipProvider } from "@/components/ui/tooltip";
 import { AppHeader, AppSidebar } from "./components/app-navigation";
 import { WorkspaceNavigationProvider } from "./components/workspace-navigation";
+import { themeScript } from "./lib/theme";
 
 const instrumentSans = localFont({
   src: "./fonts/InstrumentSans.ttf",
@@ -25,7 +26,14 @@ export default function RootLayout({
   children,
 }: Readonly<{ children: React.ReactNode }>) {
   return (
-    <html lang="en" className={`dark ${instrumentSans.variable}`}>
+    <html
+      lang="en"
+      className={`dark ${instrumentSans.variable}`}
+      suppressHydrationWarning
+    >
+      <head>
+        <script dangerouslySetInnerHTML={{ __html: themeScript }} />
+      </head>
       <body>
         <a href="#main-content" className="skip-link">
           Skip to content

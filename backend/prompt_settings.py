@@ -11,7 +11,8 @@ from pydantic import BaseModel, ConfigDict, Field, field_validator
 from .ai_instructions import normalize_instructions
 
 PromptKey = Literal[
-    "highlights",
+    "highlight_discovery",
+    "highlight_editorial",
     "batch_review",
     "batch_highlights",
     "titles",
@@ -37,14 +38,20 @@ def catalog():
     from .batch_review import BatchReview, MultiBatchReview
     from .batch_titles import TITLE_INSTRUCTIONS
     from .caption_emphasis import EMPHASIS_INSTRUCTIONS
-    from .highlight_provider import INSTRUCTIONS
+    from .editorial_review import INSTRUCTIONS as REVIEW_INSTRUCTIONS
+    from .highlight_provider import DISCOVERY_INSTRUCTIONS
     from .social_copy import COPY_INSTRUCTIONS
 
     return {
-        "highlights": (
-            "Long-form highlights",
-            "Select and rank moments from long recordings.",
-            INSTRUCTIONS,
+        "highlight_discovery": (
+            "Long-form discovery",
+            "Find promising leads across the selected recording.",
+            DISCOVERY_INSTRUCTIONS,
+        ),
+        "highlight_editorial": (
+            "Long-form editorial review",
+            "Compare, refine and select the final long-form clips.",
+            REVIEW_INSTRUCTIONS,
         ),
         "batch_review": (
             "Supplied-video review",
@@ -103,12 +110,16 @@ def request_prompt(
     return base + "\n" + guidance + "\n" + PROTECTED_RULES
 
 
-def highlight_prompt_identity(settings):
-    from .highlight_provider import INSTRUCTIONS
+def highlight_prompt_identity(settings, *, discovery: bool) -> str:
+    from .editorial_review import INSTRUCTIONS as REVIEW_INSTRUCTIONS
+    from .highlight_provider import DISCOVERY_INSTRUCTIONS
 
-    return hashlib.sha256(
-        request_prompt(settings, "highlights", INSTRUCTIONS, True).encode()
-    ).hexdigest()
+    prompt = (
+        request_prompt(settings, "highlight_discovery", DISCOVERY_INSTRUCTIONS, True)
+        if discovery
+        else request_prompt(settings, "highlight_editorial", REVIEW_INSTRUCTIONS, True)
+    )
+    return hashlib.sha256(prompt.encode()).hexdigest()
 
 
 class PromptUpdate(BaseModel):

@@ -4,15 +4,18 @@ import json
 import logging
 import threading
 import time
+from collections.abc import Callable, Coroutine
 from concurrent.futures import Future, ThreadPoolExecutor
-from typing import Protocol
+from typing import Any, Protocol, TypeVar
 from uuid import UUID, uuid4
 
 from fastapi import APIRouter, HTTPException
 
 from .config import Settings
+from .editorial_review import MAX_RESULTS, EditorialReviewer, ground_review, shortlist
 from .highlight_models import (
     ACTIVE,
+    DISCOVERY_VERSION,
     MAX_AUTO_WINDOW_SECONDS,
     OVERLAP_SECONDS,
     PROMPT_VERSION,
@@ -42,6 +45,7 @@ from .transcription_models import TranscriptionError
 from .transcription_store import TranscriptStore
 
 logger = logging.getLogger(__name__)
+Response = TypeVar("Response")
 
 
 class HighlightProvider(Protocol):
@@ -55,6 +59,8 @@ class Highlights:
         transcripts: TranscriptStore,
         settings: Settings,
         provider: HighlightProvider,
+        *,
+        reviewer: EditorialReviewer | None = None,
     ):
         self.store, self.transcripts, self.settings, self.provider = (
             store,
@@ -63,6 +69,7 @@ class Highlights:
             provider,
         )
         self.results = HighlightStore(store)
+        self.reviewer = reviewer or EditorialReviewer(settings)
         self.pool = ThreadPoolExecutor(max_workers=1, thread_name_prefix="highlights")
         self.lock = threading.Lock()
         self.cancel_event = threading.Event()
@@ -147,11 +154,41 @@ class Highlights:
                 "This transcript exceeds the highlight input budget. Use a shorter recording."
             )
         with self.lock:
+            discovery_prompt = highlight_prompt_identity(self.settings, discovery=True)
+            discovery_key = hashlib.sha256(
+                json.dumps(
+                    {
+                        "version": DISCOVERY_VERSION,
+                        "recording": recording_id,
+                        "prompt": discovery_prompt,
+                        "model": self.settings.highlight_model,
+                        "output_tokens": self.settings.highlight_output_tokens,
+                        "input": request.model_dump(
+                            mode="json",
+                            exclude={
+                                "regenerate",
+                                "remote_consent",
+                                "max_candidates",
+                                "quality_mode",
+                            },
+                        ),
+                    },
+                    sort_keys=True,
+                ).encode()
+            ).hexdigest()
             key_data = {
                 "prompt": PROMPT_VERSION,
-                "prompt_settings": highlight_prompt_identity(self.settings),
+                "prompt_settings": [
+                    discovery_prompt,
+                    highlight_prompt_identity(self.settings, discovery=False),
+                ],
                 "model": self.settings.highlight_model,
                 "output_tokens": self.settings.highlight_output_tokens,
+                "pool_size": self.settings.highlight_pool_size,
+                "dedup": [
+                    self.settings.highlight_duplicate_iou,
+                    self.settings.highlight_duplicate_evidence,
+                ],
                 "request": request.model_dump(
                     mode="json",
                     exclude={"regenerate", "remote_consent"}
@@ -191,7 +228,11 @@ class Highlights:
                         blocked.append(SourceRange(start=candidate.start, end=candidate.end))
                         if len(available) >= request.max_candidates:
                             break
-            if available:
+            if available and (
+                len(available) == request.max_candidates
+                or not windows
+                or not self.settings.openai_api_key
+            ):
                 job = HighlightJob(
                     id=identifier or str(uuid4()),
                     recording_id=recording_id,
@@ -203,6 +244,7 @@ class Highlights:
                     created_at=now(),
                     pool_key=pool_key,
                     cache_hit=True,
+                    editorial_status="completed",
                 )
                 self.results.create(job, key)
                 copies = [
@@ -232,13 +274,16 @@ class Highlights:
                 model=self.settings.highlight_model,
                 status="queued",
                 total_windows=len(windows),
+                editorial_status="pending",
                 created_at=now(),
             )
             self.results.create(job, key)
             self.active, self.active_key = job.id, key
             self.cancel_event.clear()
             try:
-                future = self.pool.submit(self.run, job, windows, request, recording.duration)
+                future = self.pool.submit(
+                    self.run, job, windows, request, recording.duration, discovery_key
+                )
             except RuntimeError as exc:
                 self.active, self.active_key = None, None
                 self.results.update(job.id, status="failed", error="Highlight service is stopping.")
@@ -265,73 +310,36 @@ class Highlights:
             self.results.update(identifier, status="cancelling")
             return job.model_copy(update={"status": "cancelling"})
 
-    async def _analyse(
+    async def _discover(
         self,
         job: HighlightJob,
         windows: list[list[Segment]],
         request: HighlightRequest,
         duration: float,
+        deadline: float,
     ) -> tuple[list[Candidate], int]:
-        deadline = time.monotonic() + self.settings.highlight_timeout_seconds
         queue = asyncio.Queue()
         for index, window in enumerate(windows):
             queue.put_nowait((index, window))
         results = {}
         rejected = 0
+        discovery_request = request.model_copy(update={"quality_mode": False, "max_candidates": 5})
 
         async def worker():
             nonlocal rejected
             while not queue.empty():
                 index, window = queue.get_nowait()
-                self._check(deadline)
-                transcript = self.transcripts.latest(job.recording_id)
-                if (
-                    transcript is None
-                    or transcript.id != job.transcription_id
-                    or transcript.revision != job.transcript_revision
-                    or transcript.status != "succeeded"
-                ):
-                    raise HighlightError(
-                        "The transcript changed during analysis. Further API requests were stopped; retry using its saved revision.",
-                        409,
-                    )
-                # Persist each attempt before dispatch, including requests still in flight
-                # when cancellation/failure arrives. There are no automatic retries.
-                job.requests_made += 1
-                self.results.update(job.id, requests_made=job.requests_made)
                 # Retain a modest pool without changing the number of requested exports.
-                pool_request = request.model_copy(update={"max_candidates": 5})
-                task = asyncio.create_task(self.provider.suggest(window, pool_request))
-                try:
-                    request_deadline = min(
-                        deadline, time.monotonic() + self.settings.highlight_request_seconds
-                    )
-                    while not task.done():
-                        self._check(request_deadline)
-                        await asyncio.wait({task}, timeout=0.1)
-                    response = await task
-                finally:
-                    if not task.done():
-                        task.cancel()
-                        await asyncio.gather(task, return_exceptions=True)
-                self._check(deadline)
-                current = self.transcripts.latest(job.recording_id)
-                if (
-                    current is None
-                    or current.id != job.transcription_id
-                    or current.revision != job.transcript_revision
-                ):
-                    raise HighlightError(
-                        "The transcript changed during analysis. Further API requests were stopped; retry using its saved revision.",
-                        409,
-                    )
+                response = await self._provider_attempt(
+                    job, deadline, lambda: self.provider.suggest(window, discovery_request)
+                )
+                job.input_tokens += response.input_tokens
+                job.output_tokens += response.output_tokens
                 grounded, invalid = ground_candidates(
-                    response.candidates, window, request, duration, job.id
+                    response.candidates, window, discovery_request, duration, job.id
                 )
                 results[index] = grounded
                 rejected += invalid
-                job.input_tokens += response.input_tokens
-                job.output_tokens += response.output_tokens
                 job.completed_windows += 1
                 self.results.update(
                     job.id,
@@ -353,13 +361,129 @@ class Highlights:
                     task.cancel()
             await asyncio.gather(*tasks, return_exceptions=True)
         candidates = [candidate for index in sorted(results) for candidate in results[index]]
+        if rejected:
+            logger.warning(
+                "Highlight job %s rejected %d ungrounded discovery candidates.", job.id, rejected
+            )
         if rejected and not candidates:
             raise HighlightError(
                 "All suggested moments failed source-evidence or duration checks. Review the transcript or change duration settings, then retry explicitly."
             )
+        return candidates, rejected
+
+    async def _analyse(
+        self,
+        job: HighlightJob,
+        windows: list[list[Segment]],
+        request: HighlightRequest,
+        duration: float,
+        discovery_key: str,
+    ) -> tuple[list[Candidate], int]:
+        deadline = time.monotonic() + self.settings.highlight_timeout_seconds
+        saved = (
+            None if request.regenerate else self.results.discovery(job.recording_id, discovery_key)
+        )
+        if saved is None:
+            leads, rejected = await self._discover(job, windows, request, duration, deadline)
+            self._check_revision(job)
+            self.results.save_discovery(job.recording_id, discovery_key, leads, rejected)
+        else:
+            leads, rejected = saved
+            self.results.update(
+                job.id,
+                discovery_cache_hit=True,
+                completed_windows=len(windows),
+                rejected_candidates=rejected,
+            )
+        self._check(deadline)
+        if not leads:
+            return [], rejected
+
+        ranked = self._rank(leads, len(leads))
+        options, payload = shortlist(ranked, windows, request)
+        self.results.update(
+            job.id,
+            editorial_status="reviewing",
+            discovered_candidates=len(leads),
+            editorial_options=len(options),
+            discovery_shortlist=[
+                {"start": option.lead.start, "end": option.lead.end} for option in options
+            ],
+        )
+        limit = min(
+            max(request.max_candidates, self.settings.highlight_pool_size),
+            len(options),
+            MAX_RESULTS,
+        )
+        try:
+            proposal, inputs, outputs = await self._provider_attempt(
+                job, deadline, lambda: self.reviewer.review(payload, request, limit)
+            )
+        except HighlightError as exc:
+            raise HighlightError(f"Editorial review failed. {exc}", exc.status_code) from exc
+        job.input_tokens += inputs
+        job.output_tokens += outputs
+        self.results.update(job.id, input_tokens=job.input_tokens, output_tokens=job.output_tokens)
+        candidates, invalid = ground_review(proposal, options, request, duration, job.id, limit)
+        rejected += invalid
+        if invalid:
+            logger.warning(
+                "Highlight job %s rejected %d ungrounded editorial candidates.", job.id, invalid
+            )
+            self.results.update(job.id, rejected_candidates=rejected)
+        if invalid and not candidates:
+            raise HighlightError(
+                "Editorial review returned no valid intervals. Check usage before retrying explicitly."
+            )
+        return self._rank(candidates, limit), rejected
+
+    def _rank(self, candidates: list[Candidate], limit: int) -> list[Candidate]:
         return rank_unique(
-            candidates, max(request.max_candidates, self.settings.highlight_pool_size)
-        ), rejected
+            candidates,
+            limit,
+            iou_threshold=self.settings.highlight_duplicate_iou,
+            evidence_threshold=self.settings.highlight_duplicate_evidence,
+        )
+
+    def _check_revision(self, job: HighlightJob) -> None:
+        current = self.transcripts.latest(job.recording_id)
+        if (
+            current is None
+            or current.id != job.transcription_id
+            or current.revision != job.transcript_revision
+            or current.status != "succeeded"
+        ):
+            raise HighlightError(
+                "The transcript changed during analysis. Further API requests were stopped; retry using its saved revision.",
+                409,
+            )
+
+    async def _provider_attempt(
+        self,
+        job: HighlightJob,
+        deadline: float,
+        invoke: Callable[[], Coroutine[Any, Any, Response]],
+    ) -> Response:
+        self._check(deadline)
+        self._check_revision(job)
+        job.requests_made += 1
+        self.results.update(job.id, requests_made=job.requests_made)
+        task = asyncio.create_task(invoke())
+        try:
+            request_deadline = min(
+                deadline, time.monotonic() + self.settings.highlight_request_seconds
+            )
+            while not task.done():
+                self._check(request_deadline)
+                await asyncio.wait({task}, timeout=0.1)
+            response = await task
+            self._check(deadline)
+            self._check_revision(job)
+            return response
+        finally:
+            if not task.done():
+                task.cancel()
+                await asyncio.gather(task, return_exceptions=True)
 
     def _check(self, deadline: float) -> None:
         if self.cancel_event.is_set():
@@ -376,12 +500,15 @@ class Highlights:
         windows: list[list[Segment]],
         request: HighlightRequest,
         duration: float,
+        discovery_key: str,
     ) -> None:
         try:
             with self.lock:
                 self._check(float("inf"))
                 self.results.update(job.id, status="analysing")
-            candidates, rejected = asyncio.run(self._analyse(job, windows, request, duration))
+            candidates, rejected = asyncio.run(
+                self._analyse(job, windows, request, duration, discovery_key)
+            )
             with self.lock:
                 self._check(float("inf"))
                 previous = (
@@ -393,7 +520,7 @@ class Highlights:
                     if job.pool_key
                     else []
                 )
-                pool = rank_unique(candidates + previous, self.settings.highlight_pool_size)
+                pool = self._rank(candidates + previous, self.settings.highlight_pool_size)
                 self.results.publish(job, candidates[: request.max_candidates], rejected, pool=pool)
         except HighlightCancelled:
             self.results.update(
@@ -402,6 +529,7 @@ class Highlights:
                 error="Analysis cancelled. In-flight API usage may still be billed; prior results are preserved.",
             )
         except HighlightError as exc:
+            logger.warning("Highlight job %s failed with status %d.", job.id, exc.status_code)
             self.results.update(job.id, status="failed", error=str(exc))
         except Exception:
             logger.error(

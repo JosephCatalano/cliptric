@@ -23,6 +23,7 @@ from backend.highlight_models import (
 from backend.highlights import Highlights, create_highlight_router
 from backend.models import Recording
 from backend.storage import Store, now
+from backend.tests.editorial_fixtures import SyntheticEditorialReviewer
 from backend.tests.test_pipeline import settings as settings
 from backend.tests.test_pipeline import tools as tools
 from backend.transcription_models import WordsPatch
@@ -106,7 +107,11 @@ def service(settings, tmp_path):
     )
     provider = SyntheticProvider()
     manager = Highlights(
-        store, transcripts, replace(settings, openai_api_key="test-not-a-real-key"), provider
+        store,
+        transcripts,
+        replace(settings, openai_api_key="test-not-a-real-key"),
+        provider,
+        reviewer=SyntheticEditorialReviewer(),
     )
     manager.initialize()
     yield manager, recording, transcript, provider
@@ -137,12 +142,15 @@ def test_updated_prompt_uses_new_cache_and_preserves_previous_results(service, m
     current_version = highlight_module.PROMPT_VERSION
     monkeypatch.setattr(highlight_module, "PROMPT_VERSION", "transcript-highlights-v3-quality")
     previous = finished(manager, manager.submit(recording.id, request(transcript)).id)
+    manager.results.update(previous.id, editorial_status=None)
     monkeypatch.setattr(highlight_module, "PROMPT_VERSION", current_version)
     current = finished(manager, manager.submit(recording.id, request(transcript)).id)
-    assert current.id != previous.id and provider.calls == 2
+    assert current.id != previous.id and provider.calls == 1 and current.discovery_cache_hit
+    assert current.requests_made == 1 and current.editorial_status == "completed"
     assert manager.results.job(previous.id).status == "succeeded"
     assert manager.submit(recording.id, request(transcript)).id == current.id
-    assert provider.calls == 2
+    assert provider.calls == 1
+    assert manager.reviewer.calls == 2
 
 
 def test_success_cache_review_regeneration_and_persistence(service):
@@ -150,10 +158,10 @@ def test_success_cache_review_regeneration_and_persistence(service):
     job = finished(manager, manager.submit(recording.id, request(transcript)).id)
     assert job.status == "succeeded"
     assert (job.requests_made, job.completed_windows, job.input_tokens, job.output_tokens) == (
+        2,
         1,
-        1,
-        200,
-        100,
+        210,
+        105,
     )
     candidate = job.candidates[0]
     assert (candidate.start, candidate.end) == (0, 24)
@@ -275,6 +283,7 @@ def test_empty_results_and_empty_transcript_are_valid(service):
     provider.empty = True
     result = finished(manager, manager.submit(recording.id, request(transcript)).id)
     assert result.status == "succeeded" and result.candidates == []
+    assert result.requests_made == 1 and manager.reviewer.calls == 0
     with manager.store.connection() as db:
         db.execute("DELETE FROM transcript_words WHERE transcription_id=?", (transcript.id,))
         db.execute("UPDATE transcriptions SET revision=2,word_count=0 WHERE id=?", (transcript.id,))

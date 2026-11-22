@@ -30,6 +30,10 @@ class HighlightStore:
                 CREATE TABLE IF NOT EXISTS highlight_pools (
                     cache_key TEXT PRIMARY KEY, payload TEXT NOT NULL
                 );
+                CREATE TABLE IF NOT EXISTS highlight_discovery (
+                    recording_id TEXT PRIMARY KEY REFERENCES recordings(id) ON DELETE CASCADE,
+                    cache_key TEXT NOT NULL, payload TEXT NOT NULL
+                );
             """)
 
     def recover(self) -> None:
@@ -108,6 +112,38 @@ class HighlightStore:
                 (job.id, job.recording_id, key, job.status, job.model_dump_json(), job.created_at),
             )
 
+    def discovery(self, recording_id: str, key: str) -> tuple[list[Candidate], int] | None:
+        with self.store.connection() as db:
+            row = db.execute(
+                "SELECT payload FROM highlight_discovery WHERE recording_id=? AND cache_key=?",
+                (recording_id, key),
+            ).fetchone()
+        if row is None:
+            return None
+        payload = json.loads(row[0])
+        return [Candidate.model_validate(candidate) for candidate in payload["leads"]], payload[
+            "rejected"
+        ]
+
+    def save_discovery(
+        self, recording_id: str, key: str, leads: list[Candidate], rejected: int
+    ) -> None:
+        with self.store.connection() as db:
+            db.execute(
+                "INSERT INTO highlight_discovery VALUES (?,?,?) ON CONFLICT(recording_id) "
+                "DO UPDATE SET cache_key=excluded.cache_key,payload=excluded.payload",
+                (
+                    recording_id,
+                    key,
+                    json.dumps(
+                        {
+                            "leads": [candidate.model_dump() for candidate in leads],
+                            "rejected": rejected,
+                        }
+                    ),
+                ),
+            )
+
     def update(self, identifier: str, **changes) -> None:
         with self.store.connection() as db:
             db.execute("BEGIN IMMEDIATE")
@@ -170,6 +206,7 @@ class HighlightStore:
             )
             payload.update(
                 status="succeeded",
+                editorial_status="completed",
                 completed_windows=job.total_windows,
                 rejected_candidates=rejected,
             )

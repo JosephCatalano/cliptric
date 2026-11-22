@@ -50,7 +50,8 @@ Not all metrics are reported by the bundled evaluation script. The script report
 ## Interpretation cautions
 
 - A `0.5` IoU threshold may penalize equally useful clips of different length. Supplement with human review.
-- No ground-truth highlights means recall is undefined; the script refuses empty gold sets for clarity.
+- Use an empty highlights array for an individual weak video. Recall is undefined there and reported as null. The evaluator counts how many such videos produced predictions.
+- Matched boundary errors are reported in actual source seconds. They describe temporal agreement with human marks, alongside temporal IoU.
 - If the score field is absent, file ordering is treated as rank.
 - A result from one video is anecdotal. Use several varied source recordings and maintain a held-out set to avoid optimizing to one streamer.
 - Compare to the same baseline and conditions. Do not use imagined view counts as evidence.
@@ -62,3 +63,11 @@ Not all metrics are reported by the bundled evaluation script. The script report
 | stream-001 | clip-001 | 4 | 5 | 3 | 4 | Y | Strong payoff; HUD partly obscured | 2 |
 
 Set minimum acceptance criteria before measuring and save comparison reports in version control (excluding copyrighted raw source videos).
+
+## Comparing editorial review with the historical baseline
+
+Annotate held-out sources before reading candidates. Include stand-up comedy, podcast, interview, gaming, education, personal story, and weak or incomplete sources. For each source, record duration and judge which third contains each reference moment's midpoint. Review misses by third to distinguish a coverage problem from a ranking problem. For supplied videos, mark the preferred keep-full, trim, or manual-review decision separately.
+
+Use fixed source, transcript revision, selected range, limits, preferences and model for both arms. Run an earlier application revision in an isolated library when measuring the historical single-pass baseline. Record pipeline and prompt versions, calls, returned input and output tokens, elapsed time, candidate validation failures and request failures. Price observed usage with the applicable model rate and record the rate date. Record semantic duplicates separately from temporal matches, since two candidates can contain distinct payoffs even when their intervals overlap. Use the stored editorial shortlist for discovery recall and final candidates for top-K recall. Shortlist recall includes the effect of deduplication and review input limits.
+
+Blind the reviewer to the arm where feasible. Record approval and missed setup/payoff, weak opening, factual/title error, caption problem, or redundant moment. Report comparisons only after both arms were actually run on the same set.

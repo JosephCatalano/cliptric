@@ -450,7 +450,7 @@ export function FramingEditor({
           {sourceUrl ? (
             <div
               ref={picture}
-              className="relative overflow-hidden rounded-md bg-muted"
+              className="relative overflow-hidden rounded-md bg-editor-preview"
               style={{
                 width: "100%",
                 maxWidth: `${(55 * dimensions.width) / dimensions.height}dvh`,
@@ -590,7 +590,7 @@ export function FramingEditor({
                 ref={canvas}
                 width={270}
                 height={480}
-                className="w-full max-w-[270px] rounded-md bg-muted"
+                className="w-full max-w-[270px] rounded-md bg-editor-preview"
                 aria-label="Live clip framing preview"
               />
             </div>

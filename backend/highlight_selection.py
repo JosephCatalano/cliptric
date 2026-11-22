@@ -9,6 +9,7 @@ from .highlight_models import (
     OVERLAP_SECONDS,
     WINDOW_SECONDS,
     Candidate,
+    EditorialQuality,
     HighlightError,
     HighlightRequest,
     ProposedHighlights,
@@ -152,6 +153,17 @@ def window_text(window: list[Segment]) -> str:
     )
 
 
+def meets_quality(quality: EditorialQuality | None, first: Segment, last: Segment) -> bool:
+    return (
+        quality is not None
+        and min(quality.hook, quality.context, quality.payoff, quality.standalone) >= 3
+        and bool(quality.opening_evidence.strip())
+        and bool(quality.ending_evidence.strip())
+        and quality.opening_evidence in first.text
+        and quality.ending_evidence in last.text
+    )
+
+
 def ground_candidates(
     proposed: ProposedHighlights,
     window: list[Segment],
@@ -159,6 +171,12 @@ def ground_candidates(
     duration: float,
     job_id: str,
 ) -> tuple[list[Candidate], int]:
+    if any(
+        not (0 <= s.start < s.end <= duration + 0.05)
+        or (i > 0 and (s.id <= window[i - 1].id or s.start < window[i - 1].start))
+        for i, s in enumerate(window)
+    ):
+        raise HighlightError("Transcript segments have invalid source timing or order.")
     positions = {segment.id: index for index, segment in enumerate(window)}
     result: list[Candidate] = []
     rejected = 0
@@ -168,19 +186,10 @@ def ground_candidates(
             rejected += 1
             continue
         selected = window[first : last + 1]
-        start, end = selected[0].start, min(max(s.end for s in selected), duration)
+        start, end = selected[0].start, max(s.end for s in selected)
         text = " ".join(s.text for s in selected)
         if request.quality_mode:
-            assessment = proposal.quality
-            if (
-                assessment is None
-                or min(
-                    assessment.hook, assessment.context, assessment.payoff, assessment.standalone
-                )
-                < 3
-                or assessment.opening_evidence not in selected[0].text
-                or assessment.ending_evidence not in selected[-1].text
-            ):
+            if not meets_quality(proposal.quality, selected[0], selected[-1]):
                 rejected += 1
                 continue
             # Bounded room around whole source segments, without adding adjacent speech.
@@ -206,7 +215,10 @@ def ground_candidates(
                 and math.isfinite(end)
                 and request.min_seconds <= end - start <= request.max_seconds
                 and start >= request.analysis_start
-                and end <= (request.analysis_end if request.analysis_end is not None else duration)
+                and end
+                <= min(
+                    duration, request.analysis_end if request.analysis_end is not None else duration
+                )
             )
             or len(proposal.evidence) < 8
             or proposal.evidence not in text
@@ -223,16 +235,8 @@ def ground_candidates(
                 job_id=job_id,
                 start=start,
                 end=end,
-                score=round(
-                    5
-                    * (
-                        proposal.quality.hook
-                        + proposal.quality.context
-                        + proposal.quality.payoff
-                        + proposal.quality.standalone
-                    )
-                )
-                if request.quality_mode
+                score=proposal.quality.score
+                if request.quality_mode and proposal.quality
                 else proposal.score,
                 quality=proposal.quality,
                 title=proposal.title,
@@ -245,23 +249,36 @@ def ground_candidates(
     return result, rejected
 
 
-def rank_unique(candidates: list[Candidate], limit: int) -> list[Candidate]:
-    selected: list[Candidate] = []
-    for candidate in sorted(candidates, key=lambda c: (-c.score, c.start, c.end)):
+def rank_unique(
+    candidates: list[Candidate],
+    limit: int,
+    *,
+    iou_threshold: float = 0.65,
+    evidence_threshold: float = 0.5,
+) -> list[Candidate]:
+    """Rank one source at a time. Require shared evidence for fuzzy time matches."""
+    selected: list[tuple[Candidate, set[str]]] = []
+    for candidate in sorted(candidates, key=lambda c: (-c.score, c.start, -c.end)):
+        words = set(re.findall(r"\w+", candidate.evidence.casefold()))
         duplicate = False
-        for other in selected:
+        for other, other_words in selected:
             intersection = max(0, min(candidate.end, other.end) - max(candidate.start, other.start))
             union = max(candidate.end, other.end) - min(candidate.start, other.start)
-            words = set(re.findall(r"\w+", candidate.evidence.casefold()))
-            other_words = set(re.findall(r"\w+", other.evidence.casefold()))
+            if not intersection:
+                continue
             similarity = len(words & other_words) / max(1, len(words | other_words))
-            if candidate.fingerprint == other.fingerprint or (
-                intersection / union >= 0.65 and similarity >= 0.5
+            if (
+                candidate.fingerprint == other.fingerprint
+                or (intersection / union >= iou_threshold and similarity >= evidence_threshold)
+                or (
+                    intersection == min(candidate.end - candidate.start, other.end - other.start)
+                    and candidate.evidence == other.evidence
+                )
             ):
                 duplicate = True
                 break
         if not duplicate:
-            selected.append(candidate)
+            selected.append((candidate, words))
             if len(selected) == limit:
                 break
-    return selected
+    return [candidate for candidate, _ in selected]

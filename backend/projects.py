@@ -25,6 +25,7 @@ from .highlight_models import HighlightError, HighlightRequest, ProposedHighligh
 from .highlight_selection import (
     build_segments,
     ground_candidates,
+    meets_quality,
     overlaps,
     rank_unique,
     window_text,
@@ -128,12 +129,17 @@ class Projects:
                     if analysis:
                         project.stage = f"AI analysis: {analysis.completed_windows} of {analysis.total_windows} windows completed"
                         if analysis.total_windows:
-                            project.step_progress = min(
+                            windows_done = min(
                                 1, analysis.completed_windows / analysis.total_windows
                             )
-                            project.progress = 0.5 + 0.25 * min(
-                                analysis.completed_windows / analysis.total_windows, 1
+                            project.step_progress = (
+                                0.9 * windows_done
+                                if analysis.editorial_status in {"pending", "reviewing"}
+                                else windows_done
                             )
+                            project.progress = 0.5 + 0.25 * project.step_progress
+                        if analysis.editorial_status == "reviewing":
+                            project.stage = "AI editorial review: comparing promising moments"
                 for item in project.items:
                     item.post_copy_stale = bool(
                         (item.post_copy or item.post_copy_selected)
@@ -405,7 +411,11 @@ class Projects:
             if (
                 not project.selection_complete
                 and project.analysis_attempted
-                and not (result and result.status == "succeeded")
+                and not (
+                    result
+                    and result.status == "succeeded"
+                    and result.editorial_status == "completed"
+                )
             ):
                 if not request.retry_analysis:
                     raise HTTPException(
@@ -991,6 +1001,11 @@ class Projects:
                     409,
                     "Transcript changed. Create a new project to select from the current revision.",
                 )
+            if result.editorial_status != "completed":
+                raise HTTPException(
+                    409,
+                    "This analysis predates editorial review. Resume with explicit permission to analyse again.",
+                )
             with self.lock:
                 project = self._check(identifier)
                 candidates = [
@@ -1332,27 +1347,18 @@ class Projects:
             grounded = []
             if proposal.decision == "keep_full":
                 text = " ".join(segment.text for segment in segments)
-                assessment = candidate.quality
                 if (
                     candidate.first_segment != segments[0].id
                     or candidate.last_segment != segments[-1].id
+                    or any(segment.end > recording.duration for segment in segments)
                     or len(candidate.evidence) < 8
                     or candidate.evidence not in text
                 ):
                     raise HighlightError(
                         "AI whole-video recommendation did not match source evidence. Review manually."
                     )
-                if project.settings.quality_mode and (
-                    assessment is None
-                    or min(
-                        assessment.hook,
-                        assessment.context,
-                        assessment.payoff,
-                        assessment.standalone,
-                    )
-                    < 3
-                    or assessment.opening_evidence not in segments[0].text
-                    or assessment.ending_evidence not in segments[-1].text
+                if project.settings.quality_mode and not meets_quality(
+                    candidate.quality, segments[0], segments[-1]
                 ):
                     raise HighlightError(
                         "AI whole-video recommendation did not meet the saved quality/evidence requirements. Review manually."
@@ -1379,7 +1385,14 @@ class Projects:
                     raise HighlightError(
                         "AI trimmed interval did not match source boundaries, evidence or quality requirements. Review manually."
                     )
-                if len(rank_unique(grounded, len(grounded))) != len(grounded) or any(
+                if len(
+                    rank_unique(
+                        grounded,
+                        len(grounded),
+                        iou_threshold=self.highlights.settings.highlight_duplicate_iou,
+                        evidence_threshold=self.highlights.settings.highlight_duplicate_evidence,
+                    )
+                ) != len(grounded) or any(
                     max(0, min(a.end, b.end) - max(a.start, b.start))
                     / min(a.end - a.start, b.end - b.start)
                     > 0.5
@@ -1390,6 +1403,10 @@ class Projects:
                         "AI returned duplicate or heavily overlapping highlights. Review manually or explicitly retry."
                     )
                 start, end = grounded[0].start, grounded[0].end
+                if not multiple and start == 0 and end == recording.duration:
+                    raise HighlightError(
+                        "AI marked the complete source as a trim. Review the interval manually."
+                    )
             with self.lock:
                 current = self.get(identifier, hydrate=False)
                 target = next(i for i in current.items if i.id == item_id)
@@ -1426,6 +1443,12 @@ class Projects:
                     current.items.append(child)
                 self.records.save(current)
         except (HighlightError, HTTPException) as exc:
+            if isinstance(exc, HighlightError):
+                logger.info(
+                    "Supplied-video review for item %s did not produce usable output (%d).",
+                    item_id,
+                    exc.status_code,
+                )
             with self.lock:
                 current = self.get(identifier, hydrate=False)
                 target = next(i for i in current.items if i.id == item_id)

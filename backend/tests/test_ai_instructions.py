@@ -11,8 +11,8 @@ import pytest
 from pydantic import ValidationError
 
 from backend.batch_titles import BatchTitles
-from backend.highlight_models import PROMPT_VERSION, HighlightError, HighlightRequest
-from backend.highlight_provider import INSTRUCTIONS, OpenAIHighlights
+from backend.highlight_models import HighlightError, HighlightRequest
+from backend.highlight_provider import DISCOVERY_INSTRUCTIONS, OpenAIHighlights
 from backend.highlight_selection import Segment, build_segments, build_windows, window_text
 from backend.project_models import ProjectSettings
 from backend.project_store import ProjectStore
@@ -55,7 +55,7 @@ def test_highlight_transport_keeps_preferences_separate_and_preserves_base_rules
 
     def respond(http_request):
         body = json.loads(http_request.content)
-        assert body["instructions"].startswith(INSTRUCTIONS)
+        assert body["instructions"].startswith(DISCOVERY_INSTRUCTIONS)
         assert "editorial preferences" in body["instructions"]
         assert notes not in body["instructions"]
         preferences, transcript = body["input"].split("\nTRANSCRIPT DATA:\n", 1)
@@ -112,14 +112,14 @@ def test_title_transport_includes_preferences_without_changing_transcript(settin
     )
 
 
-def test_instruction_cache_isolation_and_legacy_key_reuse(service):
+def test_instruction_cache_isolation_and_legacy_key_exclusion(service):
     manager, recording, transcript, provider = service
     baseline = request(transcript)
     original = finished(manager, manager.submit(recording.id, baseline).id)
     legacy_key = hashlib.sha256(
         json.dumps(
             {
-                "prompt": PROMPT_VERSION,
+                "prompt": "transcript-highlights-v4-editorial",
                 "model": manager.settings.highlight_model,
                 "output_tokens": manager.settings.highlight_output_tokens,
                 "request": baseline.model_dump(
@@ -129,7 +129,7 @@ def test_instruction_cache_isolation_and_legacy_key_reuse(service):
             sort_keys=True,
         ).encode()
     ).hexdigest()
-    assert manager.results.cached(legacy_key).id == original.id
+    assert manager.results.cached(legacy_key) is None
     custom = request(transcript, ai_instructions="Focus on advice")
     customized = finished(manager, manager.submit(recording.id, custom).id)
     assert customized.id != original.id and provider.calls == 2

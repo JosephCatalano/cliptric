@@ -80,7 +80,9 @@ export function AnalysisRange({
         <span>
           Start <strong>{clock(start)}</strong>
         </span>
-        <span>{(end - start).toFixed(1)} seconds selected</span>
+        <span className="range-duration">
+          {(end - start).toFixed(1)} seconds selected
+        </span>
         <span>
           End <strong>{clock(end)}</strong>
         </span>

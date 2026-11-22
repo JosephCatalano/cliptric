@@ -51,6 +51,7 @@ type HighlightJob = {
     | "cancelled";
   total_windows: number;
   completed_windows: number;
+  editorial_status?: "pending" | "reviewing" | "completed" | null;
   requests_made: number;
   input_tokens: number;
   output_tokens: number;
@@ -366,7 +367,9 @@ export function HighlightPanel({
           onClick={() => void update("generate")}
           variant="default"
         >
-          Find highlights / reuse results
+          {latest?.status === "failed" || latest?.status === "cancelled"
+            ? "Retry highlight analysis"
+            : "Find highlights / reuse results"}
         </Button>
         {result && (
           <Button
@@ -394,12 +397,14 @@ export function HighlightPanel({
           <p>
             {latest.status === "cancelling"
               ? "Cancelling analysis..."
-              : `Analysing transcript: ${latest.completed_windows}/${latest.total_windows} windows`}
+              : latest.editorial_status === "reviewing"
+                ? "Comparing highlights in editorial review..."
+                : `Discovering highlights: ${latest.completed_windows}/${latest.total_windows} windows`}
           </p>
           <Progress
             aria-label="Highlight analysis progress"
             value={
-              (100 * latest.completed_windows) /
+              (90 * latest.completed_windows) /
               Math.max(1, latest.total_windows)
             }
           />
@@ -436,6 +441,11 @@ export function HighlightPanel({
                 before using these moments.
               </AlertDescription>
             </Alert>
+          )}
+          {result.editorial_status !== "completed" && (
+            <p className="caption-help">
+              This saved analysis predates global editorial review.
+            </p>
           )}
           <p className="caption-help">
             Saved analysis: {result.requests_made} requests,{" "}

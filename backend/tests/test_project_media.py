@@ -12,6 +12,7 @@ from fastapi.testclient import TestClient
 import backend.jobs as jobs
 import backend.main as main
 from backend.highlight_models import ProposedHighlights, ProviderResult
+from backend.tests.editorial_fixtures import SyntheticEditorialReviewer
 from backend.tests.test_pipeline import import_video
 from backend.tests.test_pipeline import recordings as recordings
 from backend.tests.test_pipeline import settings as settings
@@ -70,6 +71,7 @@ def test_actual_caption_presets_thumbnails_trim_zip_and_reopen(
 
     monkeypatch.setattr(jobs, "write_ass", capture)
     monkeypatch.setattr(main, "OpenAIHighlights", lambda config: Provider())
+    monkeypatch.setattr(main, "EditorialReviewer", SyntheticEditorialReviewer)
     configured = replace(settings, openai_api_key="synthetic-key")
     with TestClient(main.create_app(configured), base_url="http://127.0.0.1:8765") as client:
         recording = import_video(client, recordings[True])
@@ -108,7 +110,7 @@ def test_actual_caption_presets_thumbnails_trim_zip_and_reopen(
         assert response.status_code == 202, response.text
         project = completed(client, response.json()["id"])
         item = project["items"][0]
-        assert item["export"]["headline"]["text"] == "Synthetic speech moment"
+        assert item["export"]["headline"]["text"] == "Synthetic editorial moment 0"
         original_id = item["export_id"]
         assert project["thumbnail"] and item["thumbnail"]
         preview = client.get(f"/api/projects/{project['id']}/thumbnail?item_id={item['id']}")

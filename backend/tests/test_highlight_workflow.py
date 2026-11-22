@@ -8,6 +8,7 @@ import httpx2
 from fastapi.testclient import TestClient
 
 import backend.main as main
+from backend.editorial_review import EditorialReviewer
 from backend.highlight_provider import OpenAIHighlights
 from backend.tests.test_highlights import finished
 from backend.tests.test_pipeline import await_export, import_video
@@ -36,6 +37,8 @@ def test_suggestion_review_saved_selection_and_captioned_export(
                 }
             ]
         }
+        if json.loads(request.content)["text"]["format"]["name"] == "editorial_review":
+            result["candidates"][0]["option"] = 0
         return httpx2.Response(
             200,
             json={
@@ -54,6 +57,11 @@ def test_suggestion_review_saved_selection_and_captioned_export(
         main,
         "OpenAIHighlights",
         lambda config: OpenAIHighlights(config, transport=httpx2.MockTransport(handler)),
+    )
+    monkeypatch.setattr(
+        main,
+        "EditorialReviewer",
+        lambda config: EditorialReviewer(config, transport=httpx2.MockTransport(handler)),
     )
     configured = replace(settings, openai_api_key="synthetic-key")
     with TestClient(main.create_app(configured), base_url="http://127.0.0.1:8765") as client:
@@ -119,7 +127,7 @@ def test_suggestion_review_saved_selection_and_captioned_export(
         assert completed["status"] == "succeeded", completed
         assert client.get(f"/api/clips/{completed['id']}/media").status_code == 200
         assert client.post(url, json=payload).json()["id"] == job.id
-        assert len(calls) == 1
+        assert len(calls) == 2
     with TestClient(main.create_app(configured), base_url="http://127.0.0.1:8765") as reopened:
         state = reopened.get(url).json()
         assert state["result"]["id"] == job.id

@@ -9,7 +9,8 @@ from .limits import MAX_MEDIA_SECONDS
 from .transcription_models import TranscriptionJob, clean_text
 
 ACTIVE = {"queued", "analysing", "cancelling"}
-PROMPT_VERSION = "transcript-highlights-v4-editorial"
+PROMPT_VERSION = "transcript-highlights-v6-two-stage"
+DISCOVERY_VERSION = "windowed-discovery-v1"
 WINDOW_SECONDS = 180
 OVERLAP_SECONDS = 30
 MAX_AUTO_WINDOW_SECONDS = 600
@@ -78,6 +79,10 @@ class EditorialQuality(BaseModel):
     opening_evidence: str = Field(min_length=1, max_length=120, strict=True)
     ending_evidence: str = Field(min_length=1, max_length=120, strict=True)
 
+    @property
+    def score(self) -> int:
+        return 5 * (self.hook + self.context + self.payoff + self.standalone)
+
 
 class ProposedCandidate(BaseModel):
     quality: EditorialQuality | None = None
@@ -90,13 +95,20 @@ class ProposedCandidate(BaseModel):
     evidence: str = Field(min_length=1, max_length=320, strict=True)
     category: Literal["insight", "story", "humour", "reaction", "question", "other"]
 
-    @field_validator("title", "reason", "evidence")
+    @field_validator("title", "reason")
     @classmethod
     def safe_text(cls, value: str) -> str:
         result = clean_text(value)
         if not result:
             raise ValueError("Candidate text cannot be blank.")
         return result
+
+    @field_validator("evidence")
+    @classmethod
+    def exact_evidence(cls, value: str) -> str:
+        if not clean_text(value):
+            raise ValueError("Candidate evidence cannot be blank.")
+        return value
 
 
 class ProposedHighlights(BaseModel):
@@ -124,6 +136,11 @@ class Candidate(BaseModel):
 
 
 class HighlightJob(BaseModel):
+    discovery_cache_hit: bool = False
+    editorial_status: Literal["pending", "reviewing", "completed"] | None = None
+    discovered_candidates: int = 0
+    editorial_options: int = 0
+    discovery_shortlist: list[SourceRange] = Field(default_factory=list, max_length=24)
     pool_key: str | None = None
     cache_hit: bool = False
     id: str

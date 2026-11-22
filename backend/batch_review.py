@@ -22,7 +22,11 @@ trimming. Prefer the natural complete moment, never pad, truncate a payoff or ke
 weak introductions/tangents just to preserve length. Evaluate the entire transcript,
 including its middle and end. Look for authentic humor, surprises, vulnerability,
 relatable experiences and useful insight, adapted to supported audience/genre cues.
-If no coherent spoken moment is supported, return decision review with candidate null.
+Compare the whole source with the strongest valid alternative before deciding.
+Prefer keep_full if the apparent trim would lose necessary setup, meaningful pauses,
+misdirection, a reply, or a late callback. Prefer trim only if what it removes is
+dispensable and the new beginning is clear to a viewer encountering it cold.
+If neither option delivers a coherent payoff, return decision review with candidate null.
 
 Return only the required JSON. For keep_full, candidate.first_segment and last_segment
 must be the first and last provided IDs; the app retains the complete probed duration,

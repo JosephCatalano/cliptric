@@ -17,6 +17,7 @@ from backend.highlight_models import ProposedHighlights, ProviderResult
 from backend.media import MediaInfo, RenderCancelled
 from backend.models import Recording
 from backend.storage import now
+from backend.tests.editorial_fixtures import SyntheticEditorialReviewer
 from backend.tests.test_pipeline import settings as settings
 from backend.tests.test_pipeline import tools as tools
 
@@ -117,6 +118,7 @@ def seed(manager, tmp_path):
 def context(settings, tmp_path, monkeypatch):
     provider = SyntheticProvider()
     monkeypatch.setattr(main, "OpenAIHighlights", lambda settings: provider)
+    monkeypatch.setattr(main, "EditorialReviewer", SyntheticEditorialReviewer)
     monkeypatch.setattr(main, "Media", SyntheticMedia)
     configured = replace(settings, openai_api_key="synthetic")
     with TestClient(main.create_app(configured), base_url="http://127.0.0.1:8765") as client:
