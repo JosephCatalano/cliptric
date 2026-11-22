@@ -1,0 +1,12 @@
+{
+  "videos": [
+    {
+      "id": "demo-001",
+      "highlights": [
+        {"start": 12, "end": 32, "note": "Human-selected strong reaction"},
+        {"start": 55, "end": 72, "note": "Human-selected unlucky failure"},
+        {"start": 94, "end": 106, "note": "Human-selected team reaction"}
+      ]
+    }
+  ]
+}

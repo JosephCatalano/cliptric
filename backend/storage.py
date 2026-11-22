@@ -1,0 +1,312 @@
+import json
+import sqlite3
+from contextlib import contextmanager
+from datetime import datetime, timezone
+from pathlib import Path
+from typing import Iterator
+
+from .files import remove_artifact
+from .models import Clip, ExportRequest, Recording, SelectionDraft
+
+
+def now() -> str:
+    return datetime.now(timezone.utc).isoformat()
+
+
+class DraftConflict(ValueError):
+    pass
+
+
+def _headline_snapshot(raw: str | None) -> dict | None:
+    # Old exports were rendered without fades. Keep their saved appearance distinct
+    # so an explicit project update renders the new style instead of reusing them.
+    return {"fade_ms": 0, "appearance": "classic", **json.loads(raw)} if raw is not None else None
+
+
+def _caption_snapshot(raw: str | None) -> dict | None:
+    return {"presentation_version": 1, **json.loads(raw)} if raw is not None else None
+
+
+class Store:
+    def __init__(self, root: Path, *, initialize: bool = True):
+        self.root = root
+        for directory in ("sources", "exports", "logs"):
+            (root / directory).mkdir(parents=True, exist_ok=True)
+        self.database = root / "clipping.sqlite3"
+        if initialize:
+            self.initialize()
+
+    def initialize(self) -> None:
+        with self.connection() as db:
+            version = db.execute("PRAGMA user_version").fetchone()[0]
+            if version not in (0, 1, 2, 3, 4, 5, 6):
+                raise RuntimeError("Unsupported local database version.")
+            db.executescript("""
+                CREATE TABLE IF NOT EXISTS recordings (
+                    id TEXT PRIMARY KEY, name TEXT NOT NULL, extension TEXT NOT NULL,
+                    duration REAL NOT NULL, width INTEGER NOT NULL, height INTEGER NOT NULL,
+                    has_audio INTEGER NOT NULL, size_bytes INTEGER NOT NULL, created_at TEXT NOT NULL
+                );
+                CREATE TABLE IF NOT EXISTS clips (
+                    id TEXT PRIMARY KEY, recording_id TEXT NOT NULL REFERENCES recordings(id),
+                    start REAL NOT NULL, end REAL NOT NULL, mode TEXT NOT NULL,
+                    status TEXT NOT NULL, error TEXT, duration REAL, size_bytes INTEGER,
+                    created_at TEXT NOT NULL
+                );
+                CREATE INDEX IF NOT EXISTS recordings_created ON recordings(created_at DESC, id DESC);
+                CREATE INDEX IF NOT EXISTS clips_recording_created ON clips(recording_id, created_at DESC, id DESC);
+            """)
+            # Additive caption/draft and headline tables preserve the media library.
+            db.executescript("""
+                CREATE TABLE IF NOT EXISTS selection_drafts (
+                    recording_id TEXT PRIMARY KEY REFERENCES recordings(id),
+                    payload TEXT NOT NULL, revision INTEGER NOT NULL
+                );
+                CREATE TABLE IF NOT EXISTS clip_captions (
+                    clip_id TEXT PRIMARY KEY REFERENCES clips(id),
+                    options TEXT NOT NULL, words TEXT NOT NULL
+                );
+                CREATE TABLE IF NOT EXISTS clip_headlines (
+                    clip_id TEXT PRIMARY KEY REFERENCES clips(id), options TEXT NOT NULL
+                );
+                CREATE TABLE IF NOT EXISTS clip_overlays (
+                    clip_id TEXT PRIMARY KEY REFERENCES clips(id), options TEXT NOT NULL
+                );
+                CREATE TABLE IF NOT EXISTS clip_framing (
+                    clip_id TEXT PRIMARY KEY REFERENCES clips(id), options TEXT NOT NULL
+                );
+                CREATE TABLE IF NOT EXISTS clip_quality (
+                    clip_id TEXT PRIMARY KEY REFERENCES clips(id), options TEXT NOT NULL
+                );
+                PRAGMA user_version = 6;
+            """)
+
+    @contextmanager
+    def connection(self) -> Iterator[sqlite3.Connection]:
+        db = sqlite3.connect(self.database, timeout=10)
+        db.row_factory = sqlite3.Row
+        db.execute("PRAGMA foreign_keys = ON")
+        try:
+            with db:
+                yield db
+        finally:
+            db.close()
+
+    def recover(self) -> None:
+        for path in (self.root / "exports").glob("*.cover.partial.jpg"):
+            remove_artifact(path)
+        with self.connection() as db:
+            db.execute(
+                "UPDATE clips SET status = 'failed', error = ? WHERE status IN ('queued','rendering','cancelling')",
+                ("Processing was interrupted. Create a new export to retry.",),
+            )
+        for path in (self.root / "exports").glob("*.partial.mp4"):
+            remove_artifact(path)
+        for path in (self.root / "exports").glob("*.partial.ass"):
+            remove_artifact(path)
+        for path in (self.root / "sources").glob("*.upload"):
+            remove_artifact(path)
+
+    def recordings(self, limit: int = 100, offset: int = 0) -> list[Recording]:
+        with self.connection() as db:
+            return [
+                Recording.model_validate(dict(row))
+                for row in db.execute(
+                    "SELECT * FROM recordings ORDER BY created_at DESC, id DESC LIMIT ? OFFSET ?",
+                    (limit, offset),
+                )
+            ]
+
+    def recording(self, recording_id: str) -> Recording | None:
+        with self.connection() as db:
+            row = db.execute("SELECT * FROM recordings WHERE id = ?", (recording_id,)).fetchone()
+            return Recording.model_validate(dict(row)) if row else None
+
+    def source_path(self, recording_id: str) -> Path:
+        with self.connection() as db:
+            row = db.execute(
+                "SELECT extension FROM recordings WHERE id = ?", (recording_id,)
+            ).fetchone()
+        if row is None:
+            raise FileNotFoundError("Recording not found.")
+        return self.root / "sources" / f"{recording_id}{row['extension']}"
+
+    def save_recording(self, recording: Recording, extension: str) -> None:
+        with self.connection() as db:
+            db.execute(
+                "INSERT INTO recordings VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)",
+                (
+                    recording.id,
+                    recording.name,
+                    extension,
+                    recording.duration,
+                    recording.width,
+                    recording.height,
+                    int(recording.has_audio),
+                    recording.size_bytes,
+                    recording.created_at,
+                ),
+            )
+
+    def create_clip(
+        self,
+        clip_id: str,
+        recording_id: str,
+        request: ExportRequest,
+        caption_words: list[dict] | None = None,
+    ) -> Clip:
+        with self.connection() as db:
+            db.execute(
+                "INSERT INTO clips VALUES (?, ?, ?, ?, ?, 'queued', NULL, NULL, NULL, ?)",
+                (clip_id, recording_id, request.start, request.end, request.mode, now()),
+            )
+            db.execute(
+                "INSERT INTO clip_quality VALUES (?,?)",
+                (clip_id, request.quality.model_dump_json()),
+            )
+            if request.headline is not None:
+                db.execute(
+                    "INSERT INTO clip_headlines VALUES (?, ?)",
+                    (clip_id, request.headline.model_dump_json()),
+                )
+            if request.split_layout is not None:
+                db.execute(
+                    "INSERT INTO clip_framing VALUES (?, ?)",
+                    (clip_id, request.split_layout.model_dump_json()),
+                )
+            if request.overlays:
+                db.execute(
+                    "INSERT INTO clip_overlays VALUES (?, ?)",
+                    (clip_id, json.dumps([overlay.model_dump() for overlay in request.overlays])),
+                )
+            if request.captions is not None:
+                if caption_words is None:
+                    raise ValueError("Captioned export requires a validated transcript snapshot.")
+                db.execute(
+                    "INSERT INTO clip_captions VALUES (?, ?, ?)",
+                    (clip_id, request.captions.model_dump_json(), json.dumps(caption_words)),
+                )
+        clip = self.clip(clip_id)
+        assert clip is not None
+        return clip
+
+    def clip(self, clip_id: str) -> Clip | None:
+        with self.connection() as db:
+            row = db.execute("SELECT * FROM clips WHERE id = ?", (clip_id,)).fetchone()
+            return self._clip(db, row) if row else None
+
+    @staticmethod
+    def _clip(db: sqlite3.Connection, row: sqlite3.Row) -> Clip:
+        caption = db.execute(
+            "SELECT options FROM clip_captions WHERE clip_id = ?", (row["id"],)
+        ).fetchone()
+        headline = db.execute(
+            "SELECT options FROM clip_headlines WHERE clip_id = ?", (row["id"],)
+        ).fetchone()
+        overlays = db.execute(
+            "SELECT options FROM clip_overlays WHERE clip_id = ?", (row["id"],)
+        ).fetchone()
+        framing = db.execute(
+            "SELECT options FROM clip_framing WHERE clip_id = ?", (row["id"],)
+        ).fetchone()
+        quality = db.execute(
+            "SELECT options FROM clip_quality WHERE clip_id=?", (row["id"],)
+        ).fetchone()
+        return Clip.model_validate(
+            {
+                **dict(row),
+                "captions": _caption_snapshot(caption[0] if caption else None),
+                "headline": _headline_snapshot(headline[0] if headline else None),
+                "overlays": json.loads(overlays[0]) if overlays else [],
+                "split_layout": json.loads(framing[0]) if framing else None,
+                "quality": json.loads(quality[0]) if quality else {},
+            }
+        )
+
+    def clips(self, recording_id: str, limit: int = 100, offset: int = 0) -> list[Clip]:
+        with self.connection() as db:
+            return [
+                Clip.model_validate(
+                    {
+                        **dict(row),
+                        "headline": _headline_snapshot(row["headline_options"]),
+                        "split_layout": json.loads(row["framing_options"])
+                        if row["framing_options"]
+                        else None,
+                        "quality": json.loads(row["quality_options"])
+                        if row["quality_options"]
+                        else {},
+                        "overlays": json.loads(row["overlay_options"])
+                        if row["overlay_options"]
+                        else [],
+                        "captions": _caption_snapshot(row["caption_options"]),
+                    }
+                )
+                for row in db.execute(
+                    "SELECT clips.*, clip_captions.options AS caption_options, clip_headlines.options AS headline_options, clip_overlays.options AS overlay_options, clip_framing.options AS framing_options, clip_quality.options AS quality_options FROM clips "
+                    "LEFT JOIN clip_captions ON clips.id = clip_captions.clip_id "
+                    "LEFT JOIN clip_headlines ON clips.id = clip_headlines.clip_id "
+                    "LEFT JOIN clip_overlays ON clips.id = clip_overlays.clip_id "
+                    "LEFT JOIN clip_framing ON clips.id = clip_framing.clip_id "
+                    "LEFT JOIN clip_quality ON clips.id = clip_quality.clip_id "
+                    "WHERE recording_id = ? ORDER BY created_at DESC, id DESC LIMIT ? OFFSET ?",
+                    (recording_id, limit, offset),
+                )
+            ]
+
+    def update_clip(
+        self,
+        clip_id: str,
+        status: str,
+        error: str | None = None,
+        duration: float | None = None,
+        size_bytes: int | None = None,
+    ) -> None:
+        with self.connection() as db:
+            db.execute(
+                "UPDATE clips SET status = ?, error = ?, duration = ?, size_bytes = ? WHERE id = ?",
+                (status, error, duration, size_bytes, clip_id),
+            )
+
+    def export_path(self, clip_id: str) -> Path:
+        return self.root / "exports" / f"{clip_id}.mp4"
+
+    def caption_words(self, clip_id: str) -> list[dict] | None:
+        with self.connection() as db:
+            row = db.execute(
+                "SELECT words FROM clip_captions WHERE clip_id = ?", (clip_id,)
+            ).fetchone()
+            return json.loads(row[0]) if row else None
+
+    def draft(self, recording: Recording) -> SelectionDraft:
+        with self.connection() as db:
+            row = db.execute(
+                "SELECT payload FROM selection_drafts WHERE recording_id = ?", (recording.id,)
+            ).fetchone()
+            return (
+                SelectionDraft.model_validate_json(row[0])
+                if row
+                else SelectionDraft(
+                    start=0,
+                    end=min(recording.duration, 30),
+                    caption_preset="impact",
+                    caption_position="auto",
+                    headline={"text": Path(recording.name).stem[:120] or "Your moment"},
+                )
+            )
+
+    def save_draft(self, recording_id: str, draft: SelectionDraft) -> SelectionDraft:
+        saved = draft.model_copy(update={"revision": draft.revision + 1})
+        with self.connection() as db:
+            db.execute("BEGIN IMMEDIATE")
+            row = db.execute(
+                "SELECT revision FROM selection_drafts WHERE recording_id = ?", (recording_id,)
+            ).fetchone()
+            if (row[0] if row else 0) != draft.revision:
+                raise DraftConflict("Selection changed in another window. Reload it before saving.")
+            db.execute(
+                "INSERT INTO selection_drafts VALUES (?, ?, ?) ON CONFLICT(recording_id) "
+                "DO UPDATE SET payload = excluded.payload, revision = excluded.revision",
+                (recording_id, saved.model_dump_json(), saved.revision),
+            )
+        return saved

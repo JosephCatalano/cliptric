@@ -1,0 +1,13 @@
+fastapi==0.163.1
+uvicorn==0.54.0
+pydantic==2.14.3
+anyio==4.16.0
+faster-whisper==1.2.1
+ctranslate2==4.9.0
+huggingface-hub==2.4.0
+httpx2==2.16.2
+python-dotenv==1.2.4
+yt-dlp==2026.10.26
+yt-dlp-ejs==0.8.0
+opencv-python-headless==4.14.0.94
+numpy==2.5.5

@@ -1,0 +1,16 @@
+.venv/
+.claude/skills/
+.tools/
+data/
+node_modules/
+.next/
+.next-e2e/
+out/
+__pycache__/
+.pytest_cache/
+.ruff_cache/
+.env*
+!.env.example
+playwright-report/
+test-results/
+*.tsbuildinfo

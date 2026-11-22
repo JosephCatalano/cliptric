@@ -1,0 +1,25 @@
+{
+  "video_id": "demo-001",
+  "candidates": [
+    {
+      "id": "clip-001",
+      "start": 12,
+      "end": 32,
+      "score": 87,
+      "title": "A car jumps an entire bridge",
+      "category": "unexpected-outcome",
+      "reason": "Clear setup, surprise, and replay discussion; actual visuals still need review.",
+      "evidence": "that car just jumped the entire bridge!"
+    },
+    {
+      "id": "clip-002",
+      "start": 55,
+      "end": 72,
+      "score": 74,
+      "title": "The worst-timed game crash",
+      "category": "funny-reaction",
+      "reason": "An understandable mishap with a concise reaction; confirm gameplay footage.",
+      "evidence": "The game crashed exactly when we reached the finish line."
+    }
+  ]
+}
