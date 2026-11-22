@@ -113,6 +113,7 @@ export type ProjectSettings = {
   analysis_end: number;
   duration_mode: "auto" | "manual" | "full";
   headline_enabled?: boolean;
+  headline_position?: "auto" | "upper" | "centre";
   min_seconds: number;
   max_seconds: number;
   max_clips: number;
@@ -197,6 +198,7 @@ export type ProjectItem = {
     status: string;
     error: string | null;
     duration?: number | null;
+    created_at?: string;
   } | null;
 };
 export type Project = {

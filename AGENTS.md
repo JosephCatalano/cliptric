@@ -18,6 +18,7 @@ Follow C:\Users\CatalaJo\projects\user-coding-preferences.md and applicable nest
 - Compose existing shadcn components before creating new controls. Use their variants, semantic colour pairs, focus/disabled states, radii, typography, and Tailwind spacing. Do not rebuild standard controls or override their colours with page-specific CSS. Custom components are appropriate for media-specific behaviour not provided by shadcn, such as filmstrip handles and caption-content previews.
 - Preserve native form contracts, explicit publishing consent, keyboard navigation, and mounted editor state when changing presentation. Caption preview colours represent exported video content and are independent of the interface theme.
 - The app homepage is a working creation/resume workspace. Navigation labels are Home, Projects, Clip editor, Schedule, and Accounts; existing routes remain stable. Use actual saved media/projects and honest loading/empty/error states rather than sample projects, invented metrics, or unavailable roadmap features. README.md owns the homepage layout and workflow details.
+- Workspace changes must preserve mounted edits and explicit selection across filters. Validate all bulk targets before any commit, capture bounded pre-edit versions, and keep Posted/publishing approvals independent of restore. Presets retain source-range independence and never restore sharing consent; browser setup recovery must validate stored data and reuse creation IDs after uncertain outcomes. README owns search, review, recovery and notification contracts.
 
 ## Skills
 

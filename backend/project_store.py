@@ -1,9 +1,10 @@
 import sqlite3
+from uuid import uuid4
 
 from .highlight_models import SourceRange
 from .highlight_selection import merge_ranges
-from .project_models import ACTIVE, Project
-from .storage import Store
+from .project_models import ACTIVE, ItemEdit, Project
+from .storage import Store, now
 
 
 class ProjectStore:
@@ -19,6 +20,12 @@ class ProjectStore:
                     created_at TEXT NOT NULL, status TEXT NOT NULL, payload TEXT NOT NULL
                 );
                 CREATE INDEX IF NOT EXISTS projects_created ON projects(created_at DESC,id DESC);
+                CREATE TABLE IF NOT EXISTS project_presets (id TEXT PRIMARY KEY, name TEXT NOT NULL, workflow TEXT NOT NULL, payload TEXT NOT NULL, created_at TEXT NOT NULL);
+                CREATE TABLE IF NOT EXISTS project_item_versions (
+                    id TEXT PRIMARY KEY, project_id TEXT NOT NULL REFERENCES projects(id) ON DELETE CASCADE,
+                    item_id TEXT NOT NULL, created_at TEXT NOT NULL, export_id TEXT, payload TEXT NOT NULL
+                );
+                CREATE INDEX IF NOT EXISTS project_item_versions_item ON project_item_versions(project_id,item_id,created_at DESC);
             """)
             columns = db.execute("PRAGMA table_info(projects)").fetchall()
             if next(column["notnull"] for column in columns if column["name"] == "recording_id"):
@@ -56,13 +63,53 @@ class ProjectStore:
             row = db.execute("SELECT payload FROM projects WHERE id=?", (identifier,)).fetchone()
             return Project.model_validate_json(row[0]) if row else None
 
-    def list(self, limit=50, offset=0) -> list[Project]:
+    def list(self, limit=50, offset=0, *, search="", status="all", sort="newest") -> list[Project]:
+        order = {
+            "newest": "created_at DESC,id DESC",
+            "oldest": "created_at,id",
+            "title": "lower(json_extract(payload,'$.title')),id",
+        }[sort]
+        statuses = sorted(ACTIVE) if status == "processing" else [status]
+        predicate = "" if status == "all" else f" AND status IN ({','.join('?' for _ in statuses)})"
         with self.store.connection() as db:
             return [
                 Project.model_validate_json(row[0])
                 for row in db.execute(
-                    "SELECT payload FROM projects ORDER BY created_at DESC,id DESC LIMIT ? OFFSET ?",
-                    (limit, offset),
+                    "SELECT payload FROM projects WHERE instr(lower(json_extract(payload,'$.title')),lower(?))>0"
+                    + predicate
+                    + " ORDER BY "
+                    + order
+                    + " LIMIT ? OFFSET ?",
+                    (search, *([] if status == "all" else statuses), limit, offset),
+                )
+            ]
+
+    def remember_version(self, project, item_id, db):
+        item = next(i for i in project.items if i.id == item_id)
+        edit = ItemEdit.model_validate(
+            {key: getattr(item, key) for key in ItemEdit.model_fields if key != "auto_presentation"}
+        )
+        db.execute(
+            "INSERT INTO project_item_versions VALUES(?,?,?,?,?,?)",
+            (str(uuid4()), project.id, item.id, now(), item.export_id, edit.model_dump_json()),
+        )
+        db.execute(
+            "DELETE FROM project_item_versions WHERE project_id=? AND item_id=? AND id NOT IN (SELECT id FROM project_item_versions WHERE project_id=? AND item_id=? ORDER BY created_at DESC,id DESC LIMIT 50)",
+            (project.id, item.id, project.id, item.id),
+        )
+
+    def versions(self, project_id, item_id):
+        with self.store.connection() as db:
+            return [
+                {
+                    **dict(row),
+                    "settings": ItemEdit.model_validate_json(row["payload"]).model_dump(
+                        mode="json"
+                    ),
+                }
+                for row in db.execute(
+                    "SELECT * FROM project_item_versions WHERE project_id=? AND item_id=? ORDER BY created_at DESC,id DESC LIMIT 50",
+                    (project_id, item_id),
                 )
             ]
 

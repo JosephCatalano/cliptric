@@ -8,6 +8,26 @@ export class ApiError extends Error {
   }
 }
 
+export async function creationFingerprint(value: unknown): Promise<string> {
+  const bytes = await crypto.subtle.digest(
+    "SHA-256",
+    new TextEncoder().encode(
+      JSON.stringify(value, (_key, entry) =>
+        entry && typeof entry === "object" && !Array.isArray(entry)
+          ? Object.fromEntries(
+              Object.entries(entry)
+                .filter(([, value]) => value !== undefined)
+                .sort(([a], [b]) => (a < b ? -1 : a > b ? 1 : 0)),
+            )
+          : entry,
+      ),
+    ),
+  );
+  return Array.from(new Uint8Array(bytes), (byte) =>
+    byte.toString(16).padStart(2, "0"),
+  ).join("");
+}
+
 export async function api<T>(
   path: string,
   options?: RequestInit,
@@ -48,7 +68,34 @@ export async function api<T>(
       response.status,
     );
   }
-  return response.json() as Promise<T>;
+  const value: unknown = await response.json();
+  if (
+    typeof window !== "undefined" &&
+    options?.method &&
+    ["POST", "PUT", "PATCH"].includes(options.method.toUpperCase()) &&
+    value &&
+    typeof value === "object" &&
+    "id" in value &&
+    typeof value.id === "string" &&
+    "status" in value &&
+    typeof value.status === "string" &&
+    "items" in value &&
+    Array.isArray(value.items) &&
+    "settings" in value
+  ) {
+    window.dispatchEvent(
+      new CustomEvent("cliptric:project-processing", {
+        detail: {
+          project: value,
+          generation:
+            path === "/api/projects" ||
+            path.endsWith("/resume") ||
+            path.endsWith("/more-clips"),
+        },
+      }),
+    );
+  }
+  return value as T;
 }
 
 export const message = (error: unknown) =>

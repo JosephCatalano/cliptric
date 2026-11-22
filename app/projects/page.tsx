@@ -7,6 +7,12 @@ import {
   CardContent,
 } from "@/components/ui/card";
 
+import { Input } from "@/components/ui/input";
+import { Field, FieldGroup, FieldLabel } from "@/components/ui/field";
+import {
+  NativeSelect,
+  NativeSelectOption,
+} from "@/components/ui/native-select";
 import { Button } from "@/components/ui/button";
 import { Alert, AlertDescription } from "@/components/ui/alert";
 import { Progress } from "@/components/ui/progress";
@@ -36,13 +42,16 @@ export default function ProjectsPage() {
   const [refresh, setRefresh] = useState(0);
   const [offset, setOffset] = useState(0);
   const [more, setMore] = useState(false);
+  const [search, setSearch] = useState("");
+  const [status, setStatus] = useState("all");
+  const [sort, setSort] = useState("newest");
   useEffect(() => {
     const controller = new AbortController();
     let timer: ReturnType<typeof setTimeout>;
     async function load() {
       try {
         const values = await api<Project[]>(
-          `/api/projects?limit=50&offset=${offset}`,
+          `/api/projects?${new URLSearchParams({ limit: "50", offset: String(offset), search, status, sort })}`,
           { signal: controller.signal },
         );
         if (controller.signal.aborted) return;
@@ -63,12 +72,12 @@ export default function ProjectsPage() {
         }
       }
     }
-    void load();
+    timer = setTimeout(load, search ? 250 : 0);
     return () => {
       controller.abort();
       clearTimeout(timer);
     };
-  }, [offset, refresh]);
+  }, [offset, refresh, search, status, sort]);
   return (
     <section className="project-workspace">
       <header className="project-heading">
@@ -88,6 +97,65 @@ export default function ProjectsPage() {
           </Button>
         </div>
       </header>
+      <FieldGroup className="grid gap-4 sm:grid-cols-3">
+        <Field>
+          <FieldLabel htmlFor="project-search">Search projects</FieldLabel>
+          <Input
+            id="project-search"
+            type="search"
+            value={search}
+            maxLength={120}
+            placeholder="Project name"
+            onChange={(event) => {
+              setSearch(event.target.value);
+              setOffset(0);
+              setFetching(true);
+            }}
+          />
+        </Field>
+        <Field>
+          <FieldLabel htmlFor="project-status">Status</FieldLabel>
+          <NativeSelect
+            id="project-status"
+            value={status}
+            onChange={(event) => {
+              setStatus(event.target.value);
+              setOffset(0);
+              setFetching(true);
+            }}
+          >
+            <NativeSelectOption value="all">All projects</NativeSelectOption>
+            <NativeSelectOption value="processing">
+              Processing
+            </NativeSelectOption>
+            <NativeSelectOption value="ready">Ready</NativeSelectOption>
+            <NativeSelectOption value="partial">
+              Partly ready
+            </NativeSelectOption>
+            <NativeSelectOption value="failed">Failed</NativeSelectOption>
+            <NativeSelectOption value="interrupted">
+              Interrupted
+            </NativeSelectOption>
+            <NativeSelectOption value="cancelled">Cancelled</NativeSelectOption>
+          </NativeSelect>
+        </Field>
+        <Field>
+          <FieldLabel htmlFor="project-sort">Sort</FieldLabel>
+          <NativeSelect
+            id="project-sort"
+            value={sort}
+            onChange={(event) => {
+              setSort(event.target.value);
+              setOffset(0);
+              setFetching(true);
+            }}
+          >
+            <NativeSelectOption value="newest">Newest first</NativeSelectOption>
+            <NativeSelectOption value="oldest">Oldest first</NativeSelectOption>
+            <NativeSelectOption value="title">Name</NativeSelectOption>
+          </NativeSelect>
+        </Field>
+      </FieldGroup>
       {error ? (
         <Alert role="alert" variant="destructive">
           <AlertDescription>{error}</AlertDescription>
@@ -123,7 +191,11 @@ export default function ProjectsPage() {
         <Empty>
           <EmptyHeader>
             <EmptyTitle>
-              {offset ? "No older projects" : "Create your first clips"}
+              {search || status !== "all"
+                ? "No matching projects"
+                : offset
+                  ? "No older projects"
+                  : "Create your first clips"}
             </EmptyTitle>
             <EmptyDescription>
               Start with an uploaded video, YouTube link or Twitch VOD link,
@@ -131,6 +203,19 @@ export default function ProjectsPage() {
             </EmptyDescription>
           </EmptyHeader>
           <EmptyContent>
+            {search || status !== "all" ? (
+              <Button
+                variant="outline"
+                onClick={() => {
+                  setSearch("");
+                  setStatus("all");
+                  setOffset(0);
+                  setFetching(true);
+                }}
+              >
+                Clear filters
+              </Button>
+            ) : null}
             <Button asChild>
               <Link href="/">New project</Link>
             </Button>

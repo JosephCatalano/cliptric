@@ -1,5 +1,11 @@
 "use client";
 
+import { ProjectPresets } from "./project-presets";
+import {
+  useSetupDraft,
+  SetupDraftNotice,
+  type SetupDraft,
+} from "./setup-draft";
 import { Button } from "@/components/ui/button";
 import { Alert, AlertDescription } from "@/components/ui/alert";
 import { FieldSet, FieldLabel, Field, FieldGroup } from "@/components/ui/field";
@@ -21,7 +27,7 @@ import {
 import Link from "next/link";
 import Image from "next/image";
 import { useRouter } from "next/navigation";
-import { api, message } from "../../lib/client-api";
+import { api, message, creationFingerprint } from "../../lib/client-api";
 import {
   type Project,
   type ProjectSettings,
@@ -85,6 +91,10 @@ export function NewProject({
   const [refresh, setRefresh] = useState(0);
   const player = useRef<HTMLVideoElement>(null);
   const requestToken = useRef<{ signature: string; id: string } | null>(null);
+  const [savedToken, setSavedToken] = useState<{
+    signature: string;
+    id: string;
+  } | null>(null);
   const downloaded = useCallback((recording: Recording) => {
     const duration = recording.duration;
     setSettings((current) => ({
@@ -132,6 +142,39 @@ export function NewProject({
       });
     return () => controller.abort();
   }, [recordingId, youtube, refresh]);
+  const draft = useSetupDraft(
+    `cliptric:setup:${youtube ? "link" : "file"}:${recordingId}`,
+    {
+      title,
+      settings,
+      recording_ids: [],
+      creation_token: savedToken?.id,
+      creation_signature: savedToken?.signature,
+    },
+    source !== null && !busy,
+  );
+  function restoreSetup(value: SetupDraft) {
+    const duration = source!.duration;
+    setTitle(value.title);
+    setSettings({
+      ...value.settings,
+      duration_mode:
+        value.settings.duration_mode === "full"
+          ? "auto"
+          : value.settings.duration_mode,
+      analysis_start: Math.min(
+        value.settings.analysis_start,
+        Math.max(0, duration - 8),
+      ),
+      analysis_end: Math.min(value.settings.analysis_end, duration),
+    });
+    setEmphasisText(value.settings.emphasis_words.join(", "));
+    requestToken.current =
+      value.creation_token && value.creation_signature
+        ? { id: value.creation_token, signature: value.creation_signature }
+        : null;
+    setSavedToken(requestToken.current);
+  }
   function preview(value: number) {
     const video = player.current;
     if (video && video.readyState >= 1) {
@@ -150,15 +193,36 @@ export function NewProject({
       title,
       settings,
     };
-    const signature = JSON.stringify(payload);
+    draft.persistCurrent();
+    let signature: string;
+    try {
+      const prepared = await api<SetupDraft>("/api/setup/validate", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          title,
+          settings: payload.settings,
+          recording_ids: [],
+        }),
+      });
+      payload.settings = prepared.settings;
+      signature = await creationFingerprint(payload);
+    } catch (error) {
+      setError(message(error));
+      setBusy(false);
+      return;
+    }
     if (requestToken.current?.signature !== signature)
       requestToken.current = { signature, id: crypto.randomUUID() };
+    setSavedToken(requestToken.current);
+    draft.persistToken(requestToken.current);
     try {
       await api<Project>("/api/projects", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ ...payload, id: requestToken.current.id }),
       });
+      draft.clear();
       router.push("/projects");
     } catch (error) {
       setError(
@@ -201,7 +265,52 @@ export function NewProject({
       ) : null}
       {source ? (
         <form onSubmit={create}>
+          <SetupDraftNotice draft={draft} onRestore={restoreSetup} />
           <FieldSet disabled={busy}>
+            <ProjectPresets
+              workflow="long"
+              settings={settings}
+              disabled={busy}
+              onApply={(value) => {
+                setSettings(value);
+                setEmphasisText(value.emphasis_words.join(", "));
+              }}
+            />
+            <Field orientation="horizontal">
+              <Checkbox
+                id={`${fieldId}-headline`}
+                checked={settings.headline_enabled ?? true}
+                onCheckedChange={(value) =>
+                  setSettings((current) => ({
+                    ...current,
+                    headline_enabled: value === true,
+                  }))
+                }
+              />
+              <FieldLabel htmlFor={`${fieldId}-headline`}>
+                Opening headline
+              </FieldLabel>
+            </Field>
+            <Field>
+              <FieldLabel htmlFor={`${fieldId}-headline-position`}>
+                Headline position
+              </FieldLabel>
+              <NativeSelect
+                id={`${fieldId}-headline-position`}
+                value={settings.headline_position ?? "auto"}
+                onChange={(event) =>
+                  setSettings((current) => ({
+                    ...current,
+                    headline_position: event.target
+                      .value as ProjectSettings["headline_position"],
+                  }))
+                }
+              >
+                <NativeSelectOption value="auto">Auto</NativeSelectOption>
+                <NativeSelectOption value="upper">Upper</NativeSelectOption>
+                <NativeSelectOption value="centre">Centre</NativeSelectOption>
+              </NativeSelect>
+            </Field>
             <Field className="project-title-field">
               <FieldLabel htmlFor={`${fieldId}-1`}>Project title</FieldLabel>
               <Input

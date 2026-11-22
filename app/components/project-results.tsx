@@ -1,4 +1,16 @@
 "use client";
+import {
+  Empty,
+  EmptyHeader,
+  EmptyTitle,
+  EmptyDescription,
+  EmptyContent,
+} from "@/components/ui/empty";
+import { ClipReview } from "./clip-review";
+import { ClipVersions } from "./clip-versions";
+import { ClipBulkActions } from "./clip-bulk-actions";
+import { useUnsavedEdits } from "./use-unsaved-edits";
+import { reviewNeeded } from "@/lib/project-edit";
 import { useRouter } from "next/navigation";
 import { DeleteAction } from "./delete-action";
 import { PostedCheckbox } from "./posted-checkbox";
@@ -36,7 +48,7 @@ import {
 } from "@/components/ui/native-select";
 import { DownloadIcon, PlayIcon, ScissorsIcon } from "lucide-react";
 
-import { useId, useEffect, useState, type FormEvent } from "react";
+import { useId, useRef, useEffect, useState, type FormEvent } from "react";
 import Image from "next/image";
 import Link from "next/link";
 import { api, ApiError, message } from "../../lib/client-api";
@@ -77,6 +89,11 @@ export function ProjectResults({ id }: { id: string }) {
   const [retryAnalysis, setRetryAnalysis] = useState(false);
   const [retryTitles, setRetryTitles] = useState(false);
   const [selected, setSelected] = useState<Set<string>>(new Set());
+  const [clipSearch, setClipSearch] = useState("");
+  const [clipFilter, setClipFilter] = useState("all");
+  const [clipSort, setClipSort] = useState("ai");
+  const [reviewId, setReviewId] = useState<string | null>(null);
+  const [reviewIds, setReviewIds] = useState<string[]>([]);
   useEffect(() => {
     const controller = new AbortController();
     let timer: ReturnType<typeof setTimeout>;
@@ -103,7 +120,7 @@ export function ProjectResults({ id }: { id: string }) {
       clearTimeout(timer);
     };
   }, [id, refresh]);
-  async function action(name: "cancel" | "resume") {
+  async function action(name: "cancel" | "resume", allowAiRetry = false) {
     setBusy(true);
     setError("");
     try {
@@ -112,7 +129,10 @@ export function ProjectResults({ id }: { id: string }) {
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify(
           name === "resume"
-            ? { retry_analysis: retryAnalysis, retry_titles: retryTitles }
+            ? {
+                retry_analysis: allowAiRetry && retryAnalysis,
+                retry_titles: allowAiRetry && retryTitles,
+              }
             : {},
         ),
       });
@@ -129,6 +149,39 @@ export function ProjectResults({ id }: { id: string }) {
   const running = project ? active(project.status) : false;
   const readyItems = project?.items.filter(deliverable) ?? [];
   const selectedReady = readyItems.filter((i) => selected.has(i.id));
+  const orderedItems = [...(project?.items ?? [])].sort((a, b) => {
+    const duration = (item: ProjectItem) =>
+      item.export?.duration ?? item.end - item.start;
+    if (clipSort === "shortest") return duration(a) - duration(b);
+    if (clipSort === "longest") return duration(b) - duration(a);
+    if (clipSort === "newest")
+      return (b.export?.created_at ?? "").localeCompare(
+        a.export?.created_at ?? "",
+      );
+    return 0;
+  });
+  const visibleItems = orderedItems.filter(
+    (item) =>
+      (!clipSearch ||
+        `${item.title} ${item.source_name ?? ""}`
+          .toLowerCase()
+          .includes(clipSearch.toLowerCase())) &&
+      (clipFilter === "all" ||
+        (clipFilter === "posted" && item.posted) ||
+        (clipFilter === "unposted" && !item.posted) ||
+        (clipFilter === "ready" && deliverable(item)) ||
+        (clipFilter === "failed" &&
+          Boolean(item.error || item.export?.status === "failed")) ||
+        (clipFilter === "review" && reviewNeeded(item))),
+  );
+  const visibleIds = new Set(visibleItems.map((item) => item.id));
+  function openReview(id: string) {
+    document
+      .querySelectorAll<HTMLVideoElement>(".clip-gallery video")
+      .forEach((video) => video.pause());
+    setReviewIds(visibleItems.map((item) => item.id));
+    setReviewId(id);
+  }
   return (
     <section className="project-workspace project-results-workspace">
       <header className="project-heading">
@@ -275,13 +328,28 @@ export function ProjectResults({ id }: { id: string }) {
                 onClick={() => void action("resume")}
                 variant="outline"
               >
-                Resume / update clip exports
+                Retry / update exports
               </Button>
             )}
+            {!running && (retryAnalysis || retryTitles) ? (
+              <Button
+                disabled={busy}
+                onClick={() => void action("resume", true)}
+              >
+                Run approved AI retry
+              </Button>
+            ) : null}
             <Button onClick={() => setRefresh((v) => v + 1)} variant="outline">
               Refresh
             </Button>
           </div>
+          {!running ? (
+            <p className="text-sm text-muted-foreground">
+              Export retries reuse saved analysis. Select the approval below to
+              retry unfinished AI work; another AI request may incur API
+              charges.
+            </p>
+          ) : null}
           {!running &&
           project.generate_titles &&
           project.items.some(
@@ -328,14 +396,102 @@ export function ProjectResults({ id }: { id: string }) {
               running. Completed clips can be downloaded below.
             </p>
           ) : null}
+          <FieldGroup className="grid gap-4 sm:grid-cols-3">
+            <Field>
+              <FieldLabel htmlFor={`${fieldId}-clip-search`}>
+                Search clips
+              </FieldLabel>
+              <Input
+                id={`${fieldId}-clip-search`}
+                type="search"
+                value={clipSearch}
+                onChange={(event) => setClipSearch(event.target.value)}
+                placeholder="Title or source"
+              />
+            </Field>
+            <Field>
+              <FieldLabel htmlFor={`${fieldId}-clip-filter`}>Show</FieldLabel>
+              <NativeSelect
+                id={`${fieldId}-clip-filter`}
+                value={clipFilter}
+                onChange={(event) => setClipFilter(event.target.value)}
+              >
+                <NativeSelectOption value="all">All clips</NativeSelectOption>
+                <NativeSelectOption value="unposted">
+                  Unposted
+                </NativeSelectOption>
+                <NativeSelectOption value="posted">Posted</NativeSelectOption>
+                <NativeSelectOption value="ready">Ready</NativeSelectOption>
+                <NativeSelectOption value="failed">Failed</NativeSelectOption>
+                <NativeSelectOption value="review">
+                  Needs review
+                </NativeSelectOption>
+              </NativeSelect>
+            </Field>
+            <Field>
+              <FieldLabel htmlFor={`${fieldId}-clip-sort`}>
+                Sort clips
+              </FieldLabel>
+              <NativeSelect
+                id={`${fieldId}-clip-sort`}
+                value={clipSort}
+                onChange={(event) => setClipSort(event.target.value)}
+              >
+                <NativeSelectOption value="ai">
+                  Original AI / source order
+                </NativeSelectOption>
+                <NativeSelectOption value="newest">
+                  Newest export
+                </NativeSelectOption>
+                <NativeSelectOption value="shortest">
+                  Shortest first
+                </NativeSelectOption>
+                <NativeSelectOption value="longest">
+                  Longest first
+                </NativeSelectOption>
+              </NativeSelect>
+            </Field>
+          </FieldGroup>
+          <div className="flex flex-wrap items-center gap-3">
+            <p role="status">
+              Showing {visibleItems.length} of {project.items.length} clips.{" "}
+              {selected.size} selected across all filters.
+            </p>
+            <Button
+              variant="outline"
+              disabled={!visibleItems.length}
+              onClick={() => openReview(visibleItems[0].id)}
+            >
+              Review visible clips
+            </Button>
+          </div>
+          {!visibleItems.length && project.items.length ? (
+            <Empty>
+              <EmptyHeader>
+                <EmptyTitle>No matching clips</EmptyTitle>
+                <EmptyDescription>
+                  Change the search or filter to see more clips. Your selections
+                  are kept.
+                </EmptyDescription>
+              </EmptyHeader>
+              <EmptyContent>
+                <Button
+                  variant="outline"
+                  onClick={() => {
+                    setClipSearch("");
+                    setClipFilter("all");
+                  }}
+                >
+                  Clear filters
+                </Button>
+              </EmptyContent>
+            </Empty>
+          ) : null}
           <section aria-label="Batch downloads">
             <h2>Clips ({project.items.length})</h2>
             <p>
-              {readyItems.length} ready. ZIPs contain ready outputs only, plus a
-              manifest listing included and excluded clips. Maximum ZIP size: 2
-              GiB. Downloads reuse completed renders. To add opening headlines
-              to older clips, choose Resume / update clip exports. Previous
-              videos remain in export history.
+              {readyItems.length} ready. Download all ready clips or choose a
+              selection. ZIP downloads are limited to 2 GiB.
             </p>
             <div className="project-actions">
               {readyItems.length ? (
@@ -358,11 +514,14 @@ export function ProjectResults({ id }: { id: string }) {
               <Button
                 disabled={!project.items.length}
                 onClick={() =>
-                  setSelected(new Set(project.items.map((i) => i.id)))
+                  setSelected(
+                    (previous) =>
+                      new Set([...previous, ...visibleItems.map((i) => i.id)]),
+                  )
                 }
                 variant="outline"
               >
-                Select all
+                Select visible clips
               </Button>
               <Button
                 disabled={!selected.size}
@@ -381,6 +540,33 @@ export function ProjectResults({ id }: { id: string }) {
               manual selection to make more clips.
             </p>
           ) : null}
+          <ClipBulkActions
+            project={project}
+            selected={selected}
+            disabled={running || busy}
+            onBusy={setBusy}
+            onSaved={(value) => {
+              setProject(value);
+              setRefresh((v) => v + 1);
+            }}
+          />
+          {reviewId ? (
+            <ClipReview
+              project={project}
+              items={reviewIds.flatMap((id) => {
+                const item = project.items.find((item) => item.id === id);
+                return item ? [item] : [];
+              })}
+              currentId={reviewId}
+              onCurrent={setReviewId}
+              onClose={() => setReviewId(null)}
+              locked={running || busy}
+              onSaved={(value) => {
+                setProject(value);
+                setRefresh((v) => v + 1);
+              }}
+            />
+          ) : null}
           <BatchCaptionStyle
             key={project.id}
             project={project}
@@ -393,9 +579,11 @@ export function ProjectResults({ id }: { id: string }) {
             }}
           />
           <div className="clip-gallery">
-            {project.items.map((item) => (
+            {orderedItems.map((item) => (
               <ClipCard
                 key={item.id}
+                hidden={!visibleIds.has(item.id)}
+                onReview={() => openReview(item.id)}
                 project={project}
                 item={item}
                 locked={running || busy}
@@ -450,6 +638,8 @@ export function ProjectResults({ id }: { id: string }) {
 
 function ClipCard({
   project: savedProject,
+  hidden,
+  onReview,
   item,
   locked,
   selected,
@@ -459,6 +649,8 @@ function ClipCard({
   onPosted,
 }: {
   project: Project;
+  hidden: boolean;
+  onReview(): void;
   item: ProjectItem;
   locked: boolean;
   selected: boolean;
@@ -503,7 +695,13 @@ function ClipCard({
   );
   const [error, setError] = useState("");
   const [saving, setSaving] = useState(false);
+  const [dirty, setDirty] = useState(false);
+  useUnsavedEdits(dirty);
   const [playing, setPlaying] = useState(false);
+  const clipPlayer = useRef<HTMLVideoElement>(null);
+  useEffect(() => {
+    if (hidden) clipPlayer.current?.pause();
+  }, [hidden]);
   const [failedThumbnail, setFailedThumbnail] = useState<string | null>(null);
   const thumbnailUrl = `/api/projects/${project.id}/thumbnail?item_id=${item.id}&revision=${item.revision}&export=${encodeURIComponent(item.thumbnail_export_id ?? item.export_id ?? "")}`;
   const available = ready(item);
@@ -545,6 +743,7 @@ function ClipCard({
         },
       );
       setEditing(null);
+      setDirty(false);
       setPlaying(false);
       onSaved(value);
     } catch (error) {
@@ -554,9 +753,13 @@ function ClipCard({
     }
   }
   return (
-    <Card className="project-card">
+    <Card
+      className="project-card"
+      style={hidden ? { display: "none" } : undefined}
+    >
       {playing && available ? (
         <video
+          ref={clipPlayer}
           className="project-preview"
           controls
           autoPlay
@@ -722,6 +925,20 @@ function ClipCard({
           </Alert>
         ) : null}
         <div className="project-actions">
+          <Button
+            type="button"
+            variant="outline"
+            disabled={dirty}
+            onClick={onReview}
+          >
+            Focused review
+          </Button>
+          <ClipVersions
+            project={savedProject}
+            item={item}
+            locked={locked || dirty}
+            onSaved={onSaved}
+          />
           {available ? (
             <>
               {playing ? (
@@ -770,6 +987,13 @@ function ClipCard({
           <Button
             disabled={locked || saving}
             onClick={() => {
+              if (
+                editing &&
+                dirty &&
+                !window.confirm("Discard unsaved clip edits?")
+              )
+                return;
+              setDirty(false);
               setEditing((v) => (v ? null : item));
               setQuality(item.quality ?? defaultQuality);
               setCaptionStyle({
@@ -803,7 +1027,14 @@ function ClipCard({
           />
         </div>
         {editing ? (
-          <form key={editing.revision} onSubmit={save}>
+          <form
+            key={editing.revision}
+            onSubmit={save}
+            onChangeCapture={() => setDirty(true)}
+          >
+            <p role="status" className="text-sm text-muted-foreground">
+              {saving ? "Saving..." : dirty ? "Unsaved changes" : "Saved"}
+            </p>
             <FieldSet disabled={locked || saving}>
               <Field orientation="horizontal">
                 <Checkbox

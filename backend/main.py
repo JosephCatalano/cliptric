@@ -32,6 +32,7 @@ from .models import Clip, ExportRequest, Recording, SelectionDraft
 from .previews import Previews, create_preview_router
 from .project_models import PostedUpdate
 from .project_routes import create_project_router
+from .project_workspace import create_workspace_router
 from .projects import Projects
 from .quality_analysis import QualityAnalysis, create_quality_router
 from .scheduling import Scheduler, create_scheduling_router
@@ -166,6 +167,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
     app.include_router(create_transcription_router(transcriptions))
     app.include_router(create_highlight_router(highlights))
     app.include_router(create_project_router(projects))
+    app.include_router(create_workspace_router(projects))
     app.include_router(create_caption_style_router(caption_styles, projects))
     app.include_router(create_emphasis_router(transcriptions, settings))
     app.include_router(create_youtube_router(youtube))

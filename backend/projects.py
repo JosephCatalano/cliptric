@@ -346,6 +346,7 @@ class Projects:
                     caption_position=settings.caption_position,
                     emphasis_words=list(settings.emphasis_words),
                     headline_enabled=settings.headline_enabled,
+                    headline_position=settings.headline_position,
                     quality=QualityOptions(
                         cleanup=settings.audio_cleanup, normalize=settings.normalize_audio
                     ),
@@ -471,146 +472,168 @@ class Projects:
             self.store.set_posted(identifier, posted, db=db)
 
     def edit(self, identifier: str, item_id: str, request: ItemEdit):
+        return self.edit_many(identifier, [(item_id, request)])
+
+    def edit_many(self, identifier, requests, *, reuse_exports=None):
         with self.lock:
             project = self.get(identifier, hydrate=False)
             if project.status in ACTIVE:
                 raise HTTPException(409, "Wait for processing or cancel it before editing clips.")
-            item = next((i for i in project.items if i.id == item_id), None)
-            if item is None:
-                raise HTTPException(404, "Project clip not found.")
-            if item.revision != request.revision:
-                raise HTTPException(409, "Clip changed in another window. Reload before saving.")
-            settings = project.settings
-            allowed_start = 0 if project.recording_ids else settings.analysis_start
-            allowed_end = item.source_duration if project.recording_ids else settings.analysis_end
-            if request.start < allowed_start or request.end > allowed_end:
-                raise HTTPException(422, "Trim must remain inside the saved analysis range.")
-            current_export = self.store.clip(item.export_id) if item.export_id else None
-            old_mode = item.framing or settings.framing
-            old_split = item.split_layout if item.framing is not None else settings.split_layout
-            new_mode = request.framing or settings.framing
-            if request.quality.smart_framing and new_mode == "split":
-                raise HTTPException(
-                    422,
-                    "Smart framing cannot be combined with the project's webcam/gameplay layout.",
-                )
-            new_split = (
-                request.split_layout if request.framing is not None else settings.split_layout
+            before = project.model_copy(deep=True)
+            changes = [self._edit_item(project, item_id, request) for item_id, request in requests]
+            if reuse_exports:
+                for item in project.items:
+                    if item.id in reuse_exports:
+                        clip = self.store.clip(reuse_exports[item.id])
+                        if (
+                            clip
+                            and clip.recording_id == (item.recording_id or project.recording_id)
+                            and clip.status == "succeeded"
+                            and self.store.export_path(clip.id).is_file()
+                        ):
+                            item.export_id = clip.id
+            with self.store.connection() as db:
+                db.execute("BEGIN IMMEDIATE")
+                for item_id, _ in requests:
+                    self.records.remember_version(before, item_id, db)
+                self.records.save(project, db=db)
+            if any(changes):
+                self._queue(project)
+            return self.get(identifier)
+
+    def _edit_item(self, project, item_id, request):
+        item = next((i for i in project.items if i.id == item_id), None)
+        if item is None:
+            raise HTTPException(404, "Project clip not found.")
+        if item.revision != request.revision:
+            raise HTTPException(409, "Clip changed in another window. Reload before saving.")
+        settings = project.settings
+        allowed_start = 0 if project.recording_ids else settings.analysis_start
+        allowed_end = item.source_duration if project.recording_ids else settings.analysis_end
+        if request.start < allowed_start or request.end > allowed_end:
+            raise HTTPException(422, "Trim must remain inside the saved analysis range.")
+        current_export = self.store.clip(item.export_id) if item.export_id else None
+        old_mode = item.framing or settings.framing
+        old_split = item.split_layout if item.framing is not None else settings.split_layout
+        new_mode = request.framing or settings.framing
+        if request.quality.smart_framing and new_mode == "split":
+            raise HTTPException(
+                422,
+                "Smart framing cannot be combined with the project's webcam/gameplay layout.",
             )
-            expected_headline = (
-                HeadlineOptions(
-                    text=request.opening_text or request.title, position=request.headline_position
-                )
-                if request.headline_enabled
-                else None
+        new_split = request.split_layout if request.framing is not None else settings.split_layout
+        expected_headline = (
+            HeadlineOptions(
+                text=request.opening_text or request.title, position=request.headline_position
             )
-            changed = (
-                request.auto_presentation
-                or bool(
-                    project.recording_ids
-                    and settings.batch_mode in {"auto", "highlights"}
-                    and not item.analysis_complete
-                )
-                or (old_mode, old_split) != (new_mode, new_split)
-                or bool(
-                    current_export
-                    and (
-                        current_export.headline != expected_headline
-                        or current_export.overlays != request.overlays
-                        or current_export.mode != new_mode
-                        or current_export.split_layout != new_split
-                    )
-                )
-                or any(
-                    getattr(item, name) != getattr(request, name)
-                    for name in (
-                        "start",
-                        "end",
-                        "caption_preset",
-                        "caption_customization",
-                        "quality",
-                        "caption_position",
-                        "emphasis_words",
-                        "headline_enabled",
-                        "headline_position",
-                        "overlays",
-                    )
-                )
-            )
-            if changed:
-                self._capacity()
-            title_changed = item.title != request.title
-            for name in (
-                "title",
-                "review",
-                "start",
-                "end",
-                "caption_preset",
-                "caption_customization",
-                "quality",
-                "caption_position",
-                "emphasis_words",
-                "headline_enabled",
-                "headline_position",
-                "overlays",
-                "opening_text",
-                "framing",
-                "split_layout",
-            ):
-                setattr(item, name, getattr(request, name))
-            item.revision += 1
-            # Manual edits win. Only an explicit request re-runs the local planner.
-            item.presentation_complete = not request.auto_presentation
-            item.presentation_requested = request.auto_presentation
-            if request.auto_presentation:
-                item.presentation_summary = None
-                item.presentation_warnings = []
-            if (
+            if request.headline_enabled
+            else None
+        )
+        changed = (
+            request.auto_presentation
+            or bool(
                 project.recording_ids
                 and settings.batch_mode in {"auto", "highlights"}
                 and not item.analysis_complete
-            ):
-                item.analysis_complete, item.analysis_error, item.analysis_choice = (
-                    True,
-                    None,
-                    "manual",
+            )
+            or (old_mode, old_split) != (new_mode, new_split)
+            or bool(
+                current_export
+                and (
+                    current_export.headline != expected_headline
+                    or current_export.overlays != request.overlays
+                    or current_export.mode != new_mode
+                    or current_export.split_layout != new_split
                 )
-                item.analysis_reason = "Source interval explicitly accepted in the clip editor."
-                item.title_complete, item.title_error = True, None
-            if project.recording_ids and title_changed:
-                item.title_complete, item.title_error = True, None
-            if changed:
-                # Keep previous immutable media accessible by its export ID.
-                item.pending_export_id, item.export_id, item.error = None, None, None
-                item.thumbnail, item.thumbnail_error = False, None
-                self._queue(project)
-            else:
-                self.records.save(project)
-            return self.get(identifier)
+            )
+            or any(
+                getattr(item, name) != getattr(request, name)
+                for name in (
+                    "start",
+                    "end",
+                    "caption_preset",
+                    "caption_customization",
+                    "quality",
+                    "caption_position",
+                    "emphasis_words",
+                    "opening_text",
+                    "headline_enabled",
+                    "headline_position",
+                    "overlays",
+                )
+            )
+        )
+        if changed:
+            self._capacity()
+        title_changed = item.title != request.title
+        for name in (
+            "title",
+            "review",
+            "start",
+            "end",
+            "caption_preset",
+            "caption_customization",
+            "quality",
+            "caption_position",
+            "emphasis_words",
+            "headline_enabled",
+            "headline_position",
+            "overlays",
+            "opening_text",
+            "framing",
+            "split_layout",
+        ):
+            setattr(item, name, getattr(request, name))
+        item.revision += 1
+        # Manual edits win. Only an explicit request re-runs the local planner.
+        item.presentation_complete = not request.auto_presentation
+        item.presentation_requested = request.auto_presentation
+        if request.auto_presentation:
+            item.presentation_summary = None
+            item.presentation_warnings = []
+        if (
+            project.recording_ids
+            and settings.batch_mode in {"auto", "highlights"}
+            and not item.analysis_complete
+        ):
+            item.analysis_complete, item.analysis_error, item.analysis_choice = (
+                True,
+                None,
+                "manual",
+            )
+            item.analysis_reason = "Source interval explicitly accepted in the clip editor."
+            item.title_complete, item.title_error = True, None
+        if project.recording_ids and title_changed:
+            item.title_complete, item.title_error = True, None
+        if changed:
+            item.pending_export_id, item.export_id, item.error = None, None, None
+            item.thumbnail, item.thumbnail_error = False, None
+        return changed
 
     def apply_caption_style(self, identifier: str, request: BatchStyle) -> Project:
-        # Validate every target and overlay collision before committing or scheduling any change.
         with self.lock:
             project = self.get(identifier, hydrate=False)
             if project.status in ACTIVE:
                 raise HTTPException(
                     409, "Wait for processing or cancel it before applying a style."
                 )
-            changed = []
+            requests = []
             for target in request.targets:
-                item = next((item for item in project.items if item.id == str(target.id)), None)
+                item = next((i for i in project.items if i.id == str(target.id)), None)
                 if item is None or item.revision != target.revision:
                     raise HTTPException(
-                        409,
-                        "A selected clip changed or no longer exists. Reload before applying styles.",
+                        409, "A selected clip changed. Reload before applying styles."
                     )
                 if item.review == "rejected":
-                    raise HTTPException(
-                        422,
-                        "Rejected clips cannot be batch styled. Remove them from the selected targets first.",
-                    )
+                    raise HTTPException(422, "Rejected clips cannot be batch styled.")
+                if (item.caption_preset, item.caption_position, item.caption_customization) == (
+                    request.style.preset,
+                    request.style.position,
+                    request.style.customization,
+                ):
+                    continue
                 try:
-                    candidate = ItemEdit.model_validate(
+                    edit = ItemEdit.model_validate(
                         {
                             **{
                                 key: getattr(item, key)
@@ -624,25 +647,10 @@ class Projects:
                     )
                 except ValidationError as exc:
                     raise HTTPException(
-                        422,
-                        "The style conflicts with a selected clip's caption, headline, or overlay placement. Adjust that clip before applying the style.",
+                        422, "The style conflicts with a selected clip's text placement."
                     ) from exc
-                if (item.caption_preset, item.caption_position, item.caption_customization) != (
-                    candidate.caption_preset,
-                    candidate.caption_position,
-                    candidate.caption_customization,
-                ):
-                    changed.append(item)
-            if changed:
-                self._capacity()
-                for item in changed:
-                    item.caption_preset = request.style.preset
-                    item.caption_position = request.style.position
-                    item.caption_customization = request.style.customization.model_copy(deep=True)
-                    item.revision += 1
-                    item.pending_export_id, item.export_id, item.error = None, None, None
-                self._queue(project)
-            return self.get(identifier)
+                requests.append((item.id, edit))
+            return self.edit_many(identifier, requests) if requests else self.get(identifier)
 
     def _check(self, identifier: str):
         project = self.get(identifier, hydrate=False)
@@ -961,6 +969,8 @@ class Projects:
                             cleanup=project.settings.audio_cleanup,
                             normalize=project.settings.normalize_audio,
                         ),
+                        headline_enabled=project.settings.headline_enabled,
+                        headline_position=project.settings.headline_position,
                         editorial_quality=c.quality,
                         id=str(uuid4()),
                         candidate_id=c.id,

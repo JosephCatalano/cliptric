@@ -20,7 +20,9 @@ ACTIVE = {"queued", "downloading", "transcribing", "analysing", "rendering", "ca
 Preset = Literal["none"] | CaptionPreset
 
 
-class ProjectSettings(BaseModel):
+class ProjectSettingsDraft(BaseModel):
+    """Bounded fields for unfinished setup; creation enforces combined settings."""
+
     batch_mode: Literal["keep", "auto", "highlights"] = "keep"
     clips_per_source: int = Field(default=3, ge=1, le=5, strict=True)
     presentation_mode: Literal["off", "auto", "talking_head", "podcast", "gameplay"] = "off"
@@ -33,6 +35,7 @@ class ProjectSettings(BaseModel):
     analysis_end: float = Field(gt=0, strict=True)
     duration_mode: Literal["auto", "manual", "full"] = "auto"
     headline_enabled: bool = Field(default=True, strict=True)
+    headline_position: Literal["auto", "upper", "centre"] = "auto"
     min_seconds: int = Field(default=15, ge=8, le=MAX_MEDIA_SECONDS, strict=True)
     max_seconds: int = Field(default=60, ge=8, le=MAX_MEDIA_SECONDS, strict=True)
     max_clips: int = Field(default=5, ge=1, le=20, strict=True)
@@ -43,6 +46,8 @@ class ProjectSettings(BaseModel):
     framing: FramingMode = "pad"
     split_layout: SplitLayout | None = None
 
+
+class ProjectSettings(ProjectSettingsDraft):
     @model_validator(mode="after")
     def valid_range(self):
         validate_framing(self.framing, self.split_layout)

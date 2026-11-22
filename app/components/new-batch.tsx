@@ -3,6 +3,12 @@
 import { useEffect, useRef, useState, type FormEvent } from "react";
 import Link from "next/link";
 import { useRouter } from "next/navigation";
+import { ProjectPresets } from "./project-presets";
+import {
+  useSetupDraft,
+  SetupDraftNotice,
+  type SetupDraft,
+} from "./setup-draft";
 import { Button } from "@/components/ui/button";
 import { Alert, AlertDescription } from "@/components/ui/alert";
 import { Badge } from "@/components/ui/badge";
@@ -28,7 +34,12 @@ import {
   NativeSelectOption,
 } from "@/components/ui/native-select";
 import { Progress } from "@/components/ui/progress";
-import { api, message, uploadRecording } from "@/lib/client-api";
+import {
+  api,
+  message,
+  creationFingerprint,
+  uploadRecording,
+} from "@/lib/client-api";
 import {
   defaultCaptionCustomization,
   MAX_VIDEO_SECONDS,
@@ -64,6 +75,9 @@ export function NewBatch() {
     customization: defaultCaptionCustomization,
   });
   const [headline, setHeadline] = useState(true);
+  const [headlinePosition, setHeadlinePosition] = useState<
+    "auto" | "upper" | "centre"
+  >("auto");
   const [aiTitles, setAiTitles] = useState(false);
   const [batchMode, setBatchMode] = useState<"auto" | "keep" | "highlights">(
     "highlights",
@@ -84,6 +98,10 @@ export function NewBatch() {
   const [loadingSources, setLoadingSources] = useState(false);
   const controller = useRef<AbortController | null>(null);
   const token = useRef<{ signature: string; id: string } | null>(null);
+  const [savedToken, setSavedToken] = useState<{
+    signature: string;
+    id: string;
+  } | null>(null);
   const sourceRequest = useRef<AbortController | null>(null);
   useEffect(
     () => () => {
@@ -229,32 +247,92 @@ export function NewBatch() {
     }
   }
 
+  const savedSettings: ProjectSettings = {
+    batch_mode: batchMode,
+    clips_per_source: clipsPerSource,
+    presentation_mode: presentation,
+    quality_mode: batchMode !== "keep",
+    ai_instructions: aiInstructions,
+    analysis_start: 0,
+    analysis_end: Math.max(
+      0.1,
+      ...clips.flatMap((clip) =>
+        clip.recording ? [clip.recording.duration] : [],
+      ),
+    ),
+    duration_mode: "full",
+    min_seconds: 15,
+    max_seconds: 120,
+    max_clips: Math.max(1, clips.length),
+    caption_preset: style.preset,
+    caption_position: style.position,
+    caption_customization: style.customization,
+    emphasis_words: [],
+    framing,
+    headline_enabled: headline,
+    headline_position: headlinePosition,
+    audio_cleanup: cleanup,
+    normalize_audio: normalize,
+  };
+
+  const draft = useSetupDraft(
+    "cliptric:setup:batch",
+    {
+      title,
+      settings: savedSettings,
+      recording_ids: clips.flatMap((clip) =>
+        clip.recording ? [clip.recording.id] : [],
+      ),
+      creation_token: savedToken?.id,
+      creation_signature: savedToken?.signature,
+    },
+    busy !== "saving",
+  );
+  function applySettings(value: ProjectSettings) {
+    setStyle({
+      preset: value.caption_preset,
+      position: value.caption_position,
+      customization: value.caption_customization,
+    });
+    setHeadline(value.headline_enabled ?? true);
+    setHeadlinePosition(value.headline_position ?? "auto");
+    setBatchMode(value.batch_mode ?? "keep");
+    setClipsPerSource(value.clips_per_source ?? 3);
+    setPresentation(value.presentation_mode ?? "off");
+    setAiInstructions(value.ai_instructions ?? "");
+    setCleanup(value.audio_cleanup ?? "off");
+    setNormalize(value.normalize_audio ?? false);
+    setFraming(value.framing === "crop" ? "crop" : "pad");
+    setReviewConsent(false);
+    setAiTitles(false);
+  }
+  async function restoreSetup(value: SetupDraft) {
+    const recordings = await Promise.all(
+      value.recording_ids.map((id) => api<Recording>(`/api/recordings/${id}`)),
+    );
+    setClips(
+      recordings.map((recording) => ({
+        id: crypto.randomUUID(),
+        name: recording.name,
+        file: null,
+        recording,
+        error: "",
+      })),
+    );
+    setTitle(value.title);
+    applySettings(value.settings);
+    token.current =
+      value.creation_token && value.creation_signature
+        ? { id: value.creation_token, signature: value.creation_signature }
+        : null;
+    setSavedToken(token.current);
+  }
   async function create(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
     if (!ready || busy || (batchMode !== "keep" && !reviewConsent)) return;
     setBusy("saving");
     setError("");
-    const settings: ProjectSettings = {
-      batch_mode: batchMode,
-      clips_per_source: clipsPerSource,
-      presentation_mode: presentation,
-      quality_mode: batchMode !== "keep",
-      ai_instructions: aiInstructions,
-      analysis_start: 0,
-      analysis_end: Math.max(...clips.map((clip) => clip.recording!.duration)),
-      duration_mode: "full",
-      min_seconds: 15,
-      max_seconds: 120,
-      max_clips: clips.length,
-      caption_preset: style.preset,
-      caption_position: style.position,
-      caption_customization: style.customization,
-      emphasis_words: [],
-      framing,
-      headline_enabled: headline,
-      audio_cleanup: cleanup,
-      normalize_audio: normalize,
-    };
+    const settings = savedSettings;
     const body = {
       title,
       recording_ids: clips.map((clip) => clip.recording!.id),
@@ -262,15 +340,36 @@ export function NewBatch() {
       generate_titles: batchMode === "keep" && aiTitles,
       remote_consent: batchMode !== "keep" ? reviewConsent : aiTitles,
     };
-    const signature = JSON.stringify(body);
+    draft.persistCurrent();
+    let signature: string;
+    try {
+      const prepared = await api<SetupDraft>("/api/setup/validate", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          title,
+          settings: body.settings,
+          recording_ids: body.recording_ids,
+        }),
+      });
+      body.settings = prepared.settings;
+      signature = await creationFingerprint(body);
+    } catch (error) {
+      setError(message(error));
+      setBusy(null);
+      return;
+    }
     if (token.current?.signature !== signature)
       token.current = { signature, id: crypto.randomUUID() };
+    setSavedToken(token.current);
+    draft.persistToken(token.current);
     try {
       const project = await api<Project>("/api/projects", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ ...body, id: token.current.id }),
       });
+      draft.clear();
       router.push(`/projects/${project.id}`);
     } catch (error) {
       setError(
@@ -301,7 +400,30 @@ export function NewBatch() {
           <AlertDescription>{error}</AlertDescription>
         </Alert>
       )}
+      <SetupDraftNotice draft={draft} onRestore={restoreSetup} />
       <form onSubmit={create} className="flex flex-col gap-6">
+        <ProjectPresets
+          workflow="batch"
+          settings={savedSettings}
+          disabled={busy !== null}
+          onApply={applySettings}
+        />
+        <Field>
+          <FieldLabel htmlFor="batch-headline-position">
+            Headline position
+          </FieldLabel>
+          <NativeSelect
+            id="batch-headline-position"
+            value={headlinePosition}
+            onChange={(event) =>
+              setHeadlinePosition(event.target.value as typeof headlinePosition)
+            }
+          >
+            <NativeSelectOption value="auto">Auto</NativeSelectOption>
+            <NativeSelectOption value="upper">Upper</NativeSelectOption>
+            <NativeSelectOption value="centre">Centre</NativeSelectOption>
+          </NativeSelect>
+        </Field>
         <FieldSet disabled={busy !== null}>
           <FieldGroup>
             <Field>

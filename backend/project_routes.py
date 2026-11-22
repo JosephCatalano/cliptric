@@ -4,6 +4,7 @@ import tempfile
 import threading
 import zipfile
 from collections.abc import Callable
+from typing import Literal
 from uuid import UUID
 
 from fastapi import APIRouter, HTTPException, Query
@@ -43,10 +44,20 @@ def create_project_router(manager: Projects):
     bundle_lock = threading.Lock()
 
     @router.get("/api/projects", response_model=list[Project])
-    def projects(limit: int = Query(default=50, ge=1, le=50), offset: int = Query(default=0, ge=0)):
+    def projects(
+        limit: int = Query(default=50, ge=1, le=50),
+        offset: int = Query(default=0, ge=0),
+        search: str = Query(default="", max_length=120),
+        status: Literal[
+            "all", "processing", "ready", "partial", "failed", "cancelled", "interrupted"
+        ] = "all",
+        sort: Literal["newest", "oldest", "title"] = "newest",
+    ):
         return [
             manager.get(project.id) if project.status in ACTIVE else project
-            for project in manager.records.list(limit, offset)
+            for project in manager.records.list(
+                limit, offset, search=search, status=status, sort=sort
+            )
         ]
 
     @router.post("/api/projects", response_model=Project, status_code=202)
