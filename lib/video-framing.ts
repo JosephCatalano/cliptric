@@ -1,4 +1,4 @@
-import type { SourceRegion } from "./projects";
+import type { FollowPlan, SourceRegion } from "./projects";
 
 export function portraitRegion(width: number, height: number): SourceRegion {
   const ratio = (9 * height) / (16 * width);
@@ -68,4 +68,27 @@ export function pixelRegion(
     h = ch;
   }
   return { x, y, width: w, height: h };
+}
+
+export function followRegion(plan: FollowPlan, at: number): SourceRegion {
+  if (plan.strategy === "fit") return { x: 0, y: 0, width: 1, height: 1 };
+  let low = 0,
+    high = plan.points.length - 1;
+  while (low < high) {
+    const middle = Math.ceil((low + high) / 2);
+    if (plan.points[middle].at <= at) low = middle;
+    else high = middle - 1;
+  }
+  const first = plan.points[low],
+    last = plan.points[Math.min(low + 1, plan.points.length - 1)];
+  const fraction =
+    last.at > first.at
+      ? Math.max(0, Math.min(1, (at - first.at) / (last.at - first.at)))
+      : 0;
+  return {
+    x: first.x + (last.x - first.x) * fraction,
+    y: first.y + (last.y - first.y) * fraction,
+    width: plan.width,
+    height: plan.height,
+  };
 }

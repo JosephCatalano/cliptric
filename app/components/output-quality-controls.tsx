@@ -321,7 +321,7 @@ export function OutputQualityControls({
               <FieldDescription>
                 {allowSmart
                   ? "Sampled detection is not speaker identification or gameplay understanding. Unsafe/ambiguous crops fall back to full-picture fit."
-                  : "Manual framing preserves your chosen regions. Switch to Fit video to analyze a moving crop."}
+                  : "The selected layout manages framing. Choose Fit video to analyze a different crop."}
               </FieldDescription>
             </Field>
             <Field orientation="horizontal">

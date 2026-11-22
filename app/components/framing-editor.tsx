@@ -11,6 +11,7 @@ import {
 import { Move, Scaling } from "lucide-react";
 import {
   fitPortraitRegion,
+  followRegion,
   pixelRegion,
   portraitRegion,
   resizePortraitRegion,
@@ -31,6 +32,7 @@ import {
 import {
   defaultSplitLayout,
   type FramingMode,
+  type FollowPlan,
   type SourceRegion,
   type SplitLayout,
 } from "../../lib/projects";
@@ -43,6 +45,7 @@ export function FramingEditor({
   mode,
   layout,
   cropRegion = null,
+  followPlan,
   onPlayer,
   end,
   onChange,
@@ -55,6 +58,7 @@ export function FramingEditor({
   mode: FramingMode;
   layout: SplitLayout | null;
   cropRegion?: SourceRegion | null;
+  followPlan?: FollowPlan | null;
   onPlayer?: (player: HTMLVideoElement | null) => void;
   end?: number;
   onChange(
@@ -102,6 +106,10 @@ export function FramingEditor({
     end !== undefined && Number.isFinite(end) && end > rangeStart
       ? end
       : undefined;
+  const tracking =
+    followPlan && followPlan.start === rangeStart && followPlan.end === rangeEnd
+      ? followPlan
+      : null;
   const regionLabel = mode === "crop" ? "portrait crop" : regionName;
 
   useEffect(() => {
@@ -161,7 +169,16 @@ export function FramingEditor({
         context.restore();
       };
       context.clearRect(0, 0, 270, 480);
-      if (mode === "split") {
+      if (mode === "follow") {
+        panel(
+          tracking
+            ? followRegion(tracking, player.currentTime)
+            : { x: 0, y: 0, width: 1, height: 1 },
+          0,
+          480,
+          !tracking || tracking.strategy === "fit",
+        );
+      } else if (mode === "split") {
         panel(configuration.webcam, 0, 160, false);
         panel(
           configuration.gameplay,
@@ -201,7 +218,7 @@ export function FramingEditor({
       player.removeEventListener("seeked", draw);
       player.removeEventListener("loadeddata", draw);
     };
-  }, [mode, layout, cropRegion, sourceUrl, video, reload]);
+  }, [mode, layout, cropRegion, tracking, sourceUrl, video, reload]);
 
   useEffect(() => {
     const player = video.current;
@@ -318,6 +335,9 @@ export function FramingEditor({
           <NativeSelectOption value="pad">
             Fit video with blur fill
           </NativeSelectOption>
+          <NativeSelectOption value="follow">
+            Auto follow one person
+          </NativeSelectOption>
           <NativeSelectOption value="crop">
             Fill frame (move and zoom)
           </NativeSelectOption>
@@ -329,7 +349,28 @@ export function FramingEditor({
         </NativeSelect>
       </Field>
       <>
-        {mode !== "pad" ? (
+        {mode === "follow" ? (
+          <div className="flex flex-col gap-2" role="status">
+            <p>
+              Follows one visible person locally. Uncertain tracking keeps the
+              full picture. Choose Fill frame for manual control.
+            </p>
+            {!tracking ? (
+              <p className="text-sm text-muted-foreground">
+                Tracking is analyzed per clip after generation. The preview
+                currently shows the full source. Clips over 10 minutes keep the
+                full picture.
+              </p>
+            ) : (
+              tracking.warnings.map((warning) => (
+                <p key={warning} className="text-sm text-muted-foreground">
+                  {warning}
+                </p>
+              ))
+            )}
+          </div>
+        ) : null}
+        {mode === "crop" || mode === "split" ? (
           <p>
             {mode === "crop"
               ? "Drag the move handle to choose what fills the clip. Resize its corner to zoom."
@@ -423,7 +464,7 @@ export function FramingEditor({
                     );
                 }}
               />
-              {mode !== "pad" ? (
+              {mode === "crop" || mode === "split" ? (
                 <div
                   className="pointer-events-none absolute border-2 border-primary bg-primary/10"
                   style={{
@@ -483,7 +524,11 @@ export function FramingEditor({
           {sourceUrl ? (
             <div className="flex flex-col gap-2">
               <p>
-                Live framing preview. Save to render captions and headlines.
+                {mode === "follow"
+                  ? tracking
+                    ? "Saved tracking preview. Save changes to render text and other effects."
+                    : "Source preview. Auto follow is applied during clip generation."
+                  : "Live framing preview. Save to render captions and headlines."}
               </p>
               <canvas
                 ref={canvas}

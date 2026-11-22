@@ -67,6 +67,7 @@ import {
   defaultCaptionCustomization,
   type CaptionCustomization,
   type FramingMode,
+  type FollowPlan,
   type SplitLayout,
   type SourceRegion,
 } from "../../lib/projects";
@@ -85,6 +86,7 @@ type Recording = {
   created_at: string;
 };
 type Clip = {
+  follow_plan?: FollowPlan | null;
   performance?: {
     backend: "cpu" | "nvenc";
     seconds: number;
@@ -1140,6 +1142,15 @@ export default function Workspace() {
                           mode={mode}
                           layout={splitLayout}
                           cropRegion={cropRegion}
+                          followPlan={
+                            clips.find(
+                              (clip) =>
+                                clip.mode === "follow" &&
+                                clip.recording_id === selectedId &&
+                                clip.start === rangeStart &&
+                                clip.end === rangeEnd,
+                            )?.follow_plan
+                          }
                           end={rangeEnd}
                           sourceUrl={
                             selected
@@ -1239,7 +1250,11 @@ export default function Workspace() {
                             recordingId={selectedId}
                             start={rangeStart}
                             end={rangeEnd}
-                            allowSmart={mode !== "split" && cropRegion === null}
+                            allowSmart={
+                              mode !== "split" &&
+                              mode !== "follow" &&
+                              cropRegion === null
+                            }
                             disabled={
                               !selected ||
                               submitting ||

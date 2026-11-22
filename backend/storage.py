@@ -6,6 +6,7 @@ from pathlib import Path
 from typing import Iterator
 
 from .files import remove_artifact
+from .follow_models import FOLLOW_VERSION, FollowPlan
 from .models import Clip, ExportRequest, Recording, RenderPerformance, SelectionDraft
 
 
@@ -63,6 +64,7 @@ class Store:
                 );
                 CREATE INDEX IF NOT EXISTS recordings_created ON recordings(created_at DESC, id DESC);
                 CREATE INDEX IF NOT EXISTS clips_recording_created ON clips(recording_id, created_at DESC, id DESC);
+                CREATE INDEX IF NOT EXISTS clips_follow_interval ON clips(recording_id, mode, start, end, created_at DESC, id DESC);
                 CREATE TABLE IF NOT EXISTS clip_posted (
                     clip_id TEXT PRIMARY KEY REFERENCES clips(id) ON DELETE CASCADE,
                     posted INTEGER NOT NULL CHECK(posted IN (0, 1))
@@ -86,6 +88,9 @@ class Store:
                 );
                 CREATE TABLE IF NOT EXISTS clip_framing (
                     clip_id TEXT PRIMARY KEY REFERENCES clips(id), options TEXT NOT NULL
+                );
+                CREATE TABLE IF NOT EXISTS clip_follow (
+                    clip_id TEXT PRIMARY KEY REFERENCES clips(id) ON DELETE CASCADE, payload TEXT NOT NULL
                 );
                 CREATE TABLE IF NOT EXISTS clip_crop (
                     clip_id TEXT PRIMARY KEY REFERENCES clips(id) ON DELETE CASCADE, options TEXT NOT NULL
@@ -112,6 +117,9 @@ class Store:
             db.close()
 
     def recover(self) -> None:
+        for pattern in ("*.follow.partial.gray", "*.follow.partial.log"):
+            for path in (self.root / "exports").glob(pattern):
+                remove_artifact(path)
         for path in (self.root / "exports").glob("*.cover.partial.jpg"):
             remove_artifact(path)
         with self.connection() as db:
@@ -173,6 +181,7 @@ class Store:
         recording_id: str,
         request: ExportRequest,
         caption_words: list[dict] | None = None,
+        follow_plan: FollowPlan | None = None,
     ) -> Clip:
         with self.connection() as db:
             db.execute(
@@ -187,6 +196,17 @@ class Store:
                 db.execute(
                     "INSERT INTO clip_headlines VALUES (?, ?)",
                     (clip_id, request.headline.model_dump_json()),
+                )
+            if follow_plan is not None:
+                if request.mode != "follow" or (follow_plan.start, follow_plan.end) != (
+                    request.start,
+                    request.end,
+                ):
+                    raise ValueError(
+                        "Auto follow snapshot must match the export interval and layout."
+                    )
+                db.execute(
+                    "INSERT INTO clip_follow VALUES (?,?)", (clip_id, follow_plan.model_dump_json())
                 )
             if request.crop_region is not None:
                 db.execute(
@@ -224,6 +244,9 @@ class Store:
 
     @staticmethod
     def _clip(db: sqlite3.Connection, row: sqlite3.Row) -> Clip:
+        follow = db.execute(
+            "SELECT payload FROM clip_follow WHERE clip_id=?", (row["id"],)
+        ).fetchone()
         performance = db.execute(
             "SELECT payload FROM clip_performance WHERE clip_id=?", (row["id"],)
         ).fetchone()
@@ -250,6 +273,7 @@ class Store:
                 **dict(row),
                 "posted": bool(row["posted"]),
                 "performance": json.loads(performance[0]) if performance else None,
+                "follow_plan": json.loads(follow[0]) if follow else None,
                 "captions": _caption_snapshot(caption[0] if caption else None),
                 "headline": _headline_snapshot(headline[0] if headline else None),
                 "overlays": json.loads(overlays[0]) if overlays else [],
@@ -266,6 +290,9 @@ class Store:
                     {
                         **dict(row),
                         "posted": bool(row["posted"]),
+                        "follow_plan": json.loads(row["follow_payload"])
+                        if row["follow_payload"]
+                        else None,
                         "performance": json.loads(row["render_performance"])
                         if row["render_performance"]
                         else None,
@@ -286,7 +313,8 @@ class Store:
                     }
                 )
                 for row in db.execute(
-                    "SELECT clips.*, clip_crop.options AS crop_options, clip_performance.payload AS render_performance, COALESCE(clip_posted.posted, 0) AS posted, clip_captions.options AS caption_options, clip_headlines.options AS headline_options, clip_overlays.options AS overlay_options, clip_framing.options AS framing_options, clip_quality.options AS quality_options FROM clips "
+                    "SELECT clips.*, clip_follow.payload AS follow_payload, clip_crop.options AS crop_options, clip_performance.payload AS render_performance, COALESCE(clip_posted.posted, 0) AS posted, clip_captions.options AS caption_options, clip_headlines.options AS headline_options, clip_overlays.options AS overlay_options, clip_framing.options AS framing_options, clip_quality.options AS quality_options FROM clips "
+                    "LEFT JOIN clip_follow ON clips.id=clip_follow.clip_id "
                     "LEFT JOIN clip_crop ON clips.id=clip_crop.clip_id "
                     "LEFT JOIN clip_performance ON clips.id=clip_performance.clip_id "
                     "LEFT JOIN clip_posted ON clips.id = clip_posted.clip_id "
@@ -299,6 +327,31 @@ class Store:
                     (recording_id, limit, offset),
                 )
             ]
+
+    def save_follow_plan(self, clip_id: str, plan: FollowPlan) -> None:
+        with self.connection() as db:
+            clip = db.execute(
+                "SELECT mode, start, end, status FROM clips WHERE id=?", (clip_id,)
+            ).fetchone()
+            if (
+                clip is None
+                or clip["mode"] != "follow"
+                or clip["status"] != "rendering"
+                or (clip["start"], clip["end"]) != (plan.start, plan.end)
+            ):
+                raise ValueError("Auto follow snapshot does not match an active export.")
+            db.execute("INSERT INTO clip_follow VALUES (?,?)", (clip_id, plan.model_dump_json()))
+
+    def cached_follow_plan(self, recording_id: str, start: float, end: float) -> FollowPlan | None:
+        with self.connection() as db:
+            row = db.execute(
+                "SELECT clip_follow.payload FROM clip_follow JOIN clips ON clips.id=clip_follow.clip_id "
+                "WHERE clips.recording_id=? AND clips.start=? AND clips.end=? AND clips.mode='follow' "
+                "ORDER BY clips.created_at DESC, clips.id DESC LIMIT 1",
+                (recording_id, start, end),
+            ).fetchone()
+        plan = FollowPlan.model_validate_json(row[0]) if row else None
+        return plan if plan and plan.version == FOLLOW_VERSION else None
 
     def set_posted(self, clip_id: str, posted: bool, *, db: sqlite3.Connection) -> None:
         db.execute(

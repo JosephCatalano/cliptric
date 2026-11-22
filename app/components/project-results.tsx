@@ -1371,6 +1371,7 @@ function ClipCard({
                     mode={framing}
                     layout={splitLayout}
                     cropRegion={cropRegion}
+                    followPlan={item.export?.follow_plan}
                     end={Number(draftEnd)}
                     sourceUrl={
                       project.recording_id
@@ -1456,6 +1457,7 @@ function ClipCard({
                     disabled={locked || saving}
                     allowSmart={
                       (framing ?? project.settings.framing) !== "split" &&
+                      framing !== "follow" &&
                       cropRegion === null
                     }
                     allowedStart={project.settings.analysis_start}

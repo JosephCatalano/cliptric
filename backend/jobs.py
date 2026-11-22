@@ -3,6 +3,7 @@ import threading
 from concurrent.futures import Future, ThreadPoolExecutor
 from uuid import uuid4
 
+from .auto_follow import AutoFollow
 from .captions import CaptionError, write_ass
 from .editing import QualityOptions, mapped_overlays, mapped_words, retained_intervals
 from .files import remove_artifact
@@ -22,6 +23,7 @@ class ExportBusy(Exception):
 class Jobs:
     def __init__(self, store: Store, media: Media):
         self.store, self.media = store, media
+        self.follow = AutoFollow(media)
         self.pool = ThreadPoolExecutor(max_workers=1, thread_name_prefix="clip-export")
         self.lock = threading.Lock()
         self.active: str | None = None
@@ -46,7 +48,14 @@ class Jobs:
             if self.active is not None:
                 raise ExportBusy("An export is already processing. Wait or cancel it first.")
             clip_id = clip_id or str(uuid4())
-            clip = self.store.create_clip(clip_id, recording_id, request, caption_words)
+            follow_plan = (
+                self.store.cached_follow_plan(recording_id, request.start, request.end)
+                if request.mode == "follow"
+                else None
+            )
+            clip = self.store.create_clip(
+                clip_id, recording_id, request, caption_words, follow_plan
+            )
             self.active = clip_id
             self.cancel_event.clear()
             try:
@@ -75,8 +84,8 @@ class Jobs:
                 or clip.status not in {"queued", "rendering", "cancelling"}
             ):
                 raise ExportBusy("This export is no longer processing.")
-            self.cancel_event.set()
             self.store.update_clip(clip_id, "cancelling")
+            self.cancel_event.set()
 
     def run(self, clip: Clip) -> None:
         partial = self.store.root / "exports" / f"{clip.id}.partial.mp4"
@@ -89,6 +98,21 @@ class Jobs:
                     raise RenderCancelled()
                 self.store.update_clip(clip.id, "rendering")
             render_options = {}
+            if clip.mode == "follow":
+                if clip.follow_plan is None:
+                    plan = self.follow.analyze(
+                        self.store.source_path(clip.recording_id),
+                        clip.start,
+                        clip.end,
+                        self.cancel_event,
+                        partial.parent,
+                    )
+                    with self.lock:
+                        if self.cancel_event.is_set():
+                            raise RenderCancelled()
+                        self.store.save_follow_plan(clip.id, plan)
+                    clip.follow_plan = plan
+                render_options["follow_plan"] = clip.follow_plan
             if clip.quality.cover_at is not None:
                 if not clip.start <= clip.quality.cover_at < clip.end:
                     raise MediaError("The cover frame must remain inside this clip.")
@@ -182,14 +206,17 @@ class Jobs:
                     else None,
                 )
         except RenderCancelled:
-            self.store.update_clip(clip.id, "cancelled")
+            with self.lock:
+                self.store.update_clip(clip.id, "cancelled")
         except (MediaError, CaptionError) as exc:
-            self.store.update_clip(clip.id, "failed", str(exc))
+            with self.lock:
+                self.store.update_clip(clip.id, "failed", str(exc))
         except Exception:
             logger.exception("Unexpected export failure for %s", clip.id)
-            self.store.update_clip(
-                clip.id, "failed", "Unexpected export failure. Check the server log."
-            )
+            with self.lock:
+                self.store.update_clip(
+                    clip.id, "failed", "Unexpected export failure. Check the server log."
+                )
         finally:
             try:
                 remove_artifact(partial)

@@ -5,6 +5,7 @@ from pydantic import AfterValidator, BaseModel, ConfigDict, Field, model_validat
 
 from .captions import CaptionCustomization, CaptionPreset, clean_emphasis
 from .editing import QualityOptions, mapped_overlays, retained_intervals
+from .follow_models import FollowPlan
 from .framing import FramingMode, SourceRegion, SplitLayout, validate_framing
 from .headlines import HeadlineOptions
 from .limits import MAX_MEDIA_SECONDS
@@ -50,6 +51,10 @@ class ExportRequest(BaseModel):
     @model_validator(mode="after")
     def valid_interval(self) -> "ExportRequest":
         validate_framing(self.mode, self.split_layout, self.crop_region)
+        if self.mode == "follow" and self.quality.smart_framing:
+            raise ValueError(
+                "Auto follow creates its own tracking plan. Clear the staged smart framing first."
+            )
         if self.end <= self.start:
             raise ValueError("End must be later than start.")
         if any(overlay.end > self.end - self.start for overlay in self.overlays):
@@ -80,6 +85,7 @@ class RenderPerformance(BaseModel):
 
 
 class Clip(BaseModel):
+    follow_plan: FollowPlan | None = None
     performance: RenderPerformance | None = None
     posted: bool = Field(default=False, strict=True)
     quality: QualityOptions = Field(default_factory=QualityOptions)
@@ -119,6 +125,10 @@ class SelectionDraft(BaseModel):
     @model_validator(mode="after")
     def valid_interval(self) -> "SelectionDraft":
         validate_framing(self.mode, self.split_layout, self.crop_region)
+        if self.mode == "follow" and self.quality.smart_framing:
+            raise ValueError(
+                "Auto follow creates its own tracking plan. Clear the staged smart framing first."
+            )
         retained_intervals(self.start, self.end, self.quality)
         if self.quality.smart_framing and (self.mode == "split" or self.crop_region):
             raise ValueError("Smart framing cannot be combined with manual crop regions.")

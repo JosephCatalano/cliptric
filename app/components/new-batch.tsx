@@ -99,7 +99,7 @@ export function NewBatch() {
   const [cleanup, setCleanup] = useState<"off" | "light" | "standard">("off");
   const [normalize, setNormalize] = useState(false);
   const [cropRegion, setCropRegion] = useState<SourceRegion | null>(null);
-  const [framing, setFraming] = useState<"pad" | "crop">("pad");
+  const [framing, setFraming] = useState<"pad" | "crop" | "follow">("pad");
   const [busy, setBusy] = useState<"importing" | "saving" | null>(null);
   const [error, setError] = useState("");
   const [current, setCurrent] = useState<string | null>(null);
@@ -318,7 +318,7 @@ export function NewBatch() {
     setAiInstructions(value.ai_instructions ?? "");
     setCleanup(value.audio_cleanup ?? "off");
     setNormalize(value.normalize_audio ?? false);
-    setFraming(value.framing === "crop" ? "crop" : "pad");
+    setFraming(value.framing === "split" ? "pad" : value.framing);
     setCropRegion(value.crop_region ?? null);
     setReviewConsent(false);
     setAiTitles(false);

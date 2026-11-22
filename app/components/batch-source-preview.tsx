@@ -22,10 +22,10 @@ export function BatchSourcePreview({
   onChange,
 }: {
   recordings: Recording[];
-  mode: "pad" | "crop";
+  mode: "pad" | "crop" | "follow";
   cropRegion: SourceRegion | null;
   disabled: boolean;
-  onChange(mode: "pad" | "crop", crop: SourceRegion | null): void;
+  onChange(mode: "pad" | "crop" | "follow", crop: SourceRegion | null): void;
 }) {
   const id = useId();
   const [selected, setSelected] = useState("");

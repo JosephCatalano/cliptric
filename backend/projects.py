@@ -518,10 +518,10 @@ class Projects:
         old_crop = item.crop_region if item.framing is not None else settings.crop_region
         new_crop = request.crop_region if request.framing is not None else settings.crop_region
         new_mode = request.framing or settings.framing
-        if request.quality.smart_framing and (new_mode == "split" or new_crop):
+        if request.quality.smart_framing and (new_mode in {"split", "follow"} or new_crop):
             raise HTTPException(
                 422,
-                "Smart framing cannot be combined with the project's manual crop regions.",
+                "Smart framing cannot be combined with manual regions or Auto follow.",
             )
         new_split = request.split_layout if request.framing is not None else settings.split_layout
         expected_headline = (
@@ -1429,14 +1429,19 @@ class Projects:
             manual_crop = (
                 target.crop_region if target.framing is not None else project.settings.crop_region
             )
-            if (target.framing or project.settings.framing) == "split" or manual_crop:
-                plan.summary = "Manual framing preserved; opening cover selected locally."
+            current_mode = target.framing or project.settings.framing
+            if current_mode in {"split", "follow"} or manual_crop:
+                plan.summary = (
+                    "Auto follow retained; tracking is analyzed per clip."
+                    if current_mode == "follow"
+                    else "Manual framing preserved; opening cover selected locally."
+                )
                 plan.smart_framing = None
                 plan.caption_position = (
                     "lower" if target.caption_position == "auto" else target.caption_position
                 )
                 plan.headline_position = (
-                    ("upper" if manual_crop else "centre")
+                    ("centre" if current_mode == "split" else "upper")
                     if target.headline_position == "auto"
                     else target.headline_position
                 )

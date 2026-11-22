@@ -54,7 +54,7 @@ export type YouTubeSource = Recording & {
   url: string;
   preview_image_url?: string | null;
 };
-export type FramingMode = "pad" | "crop" | "split";
+export type FramingMode = "pad" | "crop" | "split" | "follow";
 export type SourceRegion = {
   x: number;
   y: number;
@@ -87,6 +87,11 @@ export type SmartFraming = {
   points: { at: number; x: number; y: number }[];
   protected_regions: SourceRegion[];
   warnings: string[];
+};
+export type FollowPlan = SmartFraming & {
+  version: 1;
+  start: number;
+  end: number;
 };
 export type QualityOptions = {
   cover_at?: number | null;
@@ -191,6 +196,7 @@ export type ProjectItem = {
   export_id: string | null;
   pending_export_id: string | null;
   export: {
+    follow_plan?: FollowPlan | null;
     performance?: {
       backend: "cpu" | "nvenc";
       seconds: number;

@@ -15,6 +15,8 @@ from .config import Settings
 from .editing import QualityOptions, edit_filter, retained_intervals, smart_filter
 from .encoding import encoding_profile
 from .files import require_space
+from .follow_models import FollowPlan
+from .follow_render import follow_commands, follow_position
 from .framing import SourceRegion, SplitLayout, split_filter, validate_framing
 
 
@@ -184,11 +186,12 @@ class Media:
         headline_path: Path | None = None,
         split_layout: SplitLayout | None = None,
         crop_region: SourceRegion | None = None,
+        follow_plan: FollowPlan | None = None,
         quality: QualityOptions | None = None,
         cover_path: Path | None = None,
     ) -> MediaInfo:
         if (
-            mode not in {"pad", "crop", "split"}
+            mode not in {"pad", "crop", "split", "follow"}
             or not all(math.isfinite(t) for t in (start, end))
             or start < 0
             or not 0.1 <= end - start <= self.settings.max_clip_seconds
@@ -239,13 +242,38 @@ class Media:
                 raise ValueError("Choose manual crop regions or smart framing, not both.")
         except ValueError as exc:
             raise MediaError(str(exc)) from exc
+        if mode == "follow" and (
+            follow_plan is None
+            or (follow_plan.start, follow_plan.end) != (start, end)
+            or quality.smart_framing
+        ):
+            raise MediaError(
+                "Auto follow requires a matching saved tracking plan and no competing smart framing."
+            )
+        if mode != "follow" and follow_plan is not None:
+            raise MediaError("Auto follow tracking plans require Auto follow layout.")
         active = (
             self.active_picture(source, original, start, end, cancel)
-            if mode != "split" and quality.smart_framing is None and crop_region is None
+            if mode not in {"split", "follow"}
+            and quality.smart_framing is None
+            and crop_region is None
             else None
         )
         prefix = f"[0:{original.video_index}]" + (f"crop={active}," if active else "")
-        if crop_region is not None:
+        follow_script = None
+        if mode == "follow" and follow_plan.strategy == "crop":
+            w, h = original.width // 2 * 2, original.height // 2 * 2
+            cw, ch = (
+                max(2, int(w * follow_plan.width) // 2 * 2),
+                max(2, int(h * follow_plan.height) // 2 * 2),
+            )
+            x, y = follow_position(follow_plan, start)
+            follow_script = follow_commands(follow_plan, kept, w, h)
+            framing = (
+                prefix
+                + f"scale={w}:{h},setsar=1,sendcmd=f=follow.cmd,crop@follow={cw}:{ch}:{min(w - cw, x * w):.8f}:{min(h - ch, y * h):.8f},scale=1080:1920"
+            )
+        elif crop_region is not None:
             try:
                 region = crop_region.pixels(
                     original.width // 2 * 2, original.height // 2 * 2, (1080, 1920)
@@ -279,7 +307,9 @@ class Media:
                 )
             except ValueError as exc:
                 raise MediaError(str(exc)) from exc
-        elif mode == "pad" or (quality.smart_framing and quality.smart_framing.strategy == "fit"):
+        elif mode in {"pad", "follow"} or (
+            quality.smart_framing and quality.smart_framing.strategy == "fit"
+        ):
             # Blur a small background before upscaling; keep the foreground sharp.
             framing = (
                 prefix + "split=2[back][front];"
@@ -310,6 +340,11 @@ class Media:
                     first.y + (last.y - first.y) * fraction,
                 )
                 cover_crop = f"crop=iw*{path.width:.8f}:ih*{path.height:.8f}:iw*{x:.8f}:ih*{y:.8f},"
+            if mode == "follow" and follow_plan.strategy == "crop":
+                x, y = follow_position(
+                    follow_plan, quality.cover_at if quality.cover_at is not None else start
+                )
+                cover_crop = f"crop=iw*{follow_plan.width:.8f}:ih*{follow_plan.height:.8f}:iw*{x:.8f}:ih*{y:.8f},"
             if crop_region is not None:
                 cover_crop = f"scale={original.width // 2 * 2}:{original.height // 2 * 2},setsar=1,crop={region},"
             framing += f"[main_picture];[1:v]{cover_crop}scale=iw:ih:in_range=pc:out_range=tv,format=yuv420p,setparams=range=limited,split=2[cover_back][cover_front];"
@@ -402,10 +437,12 @@ class Media:
             raise RenderCancelled()
         caption_workdir = (
             tempfile.TemporaryDirectory(prefix="clipping-captions-", dir=output.parent)
-            if caption_path is not None or headline_path is not None
+            if caption_path is not None or headline_path is not None or follow_script is not None
             else nullcontext(None)
         )
         with caption_workdir as workdir, log_path.open("wb") as log:
+            if follow_script is not None:
+                (Path(workdir) / "follow.cmd").write_text(follow_script, encoding="ascii")
             if caption_path is not None:
                 # FFmpeg filter syntax has independent escaping rules on Windows.
                 # Only this controlled filename enters the filter; arbitrary paths use cwd.
