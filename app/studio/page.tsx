@@ -84,6 +84,11 @@ type Recording = {
   created_at: string;
 };
 type Clip = {
+  performance?: {
+    backend: "cpu" | "nvenc";
+    seconds: number;
+    warning: string | null;
+  } | null;
   posted?: boolean;
   id: string;
   recording_id: string;
@@ -1488,6 +1493,23 @@ export default function Workspace() {
                                           ? "Cancelled"
                                           : "Export failed"}
                               </p>
+                              {clip.performance ? (
+                                <div className="flex flex-col gap-2">
+                                  <Badge variant="outline">
+                                    {clip.performance.backend === "nvenc"
+                                      ? "NVIDIA GPU"
+                                      : "CPU"}{" "}
+                                    · {clip.performance.seconds.toFixed(1)}s
+                                  </Badge>
+                                  {clip.performance.warning ? (
+                                    <Alert>
+                                      <AlertDescription>
+                                        {clip.performance.warning}
+                                      </AlertDescription>
+                                    </Alert>
+                                  ) : null}
+                                </div>
+                              ) : null}
                               {clip.error && (
                                 <p className="invalid">{clip.error}</p>
                               )}

@@ -219,6 +219,8 @@ def test_cancel_interrupts_provider_without_publishing_and_deduplicates_active_r
 
 def test_transcript_change_stops_remaining_billable_windows(service):
     manager, recording, transcript, provider = service
+    # This verifies stopping future dispatch. Other tests cover already in-flight calls.
+    manager.settings = replace(manager.settings, highlight_concurrency=1)
     with manager.store.connection() as db:
         db.execute("UPDATE recordings SET duration=400 WHERE id=?", (recording.id,))
         db.execute(
@@ -366,3 +368,75 @@ def test_api_contract_and_review_conflicts_without_live_provider(service):
             ).status_code
             == 404
         )
+
+
+def test_parallel_windows_are_bounded_and_cancelled_without_partial_publication(
+    service, monkeypatch
+):
+    manager, recording, transcript, provider = service
+    original = highlight_module.unused_windows
+    monkeypatch.setattr(highlight_module, "unused_windows", lambda *a, **kw: original(*a, **kw) * 7)
+    provider.hold = True
+    pending = manager.submit(recording.id, request(transcript))
+    deadline = time.monotonic() + 3
+    while provider.calls < 3 and time.monotonic() < deadline:
+        time.sleep(0.01)
+    assert provider.calls == 3
+    assert manager.results.job(pending.id).requests_made == 3
+    manager.cancel(pending.id)
+    result = finished(manager, pending.id)
+    assert result.status == "cancelled" and not result.candidates
+    assert provider.calls == 3 and provider.cancelled
+
+
+def test_pool_keeps_unused_candidates_and_invalidates_changed_instructions(service):
+    manager, recording, transcript, provider = service
+    original = provider.suggest
+
+    async def multiple(window, payload):
+        result = await original(window, payload)
+        assert payload.max_candidates == 5
+        one = result.candidates.candidates[0]
+        two = one.model_copy(
+            update={
+                "first_segment": window[8].id,
+                "last_segment": window[12].id,
+                "evidence": window[8].text,
+                "score": 80,
+            }
+        )
+        return ProviderResult(ProposedHighlights(candidates=[one, two]), 200, 100)
+
+    provider.suggest = multiple
+    first = finished(
+        manager, manager.submit(recording.id, request(transcript, max_candidates=1)).id
+    )
+    assert first.status == "succeeded" and len(first.candidates) == 1
+    assert len(manager.results.pool(first.pool_key)) == 2
+    exclusions = [{"start": first.candidates[0].start, "end": first.candidates[0].end}]
+    second = manager.submit(
+        recording.id, request(transcript, max_candidates=1, excluded_ranges=exclusions)
+    )
+    assert second.status == "succeeded" and second.cache_hit
+    assert second.requests_made == 0 and provider.calls == 1
+    assert second.candidates[0].start >= first.candidates[0].end
+    assert second.candidates[0].job_id == second.id
+    manager.results.review(second.candidates[0].id, ReviewRequest(review="rejected", revision=0))
+    assert second.candidates[0].fingerprint not in {
+        candidate.fingerprint for candidate in manager.results.pool(first.pool_key)
+    }
+    provider.suggest = original
+    third = finished(
+        manager,
+        manager.submit(
+            recording.id,
+            request(
+                transcript,
+                max_candidates=1,
+                excluded_ranges=exclusions,
+                ai_instructions="Prefer practical advice",
+            ),
+        ).id,
+    )
+    assert third.pool_key != first.pool_key and not third.cache_hit
+    assert provider.calls == 2

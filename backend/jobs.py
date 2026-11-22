@@ -171,6 +171,13 @@ class Jobs:
                     "succeeded",
                     duration=info.duration,
                     size_bytes=self.store.export_path(clip.id).stat().st_size,
+                    performance={
+                        "backend": info.render_backend,
+                        "warning": info.render_warning,
+                        "seconds": info.render_seconds,
+                    }
+                    if info.render_backend
+                    else None,
                 )
         except RenderCancelled:
             self.store.update_clip(clip.id, "cancelled")

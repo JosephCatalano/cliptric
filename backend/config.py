@@ -117,12 +117,44 @@ class Settings:
         if not 1 <= gib <= 100:
             raise ValueError("CLIPPING_MAX_UPLOAD_GIB must be between 1 and 100.")
         return cls(
-            transcription_device=os.environ.get("CLIPPING_TRANSCRIPTION_DEVICE", values.get("CLIPPING_TRANSCRIPTION_DEVICE", "auto")),
-            transcription_worker_idle_seconds=int(os.environ.get("CLIPPING_TRANSCRIPTION_IDLE_SECONDS", values.get("CLIPPING_TRANSCRIPTION_IDLE_SECONDS", "120"))),
-            render_encoder=os.environ.get("CLIPPING_RENDER_ENCODER", values.get("CLIPPING_RENDER_ENCODER", "auto")),
-            render_threads=int(os.environ.get("CLIPPING_RENDER_THREADS", values.get("CLIPPING_RENDER_THREADS", "4"))),
-            nvenc_ffmpeg=os.environ.get("CLIPPING_NVENC_FFMPEG", values.get("CLIPPING_NVENC_FFMPEG", "")) or "",
-            highlight_concurrency=int(os.environ.get("CLIPPING_HIGHLIGHT_CONCURRENCY", values.get("CLIPPING_HIGHLIGHT_CONCURRENCY", "3"))),
+            highlight_pool_size=int(
+                os.environ.get(
+                    "CLIPPING_HIGHLIGHT_POOL_SIZE", values.get("CLIPPING_HIGHLIGHT_POOL_SIZE", "20")
+                )
+            ),
+            transcription_threads=int(
+                os.environ.get(
+                    "CLIPPING_TRANSCRIPTION_THREADS",
+                    values.get("CLIPPING_TRANSCRIPTION_THREADS", "6"),
+                )
+            ),
+            transcription_device=os.environ.get(
+                "CLIPPING_TRANSCRIPTION_DEVICE", values.get("CLIPPING_TRANSCRIPTION_DEVICE", "auto")
+            ),
+            transcription_worker_idle_seconds=int(
+                os.environ.get(
+                    "CLIPPING_TRANSCRIPTION_IDLE_SECONDS",
+                    values.get("CLIPPING_TRANSCRIPTION_IDLE_SECONDS", "120"),
+                )
+            ),
+            render_encoder=os.environ.get(
+                "CLIPPING_RENDER_ENCODER", values.get("CLIPPING_RENDER_ENCODER", "auto")
+            ),
+            render_threads=int(
+                os.environ.get(
+                    "CLIPPING_RENDER_THREADS", values.get("CLIPPING_RENDER_THREADS", "4")
+                )
+            ),
+            nvenc_ffmpeg=os.environ.get(
+                "CLIPPING_NVENC_FFMPEG", values.get("CLIPPING_NVENC_FFMPEG", "")
+            )
+            or "",
+            highlight_concurrency=int(
+                os.environ.get(
+                    "CLIPPING_HIGHLIGHT_CONCURRENCY",
+                    values.get("CLIPPING_HIGHLIGHT_CONCURRENCY", "3"),
+                )
+            ),
             max_upload_bytes=gib * 1024**3,
             data_dir=Path(os.environ.get("CLIPPING_DATA_DIR", str(ROOT / "data"))).resolve(),
             ffmpeg=find_tool("ffmpeg"),

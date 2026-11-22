@@ -3,6 +3,7 @@ import { useRouter } from "next/navigation";
 import { DeleteAction } from "./delete-action";
 import { PostedCheckbox } from "./posted-checkbox";
 import { MoreClips } from "./more-clips";
+import { ProcessingTimings } from "./processing-timings";
 import {
   Card,
   CardHeader,
@@ -193,6 +194,7 @@ export function ProjectResults({ id }: { id: string }) {
               </AlertDescription>
             </Alert>
           ) : null}
+          <ProcessingTimings project={project} />
           <Accordion type="single" collapsible>
             <AccordionItem value="details">
               <AccordionTrigger>Saved creation settings</AccordionTrigger>

@@ -407,3 +407,47 @@ def test_real_decode_preserves_delayed_audio_origin(manager, tmp_path):
         assert max(abs(value) for value in samples[48000:]) < 8
     finally:
         service.close()
+
+
+def test_actual_device_metadata_is_validated_saved_and_reused(manager, monkeypatch):
+    original = manager._process
+
+    def completed_with_device(*args, **kwargs):
+        original(*args, **kwargs)
+        path = args[1] / "complete.json"
+        record = json.loads(path.read_text(encoding="utf-8"))
+        record["runtime"] = {"device": "cuda", "compute_type": "int8_float16", "warning": None}
+        path.write_text(json.dumps(record), encoding="utf-8")
+
+    monkeypatch.setattr(manager, "_process", completed_with_device)
+    first_source = add_recording(manager.store)
+    first = finished(manager, manager.submit(first_source.id))
+    assert first.status == "succeeded" and first.device == "cuda"
+    second_source = add_recording(manager.store)
+    second = finished(manager, manager.submit(second_source.id))
+    assert second.device == "cuda" and manager.runs == 1
+    assert manager.transcripts.job(second.id).device == "cuda"
+
+
+def test_cancellation_at_completion_still_releases_warm_worker(manager, tmp_path, monkeypatch):
+    from backend.transcription_models import TranscriptionCancelled
+
+    work = tmp_path / "completion-race"
+    work.mkdir()
+    closed = []
+
+    class Process:
+        returncode = None
+
+        def poll(self):
+            (work / "complete.json").write_text("{}", encoding="utf-8")
+            manager.cancel_event.set()
+            return None
+
+    monkeypatch.setattr(manager.inference, "start", lambda path: Process())
+    monkeypatch.setattr(manager.inference, "close", lambda: closed.append(True))
+    with (work / "log").open("wb") as log, pytest.raises(TranscriptionCancelled):
+        Transcriptions._process(
+            manager, [], work, 1, time.monotonic() + 10, log, transcription_id=str(uuid4())
+        )
+    assert closed == [True]

@@ -101,6 +101,8 @@ def test_import_render_download_and_reopen(settings, recordings, has_audio, mode
         assert submitted.status_code == 202, submitted.text
         clip = await_export(client, submitted.json()["id"])
         assert clip["status"] == "succeeded", clip
+        assert clip["performance"]["backend"] in {"cpu", "nvenc"}
+        assert clip["performance"]["seconds"] > 0
         output = Store(settings.data_dir).export_path(clip["id"])
         info = Media(settings).probe(output)
         assert (info.width, info.height) == (1080, 1920)
@@ -112,6 +114,7 @@ def test_import_render_download_and_reopen(settings, recordings, has_audio, mode
         assert download.content == output.read_bytes()
     with TestClient(create_app(settings), base_url="http://127.0.0.1:8765") as reopened:
         assert reopened.get("/api/recordings").json()[0]["id"] == recording["id"]
+        assert reopened.get(f"/api/clips/{clip['id']}").json()["performance"] == clip["performance"]
         assert (
             reopened.get(f"/api/recordings/{recording['id']}/clips").json()[0]["status"]
             == "succeeded"

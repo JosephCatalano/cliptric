@@ -4,7 +4,9 @@ import asyncio
 import logging
 import math
 import threading
+import time
 from concurrent.futures import Future, ThreadPoolExecutor
+from contextlib import contextmanager
 from uuid import uuid4
 
 from fastapi import HTTPException
@@ -147,6 +149,19 @@ class Projects:
                     )
             return project
 
+    @contextmanager
+    def _timed(self, identifier, stage):
+        started = time.monotonic()
+        try:
+            yield
+        finally:
+            with self.lock:
+                project = self.get(identifier, hydrate=False)
+                project.stage_seconds[stage] = (
+                    project.stage_seconds.get(stage, 0) + time.monotonic() - started
+                )
+                self.records.save(project)
+
     def _capacity(self):
         if self.stop.is_set():
             raise HTTPException(503, "Project service is stopping.")
@@ -158,6 +173,7 @@ class Projects:
     def _queue(self, project: Project):
         project.status, project.stage, project.error = "queued", "Waiting for processing", None
         project.progress = 0
+        project.stage_seconds = {}
         self.records.save(project)
         if project.id in self.scheduled:
             return
@@ -814,140 +830,155 @@ class Projects:
         return self.root / f"{key}.jpg"
 
     def _select(self, identifier: str):
-        project = self._stage(identifier, "transcribing", "Preparing transcript")
-        if project.selection_complete:
-            return
-        transcript = (
-            self.transcriptions.transcripts.job(project.transcription_id)
-            if project.transcription_id
-            else self.transcriptions.latest(project.recording_id)
-        )
-        if transcript is None or transcript.status not in {*ACTIVE_STATUSES, "succeeded"}:
-            child_id = str(uuid4())
+        with self._timed(identifier, "transcription"):
+            project = self._stage(identifier, "transcribing", "Preparing transcript")
+            if project.selection_complete:
+                return
+            transcript = (
+                self.transcriptions.transcripts.job(project.transcription_id)
+                if project.transcription_id
+                else self.transcriptions.latest(project.recording_id)
+            )
+            if transcript is None or transcript.status not in {*ACTIVE_STATUSES, "succeeded"}:
+                child_id = str(uuid4())
+                with self.lock:
+                    project = self._check(identifier)
+                    project.transcription_id = child_id
+                    self.records.save(project)
+                transcript = self._available(
+                    identifier,
+                    lambda: self.transcriptions.submit(project.recording_id, identifier=child_id),
+                )
+                owned = transcript.id == child_id
+            else:
+                owned = False
+            transcript = self._wait(
+                identifier,
+                lambda: self.transcriptions.transcripts.job(transcript.id),
+                ACTIVE_STATUSES,
+                (lambda: self.transcriptions.cancel(transcript.id)) if owned else None,
+            )
             with self.lock:
                 project = self._check(identifier)
-                project.transcription_id = child_id
+                project.transcription_id, project.transcript_revision = (
+                    transcript.id,
+                    transcript.revision,
+                )
+                project.transcription_backend = transcript.device
+                project.transcription_warning = transcript.warning
                 self.records.save(project)
-            transcript = self._available(
-                identifier,
-                lambda: self.transcriptions.submit(project.recording_id, identifier=child_id),
+        with self._timed(identifier, "ai"):
+            project = self._stage(identifier, "analysing", "Selecting source-grounded moments")
+            result = (
+                self.highlights.results.job(project.highlight_id) if project.highlight_id else None
             )
-            owned = transcript.id == child_id
-        else:
             owned = False
-        transcript = self._wait(
-            identifier,
-            lambda: self.transcriptions.transcripts.job(transcript.id),
-            ACTIVE_STATUSES,
-            (lambda: self.transcriptions.cancel(transcript.id)) if owned else None,
-        )
-        with self.lock:
-            project = self._check(identifier)
-            project.transcription_id, project.transcript_revision = (
-                transcript.id,
-                transcript.revision,
+            if result is None:
+                if project.analysis_attempted:
+                    raise HTTPException(
+                        409,
+                        "AI attempt outcome is unknown. Resume with explicit permission for another attempt.",
+                    )
+                child_id = str(uuid4())
+                with self.lock:
+                    project = self._check(identifier)
+                    if project.avoid_used_clips:
+                        project.selection_exclusions = self.records.used_ranges(
+                            project.recording_id
+                        )
+                    project.highlight_id, project.analysis_attempted = child_id, True
+                    self.records.save(project)
+                s = project.settings
+                request = HighlightRequest(
+                    excluded_ranges=project.selection_exclusions,
+                    ai_instructions=s.ai_instructions,
+                    transcription_id=transcript.id,
+                    revision=transcript.revision,
+                    remote_consent=True,
+                    quality_mode=s.quality_mode,
+                    analysis_start=s.analysis_start,
+                    analysis_end=min(
+                        s.analysis_end, self.store.recording(project.recording_id).duration
+                    ),
+                    duration_mode=s.duration_mode,
+                    min_seconds=8 if s.duration_mode == "auto" else s.min_seconds,
+                    max_seconds=min(
+                        int(self.media.settings.max_clip_seconds),
+                        max(
+                            8,
+                            math.ceil(
+                                min(
+                                    s.analysis_end,
+                                    self.store.recording(project.recording_id).duration,
+                                )
+                                - s.analysis_start
+                            ),
+                        ),
+                    )
+                    if s.duration_mode == "auto"
+                    else s.max_seconds,
+                    max_candidates=s.max_clips,
+                )
+                result = self._available(
+                    identifier,
+                    lambda: self.highlights.submit(
+                        project.recording_id, request, identifier=child_id
+                    ),
+                )
+                owned = result.id == child_id
+                with self.lock:
+                    project = self.get(identifier, hydrate=False)
+                    project.highlight_id = result.id
+                    self.records.save(project)
+            result = self._wait(
+                identifier,
+                lambda: self.highlights.results.job(result.id),
+                HIGHLIGHT_ACTIVE,
+                (lambda: self.highlights.cancel(result.id)) if owned else None,
             )
-            self.records.save(project)
-        project = self._stage(identifier, "analysing", "Selecting source-grounded moments")
-        result = self.highlights.results.job(project.highlight_id) if project.highlight_id else None
-        owned = False
-        if result is None:
-            if project.analysis_attempted:
+            if result.stale:
                 raise HTTPException(
                     409,
-                    "AI attempt outcome is unknown. Resume with explicit permission for another attempt.",
+                    "Transcript changed. Create a new project to select from the current revision.",
                 )
-            child_id = str(uuid4())
             with self.lock:
                 project = self._check(identifier)
+                candidates = [
+                    candidate for candidate in result.candidates if candidate.review != "rejected"
+                ]
+                project.analysis_cache_hit = result.cache_hit
                 if project.avoid_used_clips:
-                    project.selection_exclusions = self.records.used_ranges(project.recording_id)
-                project.highlight_id, project.analysis_attempted = child_id, True
-                self.records.save(project)
-            s = project.settings
-            request = HighlightRequest(
-                excluded_ranges=project.selection_exclusions,
-                ai_instructions=s.ai_instructions,
-                transcription_id=transcript.id,
-                revision=transcript.revision,
-                remote_consent=True,
-                quality_mode=s.quality_mode,
-                analysis_start=s.analysis_start,
-                analysis_end=min(
-                    s.analysis_end, self.store.recording(project.recording_id).duration
-                ),
-                duration_mode=s.duration_mode,
-                min_seconds=8 if s.duration_mode == "auto" else s.min_seconds,
-                max_seconds=min(
-                    int(self.media.settings.max_clip_seconds),
-                    max(
-                        8,
-                        math.ceil(
-                            min(s.analysis_end, self.store.recording(project.recording_id).duration)
-                            - s.analysis_start
+                    blocked = self.records.used_ranges(project.recording_id)
+                    unused = []
+                    for candidate in candidates:
+                        if not overlaps(candidate.start, candidate.end, blocked):
+                            unused.append(candidate)
+                            blocked.append(SourceRange(start=candidate.start, end=candidate.end))
+                    candidates = unused
+                project.items = [
+                    ProjectItem(
+                        quality=QualityOptions(
+                            cleanup=project.settings.audio_cleanup,
+                            normalize=project.settings.normalize_audio,
                         ),
-                    ),
-                )
-                if s.duration_mode == "auto"
-                else s.max_seconds,
-                max_candidates=s.max_clips,
-            )
-            result = self._available(
-                identifier,
-                lambda: self.highlights.submit(project.recording_id, request, identifier=child_id),
-            )
-            owned = result.id == child_id
-            with self.lock:
-                project = self.get(identifier, hydrate=False)
-                project.highlight_id = result.id
+                        editorial_quality=c.quality,
+                        id=str(uuid4()),
+                        candidate_id=c.id,
+                        title=c.title,
+                        start=c.start,
+                        end=c.end,
+                        caption_preset=project.settings.caption_preset,
+                        caption_customization=project.settings.caption_customization,
+                        emphasis_words=project.settings.emphasis_words,
+                        caption_position=project.settings.caption_position,
+                        review=c.review,
+                        framing=project.settings.framing,
+                        split_layout=project.settings.split_layout,
+                    )
+                    for c in candidates
+                ][: project.settings.max_clips]
+                project.selection_complete = True
                 self.records.save(project)
-        result = self._wait(
-            identifier,
-            lambda: self.highlights.results.job(result.id),
-            HIGHLIGHT_ACTIVE,
-            (lambda: self.highlights.cancel(result.id)) if owned else None,
-        )
-        if result.stale:
-            raise HTTPException(
-                409, "Transcript changed. Create a new project to select from the current revision."
-            )
-        with self.lock:
-            project = self._check(identifier)
-            candidates = [
-                candidate for candidate in result.candidates if candidate.review != "rejected"
-            ]
-            if project.avoid_used_clips:
-                blocked = self.records.used_ranges(project.recording_id)
-                unused = []
-                for candidate in candidates:
-                    if not overlaps(candidate.start, candidate.end, blocked):
-                        unused.append(candidate)
-                        blocked.append(SourceRange(start=candidate.start, end=candidate.end))
-                candidates = unused
-            project.items = [
-                ProjectItem(
-                    quality=QualityOptions(
-                        cleanup=project.settings.audio_cleanup,
-                        normalize=project.settings.normalize_audio,
-                    ),
-                    editorial_quality=c.quality,
-                    id=str(uuid4()),
-                    candidate_id=c.id,
-                    title=c.title,
-                    start=c.start,
-                    end=c.end,
-                    caption_preset=project.settings.caption_preset,
-                    caption_customization=project.settings.caption_customization,
-                    emphasis_words=project.settings.emphasis_words,
-                    caption_position=project.settings.caption_position,
-                    review=c.review,
-                    framing=project.settings.framing,
-                    split_layout=project.settings.split_layout,
-                )
-                for c in candidates
-            ][: project.settings.max_clips]
-            project.selection_complete = True
-            self.records.save(project)
 
     def _render(self, identifier: str, item_id: str):
         with self.lock:
@@ -1106,12 +1137,13 @@ class Projects:
             item = next(i for i in project.items if i.id == item_id)
             item.transcription_id = transcript.id
             self.records.save(project)
-        transcript = self._wait(
-            identifier,
-            lambda: self.transcriptions.transcripts.job(transcript.id),
-            ACTIVE_STATUSES,
-            (lambda: self.transcriptions.cancel(transcript.id)) if owned else None,
-        )
+        with self._timed(identifier, "transcription"):
+            transcript = self._wait(
+                identifier,
+                lambda: self.transcriptions.transcripts.job(transcript.id),
+                ACTIVE_STATUSES,
+                (lambda: self.transcriptions.cancel(transcript.id)) if owned else None,
+            )
         with self.lock:
             project = self._check(identifier)
             item = next(i for i in project.items if i.id == item_id)
@@ -1125,9 +1157,11 @@ class Projects:
                 )
             item.transcription_id, item.transcript_revision = transcript.id, transcript.revision
             item.transcription_warning = transcript.warning
+            item.transcription_backend = transcript.device
             self.records.save(project)
         if needs_review:
-            self._review_supplied(identifier, item_id)
+            with self._timed(identifier, "ai"):
+                self._review_supplied(identifier, item_id)
             return
         if needs_title:
             words = self.transcriptions.export_words(
@@ -1140,9 +1174,10 @@ class Projects:
                 item.title_error = "Title request outcome is unconfirmed. Check API usage before explicitly retrying titles. The filename title is retained."
                 self.records.save(project)
             try:
-                title, input_tokens, output_tokens = asyncio.run(
-                    self.titles.suggest(words, ai_instructions=project.settings.ai_instructions)
-                )
+                with self._timed(identifier, "ai"):
+                    title, input_tokens, output_tokens = asyncio.run(
+                        self.titles.suggest(words, ai_instructions=project.settings.ai_instructions)
+                    )
                 # Recheck ownership/revision after remote inference before publishing the title.
                 self.transcriptions.export_words(
                     item.recording_id, transcript.id, transcript.revision, item.start, item.end
@@ -1444,8 +1479,10 @@ class Projects:
                     return
             supplied = bool(self.get(identifier, hydrate=False).recording_ids)
             if not supplied:
-                self._download(identifier)
-            self._thumbnail(identifier)
+                with self._timed(identifier, "download"):
+                    self._download(identifier)
+            with self._timed(identifier, "thumbnails"):
+                self._thumbnail(identifier)
             if not supplied:
                 self._select(identifier)
             project = self._stage(identifier, "rendering", "Preparing clip exports")
@@ -1473,9 +1510,12 @@ class Projects:
                             "rendering",
                             f"Rendering supplied clip {index} of {len(project.items)}",
                         )
-                    self._present(identifier, item.id)
-                    self._render(identifier, item.id)
-                    self._thumbnail(identifier, item.id)
+                    with self._timed(identifier, "visual"):
+                        self._present(identifier, item.id)
+                    with self._timed(identifier, "render"):
+                        self._render(identifier, item.id)
+                    with self._timed(identifier, "thumbnails"):
+                        self._thumbnail(identifier, item.id)
                 except (HTTPException, MediaError, TranscriptionError, HighlightError) as exc:
                     with self.lock:
                         current = self._check(identifier)

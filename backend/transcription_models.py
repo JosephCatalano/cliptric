@@ -34,6 +34,14 @@ class TranscriptionJob(BaseModel):
     revision: int
     created_at: str
     warning: str | None = None
+    device: Literal["cpu", "cuda"] | None = None
+
+
+class InferenceProfile(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+    device: Literal["cpu", "cuda"]
+    compute_type: Literal["int8", "int8_float16"]
+    warning: str | None = Field(default=None, max_length=500)
 
 
 def clean_text(value: str) -> str:

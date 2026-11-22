@@ -1,6 +1,6 @@
 """Saved project contracts. All media times are source-relative seconds."""
 
-from typing import Literal
+from typing import Annotated, Literal
 from uuid import UUID
 
 from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
@@ -108,6 +108,7 @@ class ProjectCreate(BaseModel):
 
 
 class ProjectItem(BaseModel):
+    transcription_backend: Literal["cpu", "cuda"] | None = None
     posted: bool = Field(default=False, strict=True)
     presentation_complete: bool = False
     presentation_requested: bool = False
@@ -163,6 +164,11 @@ class ProjectItem(BaseModel):
 
 
 class Project(BaseModel):
+    stage_seconds: dict[str, Annotated[float, Field(ge=0, allow_inf_nan=False)]] = Field(
+        default_factory=dict
+    )
+    transcription_backend: Literal["cpu", "cuda"] | None = None
+    analysis_cache_hit: bool = False
     parent_project_id: str | None = None
     avoid_used_clips: bool = False
     selection_exclusions: list[SourceRange] = Field(default_factory=list)

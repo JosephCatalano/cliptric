@@ -7,12 +7,13 @@ import tempfile
 import threading
 import time
 from contextlib import nullcontext
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from fractions import Fraction
 from pathlib import Path
 
 from .config import Settings
 from .editing import QualityOptions, edit_filter, retained_intervals, smart_filter
+from .encoding import encoding_profile
 from .files import require_space
 from .framing import SplitLayout, split_filter, validate_framing
 
@@ -40,6 +41,9 @@ class MediaInfo:
     frame_rate: float = 30
     audio_start: float = 0
     audio_end: float | None = None
+    render_backend: str | None = None
+    render_warning: str | None = None
+    render_seconds: float | None = None
 
 
 class Media:
@@ -189,6 +193,11 @@ class Media:
             or not 0.1 <= end - start <= self.settings.max_clip_seconds
         ):
             raise MediaError("Invalid export interval or framing mode.")
+        render_started = time.monotonic()
+        try:
+            profile = encoding_profile(self.settings)
+        except ValueError as exc:
+            raise MediaError(str(exc)) from exc
         original = self.probe(source)
         quality = quality or QualityOptions()
         try:
@@ -303,7 +312,7 @@ class Media:
                 kept, start, original.video_index, original.audio_index, quality
             ) + framing.replace(f"[0:{original.video_index}]", "[edited_video]")
         command = [
-            self.settings.ffmpeg,
+            profile.executable,
             "-hide_banner",
             "-loglevel",
             "error",
@@ -350,15 +359,15 @@ class Media:
             "-filter_complex",
             framing,
             "-filter_complex_threads",
-            "2",
+            str(self.settings.render_threads),
             "-c:v",
-            "libx264",
-            "-preset",
-            "veryfast",
-            "-crf",
-            "20",
+            *(
+                ["h264_nvenc", "-preset", "p5", "-rc", "vbr", "-cq", "20", "-b:v", "0"]
+                if profile.backend == "nvenc"
+                else ["libx264", "-preset", "veryfast", "-crf", "20"]
+            ),
             "-threads",
-            "2",
+            str(self.settings.render_threads),
             "-pix_fmt",
             "yuv420p",
             "-fps_mode",
@@ -440,7 +449,12 @@ class Media:
             raise MediaError("Export codec or pixel format did not pass verification.")
         if output.stat().st_size > self.settings.max_export_bytes:
             raise MediaError("Export exceeded its output size limit.")
-        return exported
+        return replace(
+            exported,
+            render_backend=profile.backend,
+            render_warning=profile.warning,
+            render_seconds=time.monotonic() - render_started,
+        )
 
     def active_picture(
         self, source: Path, info: MediaInfo, start: float, end: float, cancel: threading.Event

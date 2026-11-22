@@ -132,6 +132,7 @@ export type TextOverlay = {
   style: "card" | "outline" | "violet";
 };
 export type ProjectItem = {
+  transcription_backend?: "cpu" | "cuda" | null;
   posted?: boolean;
   presentation_complete?: boolean;
   presentation_summary?: string | null;
@@ -187,6 +188,11 @@ export type ProjectItem = {
   export_id: string | null;
   pending_export_id: string | null;
   export: {
+    performance?: {
+      backend: "cpu" | "nvenc";
+      seconds: number;
+      warning: string | null;
+    } | null;
     id: string;
     status: string;
     error: string | null;
@@ -194,6 +200,9 @@ export type ProjectItem = {
   } | null;
 };
 export type Project = {
+  stage_seconds?: Record<string, number>;
+  transcription_backend?: "cpu" | "cuda" | null;
+  analysis_cache_hit?: boolean;
   parent_project_id?: string | null;
   avoid_used_clips?: boolean;
   recording_ids?: string[];

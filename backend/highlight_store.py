@@ -123,7 +123,14 @@ class HighlightStore:
                 (payload["status"], json.dumps(payload), identifier),
             )
 
-    def publish(self, job: HighlightJob, candidates: list[Candidate], rejected: int, *, pool: list[Candidate] | None = None) -> None:
+    def publish(
+        self,
+        job: HighlightJob,
+        candidates: list[Candidate],
+        rejected: int,
+        *,
+        pool: list[Candidate] | None = None,
+    ) -> None:
         with self.store.connection() as db:
             db.execute("BEGIN IMMEDIATE")
             latest = db.execute(
@@ -171,17 +178,37 @@ class HighlightStore:
                 (json.dumps(payload), job.id),
             )
             if pool is not None and job.pool_key:
-                db.execute("INSERT INTO highlight_pools VALUES (?,?) ON CONFLICT(cache_key) DO UPDATE SET payload=excluded.payload",
-                           (job.pool_key, json.dumps([candidate.model_dump() for candidate in pool])))
+                db.execute(
+                    "INSERT INTO highlight_pools VALUES (?,?) ON CONFLICT(cache_key) DO UPDATE SET payload=excluded.payload",
+                    (job.pool_key, json.dumps([candidate.model_dump() for candidate in pool])),
+                )
 
     def pool(self, key: str) -> list[Candidate]:
         with self.store.connection() as db:
-            row = db.execute("SELECT payload FROM highlight_pools WHERE cache_key=?", (key,)).fetchone()
+            row = db.execute(
+                "SELECT payload FROM highlight_pools WHERE cache_key=?", (key,)
+            ).fetchone()
             if not row:
                 return []
             result = [Candidate.model_validate(item) for item in json.loads(row[0])]
             # A review may have changed since discovery. Never revive an explicitly rejected moment.
-            rejected = {item[0] for item in db.execute("SELECT DISTINCT fingerprint FROM highlight_candidates WHERE review='rejected'")}
+            source = (
+                db.execute(
+                    "SELECT recording_id FROM highlight_jobs WHERE id=?", (result[0].job_id,)
+                ).fetchone()
+                if result
+                else None
+            )
+            reviews = {}
+            for item in db.execute(
+                "SELECT c.fingerprint,c.review FROM highlight_candidates c JOIN highlight_jobs j ON j.id=c.job_id "
+                "WHERE j.recording_id=? ORDER BY j.created_at DESC,j.id DESC",
+                (source[0] if source else "",),
+            ):
+                reviews.setdefault(item[0], item[1])
+            rejected = {
+                fingerprint for fingerprint, review in reviews.items() if review == "rejected"
+            }
             return [candidate for candidate in result if candidate.fingerprint not in rejected]
 
     def review(self, identifier: str, request: ReviewRequest) -> Candidate:

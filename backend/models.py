@@ -71,7 +71,15 @@ class ExportRequest(BaseModel):
         return self
 
 
+class RenderPerformance(BaseModel):
+    model_config = ConfigDict(extra="forbid", allow_inf_nan=False)
+    backend: Literal["cpu", "nvenc"]
+    seconds: float = Field(ge=0)
+    warning: str | None = Field(default=None, max_length=500)
+
+
 class Clip(BaseModel):
+    performance: RenderPerformance | None = None
     posted: bool = Field(default=False, strict=True)
     quality: QualityOptions = Field(default_factory=QualityOptions)
     overlays: Overlays = Field(default_factory=list)

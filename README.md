@@ -481,9 +481,45 @@ For a production frontend build, use `npm.cmd run build` followed by `npm.cmd st
 8. Export, review playback, and download. Dimensions, duration, codecs, and audio are verified. Captions are burned into the MP4; later transcript edits affect future exports while existing files retain their original snapshots.
 9. Reopen the page to recover the selection, corrections, and history.
 
+## Processing speed and diagnostics
+
+New processing defaults use GPU speech recognition where available, up to three concurrent long-form AI windows, a reusable highlight pool, four render/filter threads and validated NVIDIA encoding. Processing remains bounded: one speech worker and one export worker per API process; supplied-video AI review/title requests remain sequential. Existing transcript and exact-export reuse remains in place.
+
+- **Unused highlights:** each long-form window may propose up to five grounded moments; keep up to 20 ranked distinct candidates while exporting only the requested maximum. Find more clips can reuse eligible unused candidates without another API call. Pool identity includes transcript ID/revision, model, prompt/output policy, source range, duration/quality settings and extra AI instructions. Used source ranges and explicitly rejected moments are excluded. Changing these inputs invalidates the pool; explicit regeneration bypasses reuse. A remaining pool can return fewer than the requested maximum. Pools retain candidate metadata locally and survive restarts.
+- **Parallel AI:** the default is three requests in flight, configurable from one to four. Every attempt is persisted before dispatch; request/time/input/token caps remain. Failure, cancellation or a changed transcript stops further dispatch and cancels pending local tasks, with no partial publication or automatic retry. Already-sent requests may still be billed. A pool can increase response tokens within the existing per-request cap; it does not add transcript windows.
+- **Warm speech worker:** the same isolated process/model serves sequential sources, then the parent releases it after 120 idle seconds. Dispatch and expiry share a lock. Cancellation, worker/inference failure and application shutdown discard the process; subsequent explicit jobs recreate it. Original audio/ASR words and five-minute window alignment remain unchanged. Model files are still verified before every source. CPU fallback is reported in the saved transcript warning; actual `device` is persisted and copied on transcript cache reuse.
+- **Rendering:** `auto` probes an actual NVIDIA encoder session before selecting NVENC. A compatible local encoder takes priority; unavailable hardware uses the existing libx264 veryfast CRF 20 path with a visible warning. NVENC uses H.264 preset p5, VBR CQ 20, AAC and the existing rendering, subtitle, overlay, geometry, duration and audio checks. CQ and CRF are different controls; judge visual quality on representative footage before publishing. A render that fails after selection is reported, without silently switching encoders or retrying. Probe results are cached for that binary version until backend restart.
+- **Timings:** project results show persisted elapsed seconds for download, transcription, AI, visual analysis, rendering and thumbnails, plus actual speech/video backends and pool reuse. Times accumulate per stage in the latest run and include waits for shared workers; active stages appear when they finish. Resume starts a fresh timing set. Each successful export stores its own encoder, seconds and fallback warning, also shown in Clip editor. Older jobs without timing/device records show no invented measurements. These are observations, not estimates of time remaining.
+
+Optional Windows GPU setup (no system driver changes):
+
+```powershell
+.\.venv\Scripts\python.exe -m pip install --only-binary=:all: -r requirements-gpu.txt
+.\.venv\Scripts\python.exe scripts/install_nvenc.py
+```
+
+The speech runtime searches only the current Python environment's optional NVIDIA runtime-wheel directories for Windows DLLs. The installer downloads the [Gyan FFmpeg 8.0.1 Windows build](https://github.com/GyanD/codexffmpeg/releases/tag/8.0.1), verifies SHA-256 `e2aaeaa0fdbc397d4794828086424d4aaa2102cef1fb6874f6ffd29c0b88b673`, tests NVENC, and installs only the encoder binary/license/readme under `.tools/nvenc/ffmpeg/`. This separate build supports the current laptop's NVENC 13.0 driver; the main newer FFmpeg remains responsible for imports, probing and CPU fallback. Maintain this compatibility binary alongside driver/FFmpeg updates. On other systems supply a compatible binary using `CLIPPING_NVENC_FFMPEG`, or use CPU mode. CUDA requirements follow [faster-whisper's GPU guidance](https://github.com/SYSTRAN/faster-whisper#gpu).
+
+Optional settings in `backend/.env` or the process environment (environment takes priority):
+
+| Setting | Default | Allowed |
+| --- | --- | --- |
+| `CLIPPING_TRANSCRIPTION_DEVICE` | `auto` | `auto`, `cpu`, `cuda` |
+| `CLIPPING_TRANSCRIPTION_THREADS` | `6` | 1?16 |
+| `CLIPPING_TRANSCRIPTION_IDLE_SECONDS` | `120` | 1?600 |
+| `CLIPPING_HIGHLIGHT_CONCURRENCY` | `3` | 1?4 |
+| `CLIPPING_HIGHLIGHT_POOL_SIZE` | `20` | 1?100 |
+| `CLIPPING_RENDER_ENCODER` | `auto` | `auto`, `cpu`, `nvenc` |
+| `CLIPPING_RENDER_THREADS` | `4` | 1?16 |
+| `CLIPPING_NVENC_FFMPEG` | empty | Local compatible FFmpeg executable path |
+
+Restart the backend after changing configuration or GPU dependencies. Explicit `cuda`/`nvenc` modes fail clearly instead of falling back. Configuration never edits system drivers or global PATH.
+
+Focused checks: `python -m pytest -q backend/tests/test_performance.py backend/tests/test_highlights.py backend/tests/test_transcription_worker.py`, existing transcription/project/batch lifecycle checks, and real-media project/batch export checks. Verified locally on RTX A500: CUDA encoder/decoder initialization, two synthetic jobs reusing one CUDA process, idle cleanup and actual NVENC portrait exports with audio/captions. Synthetic inputs establish functionality and resource reuse, not speech accuracy, representative speedup or editorial quality. Review a permitted VOD against the CPU baseline using the saved stage timings, caption synchronization and visual checks; compare a later unused batch for API reuse. UI/browser review and representative quality/performance comparison remain manual.
+
 ## Transcription and caption contracts
 
-- The pinned `small.en` model runs through faster-whisper on CPU with `int8`, six inference threads, English word timestamps, and voice activity detection. GPU inference has not been configured or verified. Speech recognition stays offline; optional highlight analysis sends only saved transcript text/timestamps to OpenAI after consent.
+- The pinned `small.en` model uses faster-whisper with automatic CUDA `int8_float16` selection and visible CPU `int8` fallback. Six CPU threads, beam size five, English word timestamps and voice activity detection remain the defaults. CUDA initialization includes a real encoder/decoder probe before any source words are emitted; explicit CUDA mode fails if initialization is unavailable. Speech recognition stays offline; optional highlight analysis sends only saved transcript text/timestamps to OpenAI after consent.
 - One transcription runs at a time in a separate cancellable process, with a two-hour deadline and bounded results/logs. FFmpeg decodes temporary 16 kHz mono PCM to disk while preserving source offsets. Inference reads five-minute windows with two seconds of context instead of allocating a six-hour waveform. Temporary audio needs approximately 115 MB per source-hour, plus the normal disk reserve.
 - Transcription and YouTube workers publish progress as atomic file snapshots. Publication and bounded snapshot reads retry Windows access/sharing/lock conflicts for at most 0.63 seconds. Windows CRT reads can report sharing conflicts as EACCES without a Windows error code; these reads receive the same bounded retry. Missing unpublished snapshots are allowed; malformed/oversized state and persistent access errors fail visibly. This retries only local snapshot I/O, never inference, API requests, or downloads. Transcription parent failures also save their traceback in `data/logs/transcription-{id}.log`, alongside worker diagnostics.
 - Cache identity includes source bytes, pinned model files/revision, inference settings, FFmpeg, and relevant runtime versions. Same-recording retries retain corrections. Duplicate imports may reuse recognition but keep separate editorial changes. Changing clip boundaries reuses the saved transcript directly.

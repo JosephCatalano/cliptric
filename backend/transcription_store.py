@@ -54,6 +54,9 @@ class TranscriptStore:
                     FOREIGN KEY(transcription_id, id) REFERENCES transcript_words(transcription_id, id)
                 );
             """)
+            columns = {row[1] for row in db.execute("PRAGMA table_info(transcriptions)")}
+            if "device" not in columns:
+                db.execute("ALTER TABLE transcriptions ADD COLUMN device TEXT")
 
     def recover(self) -> None:
         with self.store.connection() as db:
@@ -115,7 +118,7 @@ class TranscriptStore:
             if target is None:
                 raise TranscriptionError("Transcription not found.", 404)
             cached = db.execute(
-                "SELECT id,recording_id,word_count,revision,warning FROM transcriptions "
+                "SELECT id,recording_id,word_count,revision,warning,device FROM transcriptions "
                 "WHERE cache_key=? AND status='succeeded' "
                 "ORDER BY (recording_id=?) DESC,updated_at DESC LIMIT 1",
                 (cache_key, target["recording_id"]),
@@ -130,13 +133,14 @@ class TranscriptStore:
             )
             db.execute(
                 "UPDATE transcriptions SET status='succeeded',progress=1,word_count=?,"
-                "revision=?,source_hash=?,cache_key=?,warning=?,updated_at=? WHERE id=?",
+                "revision=?,source_hash=?,cache_key=?,warning=?,device=?,updated_at=? WHERE id=?",
                 (
                     cached["word_count"],
                     cached["revision"] if cached["recording_id"] == target["recording_id"] else 1,
                     source_hash,
                     cache_key,
                     cached["warning"],
+                    cached["device"],
                     now(),
                     transcription_id,
                 ),
@@ -158,6 +162,7 @@ class TranscriptStore:
         duration: float,
         expected_count: int,
         warning: str | None = None,
+        device: str | None = None,
     ) -> None:
         if result.stat().st_size > MAX_RESULT_BYTES:
             raise TranscriptionError("Transcription exceeded its result size limit.")
@@ -182,8 +187,8 @@ class TranscriptStore:
                 )
             db.execute(
                 "UPDATE transcriptions SET status='succeeded',progress=1,word_count=?,"
-                "revision=1,source_hash=?,cache_key=?,warning=?,updated_at=? WHERE id=?",
-                (count, source_hash, cache_key, warning, now(), transcription_id),
+                "revision=1,source_hash=?,cache_key=?,warning=?,device=?,updated_at=? WHERE id=?",
+                (count, source_hash, cache_key, warning, device, now(), transcription_id),
             )
 
     @staticmethod

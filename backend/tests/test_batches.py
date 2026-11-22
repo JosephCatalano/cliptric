@@ -166,7 +166,7 @@ def test_limits_missing_sources_and_duplicate_ids(context):
     )
     update_recording(manager, recording.model_copy(update={"duration": 21601.0}))
     assert client.post("/api/projects", json=request).status_code == 422
-    update_recording(manager, recording.model_copy(update={"size_bytes": 2 * 1024**3 + 1}))
+    update_recording(manager, recording.model_copy(update={"size_bytes": manager.media.settings.max_upload_bytes + 1}))
     assert client.post("/api/projects", json=request).status_code == 413
     update_recording(manager, recording)
     manager.store.source_path(recording.id).unlink()

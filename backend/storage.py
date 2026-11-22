@@ -6,7 +6,7 @@ from pathlib import Path
 from typing import Iterator
 
 from .files import remove_artifact
-from .models import Clip, ExportRequest, Recording, SelectionDraft
+from .models import Clip, ExportRequest, Recording, RenderPerformance, SelectionDraft
 
 
 def now() -> str:
@@ -83,6 +83,10 @@ class Store:
                     clip_id TEXT PRIMARY KEY REFERENCES clips(id), options TEXT NOT NULL
                 );
                 PRAGMA user_version = 6;
+                CREATE TABLE IF NOT EXISTS clip_performance (
+                    clip_id TEXT PRIMARY KEY REFERENCES clips(id) ON DELETE CASCADE,
+                    payload TEXT NOT NULL
+                );
             """)
 
     @contextmanager
@@ -204,6 +208,9 @@ class Store:
 
     @staticmethod
     def _clip(db: sqlite3.Connection, row: sqlite3.Row) -> Clip:
+        performance = db.execute(
+            "SELECT payload FROM clip_performance WHERE clip_id=?", (row["id"],)
+        ).fetchone()
         caption = db.execute(
             "SELECT options FROM clip_captions WHERE clip_id = ?", (row["id"],)
         ).fetchone()
@@ -223,6 +230,7 @@ class Store:
             {
                 **dict(row),
                 "posted": bool(row["posted"]),
+                "performance": json.loads(performance[0]) if performance else None,
                 "captions": _caption_snapshot(caption[0] if caption else None),
                 "headline": _headline_snapshot(headline[0] if headline else None),
                 "overlays": json.loads(overlays[0]) if overlays else [],
@@ -238,6 +246,9 @@ class Store:
                     {
                         **dict(row),
                         "posted": bool(row["posted"]),
+                        "performance": json.loads(row["render_performance"])
+                        if row["render_performance"]
+                        else None,
                         "headline": _headline_snapshot(row["headline_options"]),
                         "split_layout": json.loads(row["framing_options"])
                         if row["framing_options"]
@@ -252,7 +263,8 @@ class Store:
                     }
                 )
                 for row in db.execute(
-                    "SELECT clips.*, COALESCE(clip_posted.posted, 0) AS posted, clip_captions.options AS caption_options, clip_headlines.options AS headline_options, clip_overlays.options AS overlay_options, clip_framing.options AS framing_options, clip_quality.options AS quality_options FROM clips "
+                    "SELECT clips.*, clip_performance.payload AS render_performance, COALESCE(clip_posted.posted, 0) AS posted, clip_captions.options AS caption_options, clip_headlines.options AS headline_options, clip_overlays.options AS overlay_options, clip_framing.options AS framing_options, clip_quality.options AS quality_options FROM clips "
+                    "LEFT JOIN clip_performance ON clips.id=clip_performance.clip_id "
                     "LEFT JOIN clip_posted ON clips.id = clip_posted.clip_id "
                     "LEFT JOIN clip_captions ON clips.id = clip_captions.clip_id "
                     "LEFT JOIN clip_headlines ON clips.id = clip_headlines.clip_id "
@@ -277,12 +289,18 @@ class Store:
         error: str | None = None,
         duration: float | None = None,
         size_bytes: int | None = None,
+        performance: dict | None = None,
     ) -> None:
         with self.connection() as db:
             db.execute(
                 "UPDATE clips SET status = ?, error = ?, duration = ?, size_bytes = ? WHERE id = ?",
                 (status, error, duration, size_bytes, clip_id),
             )
+            if performance is not None:
+                db.execute(
+                    "INSERT INTO clip_performance VALUES (?,?) ON CONFLICT(clip_id) DO UPDATE SET payload=excluded.payload",
+                    (clip_id, RenderPerformance.model_validate(performance).model_dump_json()),
+                )
 
     def export_path(self, clip_id: str) -> Path:
         return self.root / "exports" / f"{clip_id}.mp4"

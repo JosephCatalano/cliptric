@@ -162,6 +162,10 @@ def test_auto_range_variable_lengths_cache_idempotency_and_zip(context):
     request = payload(recording)
     result = create(client, request)
     assert result["status"] == "ready", result
+    assert set(result["stage_seconds"]) >= {"transcription", "ai", "render", "thumbnails", "visual"}
+    assert all(value >= 0 for value in result["stage_seconds"].values())
+    saved = manager.records.get(result["id"])
+    assert saved.stage_seconds == result["stage_seconds"]
     assert [i["end"] - i["start"] for i in result["items"]] == [9, 14]
     assert all(10 <= i["start"] < i["end"] <= 65 for i in result["items"])
     assert len(provider.calls) == 1

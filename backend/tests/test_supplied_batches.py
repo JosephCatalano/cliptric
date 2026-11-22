@@ -10,12 +10,12 @@ from uuid import uuid4
 
 import httpx2
 import pytest
-from fastapi import HTTPException
 
 from backend.batch_titles import BatchTitles
 from backend.highlight_models import HighlightError
 from backend.media import MediaError
 from backend.project_models import ItemEdit
+from backend.tests.test_batches import update_recording
 from backend.tests.test_projects import context as context
 from backend.tests.test_projects import create, finished, seed
 from backend.tests.test_projects import settings as settings
@@ -24,24 +24,32 @@ from backend.tests.test_projects import tools as tools
 
 def batch(recordings, **settings):
     return {
-        "id": str(uuid4()), "title": "Campaign clips",
+        "id": str(uuid4()),
+        "title": "Campaign clips",
         "recording_ids": [recording.id for recording in recordings],
         "settings": {
-            "duration_mode": "full", "analysis_end": max(r.duration for r in recordings),
-            "caption_preset": "impact", "caption_position": "auto", **settings,
+            "duration_mode": "full",
+            "analysis_end": max(r.duration for r in recordings),
+            "caption_preset": "impact",
+            "caption_position": "auto",
+            **settings,
         },
     }
 
 
 def edit_payload(item, **changes):
-    return {**{name: item[name] for name in ItemEdit.model_fields}, **changes}
+    return {
+        "auto_presentation": False,
+        **{name: item[name] for name in ItemEdit.model_fields if name != "auto_presentation"},
+        **changes,
+    }
 
 
 def test_separate_sources_transcripts_complete_lengths_reuse_delivery_and_edit(context, tmp_path):
     client, manager, first, provider, _ = context
     second = seed(manager, tmp_path)
     second = second.model_copy(update={"duration": 6.0, "name": "Short supplied.mp4"})
-    manager.store.save_recording(second, ".mp4")
+    update_recording(manager, second)
     request = batch([first, second])
     result = create(client, request)
     assert result["status"] == "ready", result
@@ -55,7 +63,13 @@ def test_separate_sources_transcripts_complete_lengths_reuse_delivery_and_edit(c
         assert manager.store.source_path(item["recording_id"]).exists()
     assert items[1]["title"] == "Short supplied"
     assert client.post("/api/projects", json=request).json()["id"] == result["id"]
-    assert client.post("/api/projects", json={**request, "recording_ids": list(reversed(request["recording_ids"]))}).status_code == 409
+    assert (
+        client.post(
+            "/api/projects",
+            json={**request, "recording_ids": list(reversed(request["recording_ids"]))},
+        ).status_code
+        == 409
+    )
     previous_exports = [item["export_id"] for item in items]
     client.post(f"/api/projects/{result['id']}/resume", json={})
     resumed = finished(client, result["id"])
@@ -69,7 +83,12 @@ def test_separate_sources_transcripts_complete_lengths_reuse_delivery_and_edit(c
     route = f"/api/projects/{result['id']}/clips/{items[1]['id']}"
     # The second clip must never inherit the first source's longer trim range.
     assert client.patch(route, json=edit_payload(items[1], end=7.0)).status_code == 422
-    assert client.patch(route, json=edit_payload(items[1], title="Edited short", start=1.0, end=5.0)).status_code == 202
+    assert (
+        client.patch(
+            route, json=edit_payload(items[1], title="Edited short", start=1.0, end=5.0)
+        ).status_code
+        == 202
+    )
     edited = finished(client, result["id"])
     assert edited["status"] == "ready", edited
     assert edited["items"][0]["export_id"] == previous_exports[0]
@@ -104,10 +123,15 @@ def test_failure_isolated_and_resume_reuses_success(context, tmp_path, monkeypat
     assert resumed["items"][0]["export_id"] == result["items"][0]["export_id"]
 
 
-@pytest.mark.parametrize("changes", [
-    {"recording_ids": []}, {"recording_id": str(uuid4())},
-    {"generate_titles": True}, {"generate_titles": True, "remote_consent": "yes"},
-])
+@pytest.mark.parametrize(
+    "changes",
+    [
+        {"recording_ids": []},
+        {"recording_id": str(uuid4())},
+        {"generate_titles": True},
+        {"generate_titles": True, "remote_consent": "yes"},
+    ],
+)
 def test_source_and_consent_validation(context, changes):
     client, _, recording, _, _ = context
     assert client.post("/api/projects", json={**batch([recording]), **changes}).status_code == 422
@@ -117,14 +141,24 @@ def test_batch_bounds_unknown_missing_duplicate_and_size(context):
     client, manager, recording, _, _ = context
     request = batch([recording])
     for ids in ([recording.id] * 2, [str(uuid4()) for _ in range(16)]):
-        assert client.post("/api/projects", json={**request, "recording_ids": ids}).status_code == 422
-    assert client.post("/api/projects", json={**request, "recording_ids": [str(uuid4())]}).status_code == 404
-    assert client.post("/api/projects", json=batch([recording], analysis_start=1.0)).status_code == 422
-    manager.store.save_recording(recording.model_copy(update={"duration": 121.0}), ".mp4")
+        assert (
+            client.post("/api/projects", json={**request, "recording_ids": ids}).status_code == 422
+        )
+    assert (
+        client.post("/api/projects", json={**request, "recording_ids": [str(uuid4())]}).status_code
+        == 404
+    )
+    assert (
+        client.post("/api/projects", json=batch([recording], analysis_start=1.0)).status_code == 422
+    )
+    update_recording(manager, recording.model_copy(update={"duration": 21601.0}))
     assert client.post("/api/projects", json=request).status_code == 422
-    manager.store.save_recording(recording.model_copy(update={"size_bytes": 2 * 1024**3 + 1}), ".mp4")
+    update_recording(
+        manager,
+        recording.model_copy(update={"size_bytes": manager.media.settings.max_upload_bytes + 1}),
+    )
     assert client.post("/api/projects", json=request).status_code == 413
-    manager.store.save_recording(recording, ".mp4")
+    update_recording(manager, recording)
     manager.store.source_path(recording.id).unlink()
     assert client.post("/api/projects", json=request).status_code == 404
 
@@ -133,7 +167,7 @@ def test_ai_title_failure_never_automatically_retries_and_manual_title_wins(cont
     client, manager, recording, _, _ = context
     calls = []
 
-    async def fail(words):
+    async def fail(words, *, ai_instructions=""):
         calls.append(words)
         raise HighlightError("Synthetic unknown billing outcome", 503)
 
@@ -147,7 +181,7 @@ def test_ai_title_failure_never_automatically_retries_and_manual_title_wins(cont
     finished(client, result["id"])
     assert len(calls) == 1
 
-    async def succeed(words):
+    async def succeed(words, *, ai_instructions=""):
         calls.append(words)
         return "A grounded title", 100, 20
 
@@ -159,7 +193,13 @@ def test_ai_title_failure_never_automatically_retries_and_manual_title_wins(cont
     assert item["title_input_tokens"] == 100
     assert item["export"]["headline"]["text"] == "A grounded title"
     assert manager.store.export_path(result["items"][0]["export_id"]).exists()
-    assert client.patch(f"/api/projects/{result['id']}/clips/{item['id']}", json=edit_payload(item, title="Manual title")).status_code == 202
+    assert (
+        client.patch(
+            f"/api/projects/{result['id']}/clips/{item['id']}",
+            json=edit_payload(item, title="Manual title"),
+        ).status_code
+        == 202
+    )
     finished(client, result["id"])
     client.post(f"/api/projects/{result['id']}/resume", json={"retry_titles": True})
     assert finished(client, result["id"])["items"][0]["title"] == "Manual title"
@@ -171,7 +211,7 @@ def test_cancel_during_title_keeps_durable_result_and_resume_does_not_rebill(con
     entered, release = threading.Event(), threading.Event()
     calls = []
 
-    async def held(words):
+    async def held(words, *, ai_instructions=""):
         calls.append(words)
         entered.set()
         while not release.is_set():
@@ -179,7 +219,10 @@ def test_cancel_during_title_keeps_durable_result_and_resume_does_not_rebill(con
         return "Durable title", 20, 10
 
     monkeypatch.setattr(manager.titles, "suggest", held)
-    response = client.post("/api/projects", json={**batch([recording]), "generate_titles": True, "remote_consent": True})
+    response = client.post(
+        "/api/projects",
+        json={**batch([recording]), "generate_titles": True, "remote_consent": True},
+    )
     identifier = response.json()["id"]
     try:
         assert entered.wait(3)
@@ -212,17 +255,29 @@ def test_restart_preserves_finished_exports_and_blocks_unknown_title_retry(conte
 def test_silent_clip_recovers_by_explicitly_disabling_captions(context):
     client, manager, recording, _, _ = context
     recording = recording.model_copy(update={"has_audio": False})
-    manager.store.save_recording(recording, ".mp4")
+    update_recording(manager, recording)
     result = create(client, batch([recording]))
     assert result["status"] == "partial" and "no audio" in result["items"][0]["error"]
     item = result["items"][0]
-    response = client.patch(f"/api/projects/{result['id']}/clips/{item['id']}", json=edit_payload(item, caption_preset="none"))
+    response = client.patch(
+        f"/api/projects/{result['id']}/clips/{item['id']}",
+        json=edit_payload(item, caption_preset="none"),
+    )
     assert response.status_code == 202, response.text
     assert finished(client, result["id"])["status"] == "ready"
 
 
 def title_response(title="Source grounded"):
-    return {"status": "completed", "output": [{"type": "message", "content": [{"type": "output_text", "text": json.dumps({"title": title})}]}], "usage": {"input_tokens": 20, "output_tokens": 8}}
+    return {
+        "status": "completed",
+        "output": [
+            {
+                "type": "message",
+                "content": [{"type": "output_text", "text": json.dumps({"title": title})}],
+            }
+        ],
+        "usage": {"input_tokens": 20, "output_tokens": 8},
+    }
 
 
 def test_title_transport_is_fixed_bounded_structured_and_has_no_retry(settings):
@@ -237,7 +292,9 @@ def test_title_transport_is_fixed_bounded_structured_and_has_no_retry(settings):
         assert json.loads(body["input"])["transcript"] == "Actual speech"
         return httpx2.Response(200, json=title_response())
 
-    provider = BatchTitles(replace(settings, openai_api_key="synthetic"), transport=httpx2.MockTransport(respond))
+    provider = BatchTitles(
+        replace(settings, openai_api_key="synthetic"), transport=httpx2.MockTransport(respond)
+    )
     assert asyncio.run(provider.suggest([{"text": "Actual speech"}])) == ("Source grounded", 20, 8)
     assert len(calls) == 1
     with pytest.raises(HighlightError):
@@ -245,11 +302,17 @@ def test_title_transport_is_fixed_bounded_structured_and_has_no_retry(settings):
     assert len(calls) == 1
 
 
-@pytest.mark.parametrize("response", [
-    {}, {"status": "incomplete"}, title_response(" "), title_response("x" * 121),
-    {**title_response(), "usage": {"input_tokens": True, "output_tokens": 8}},
-    {"status": "completed", "output": [{"type": "message", "content": [{"type": "refusal"}]}]},
-])
+@pytest.mark.parametrize(
+    "response",
+    [
+        {},
+        {"status": "incomplete"},
+        title_response(" "),
+        title_response("x" * 121),
+        {**title_response(), "usage": {"input_tokens": True, "output_tokens": 8}},
+        {"status": "completed", "output": [{"type": "message", "content": [{"type": "refusal"}]}]},
+    ],
+)
 def test_invalid_titles_fail_without_publishing(response):
     with pytest.raises(HighlightError):
         BatchTitles.parse(json.dumps(response).encode())

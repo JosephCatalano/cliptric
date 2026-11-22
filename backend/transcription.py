@@ -42,6 +42,7 @@ from .transcription_models import (
 )
 from .transcription_store import TranscriptStore
 from .transcription_worker import CONTEXT_SECONDS, SAMPLE_RATE, TRANSCRIBE_OPTIONS, WINDOW_SECONDS
+from .warm_transcription import WarmTranscription
 
 logger = logging.getLogger(__name__)
 REQUIRED_MODEL_FILES = set(MODEL_FILES)
@@ -58,6 +59,9 @@ class Transcriptions:
         self.active: str | None = None
         self.cancel_event = threading.Event()
         self.stopping = False
+        self.inference = WarmTranscription(
+            self.work_root, settings.transcription_worker_idle_seconds
+        )
 
     def initialize(self) -> None:
         self.transcripts.initialize()
@@ -243,7 +247,7 @@ class Transcriptions:
             check=True,
         ).stdout.splitlines()[0]
         identity = {
-            "pipeline": 1,
+            "pipeline": 2,
             "source": source_hash,
             "model": model,
             "runtime": {
@@ -251,8 +255,12 @@ class Transcriptions:
                 for name in ("faster-whisper", "ctranslate2", "onnxruntime", "numpy", "tokenizers")
             },
             "ffmpeg": version,
-            "device": "cpu",
-            "compute_type": "int8",
+            "device": self.settings.transcription_device,
+            "compute_type": "auto-int8"
+            if self.settings.transcription_device == "auto"
+            else "int8_float16"
+            if self.settings.transcription_device == "cuda"
+            else "int8",
             "threads": self.settings.transcription_threads,
             "sample_rate": SAMPLE_RATE,
             "window_seconds": WINDOW_SECONDS,
@@ -307,6 +315,7 @@ class Transcriptions:
                     self._check_running(deadline)
                     self.transcripts.update(job.id, "transcribing", progress=0.08)
                 request = {
+                    "device": self.settings.transcription_device,
                     "work_dir": str(work.resolve()),
                     "model_dir": str(self.settings.transcription_model_dir.resolve()),
                     "threads": self.settings.transcription_threads,
@@ -345,6 +354,15 @@ class Transcriptions:
             ):
                 raise TranscriptionError("Transcription returned an invalid completion record.")
             warnings = []
+            from .transcription_models import InferenceProfile
+
+            runtime = (
+                InferenceProfile.model_validate(complete["runtime"])
+                if "runtime" in complete
+                else None
+            )
+            if runtime and runtime.warning:
+                warnings.append(runtime.warning)
             if not complete["word_count"]:
                 warnings.append(
                     "No English speech was detected. Check the audio and selected language."
@@ -363,8 +381,10 @@ class Transcriptions:
                     recording.duration,
                     complete["word_count"],
                     warning=" ".join(warnings) or None,
+                    device=runtime.device if runtime else None,
                 )
         except TranscriptionCancelled:
+            self.inference.close()
             with self.lock:
                 self.transcripts.update(job.id, "cancelled")
         except (TranscriptionError, MediaError) as exc:
@@ -401,6 +421,7 @@ class Transcriptions:
             logger.exception("Could not persist transcription diagnostics for %s", transcription_id)
 
     def _fail(self, transcription_id: str, message: str) -> None:
+        self.inference.close()
         with self.lock:
             if self.cancel_event.is_set():
                 self.transcripts.update(transcription_id, "cancelled")
@@ -464,13 +485,22 @@ class Transcriptions:
         transcription_id: str | None = None,
     ) -> None:
         self._check_running(deadline)
-        process = subprocess.Popen(
-            command, cwd=ROOT, stdin=subprocess.DEVNULL, stdout=log, stderr=log
+        warm = transcription_id is not None
+        process = (
+            self.inference.start(work / "request.json")
+            if warm
+            else subprocess.Popen(
+                command, cwd=ROOT, stdin=subprocess.DEVNULL, stdout=log, stderr=log
+            )
         )
         next_check = 0.0
         last_progress = 0.08
+        succeeded = False
         try:
-            while process.poll() is None:
+            while process.poll() is None and not (
+                warm
+                and ((work / "complete.json").exists() or (work / "worker_failed.json").exists())
+            ):
                 self.cancel_event.wait(0.15)
                 self._check_running(deadline)
                 if time.monotonic() >= next_check:
@@ -479,6 +509,8 @@ class Transcriptions:
                         "audio.wav": math.ceil(duration * SAMPLE_RATE * 2) + 4096,
                         "words.ndjson": MAX_RESULT_BYTES,
                         "complete.json": 4096,
+                        "worker-error.log": 16_384,
+                        "worker_failed.json": 4096,
                     }
                     if log.tell() > MAX_LOG_BYTES or any(
                         (path := work / name).exists() and path.stat().st_size > limit
@@ -506,14 +538,23 @@ class Transcriptions:
                             last_progress = progress
                     next_check = time.monotonic() + 1
             self._check_running(deadline)
-            if process.returncode:
+            if process.returncode or (warm and (work / "worker_failed.json").exists()):
+                if warm and (work / "worker-error.log").is_file():
+                    log.write((work / "worker-error.log").read_bytes()[:16_384])
                 raise TranscriptionError(
                     "Audio processing failed. Details are saved in the local transcription log."
                 )
+            succeeded = True
+            if warm:
+                self.inference.mark_idle()
         finally:
-            if process.poll() is None:
-                process.kill()
-            process.wait()
+            if warm:
+                if not succeeded:
+                    self.inference.close()
+            else:
+                if process.poll() is None:
+                    process.kill()
+                process.wait()
 
     def _cleanup(self, work: Path) -> None:
         try:
@@ -529,6 +570,7 @@ class Transcriptions:
             self.stopping = True
             self.cancel_event.set()
         self.pool.shutdown(wait=True)
+        self.inference.close()
 
 
 def create_transcription_router(manager: Transcriptions) -> APIRouter:
