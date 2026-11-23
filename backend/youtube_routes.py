@@ -4,7 +4,7 @@ from fastapi import APIRouter, Query, Request
 from fastapi.responses import JSONResponse, RedirectResponse
 
 from .youtube_api import CALLBACK_PATH, YouTubeError
-from .youtube_publishing import UploadJob, UploadRequest
+from .youtube_publishing import BatchUploadRequest, UploadJob, UploadRequest
 
 
 def create_youtube_publishing_router(service):
@@ -74,6 +74,10 @@ def create_youtube_publishing_router(service):
     @router.post("/posts", response_model=UploadJob, status_code=202)
     def publish(payload: UploadRequest):
         return call(service.submit, payload)
+
+    @router.post("/posts/batch", response_model=list[UploadJob], status_code=202)
+    def publish_batch(payload: BatchUploadRequest):
+        return call(service.submit_batch, payload)
 
     @router.post("/posts/{identifier}/refresh", response_model=UploadJob)
     def refresh(identifier: UUID):

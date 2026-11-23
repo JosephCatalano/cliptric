@@ -4,6 +4,7 @@ import json
 import logging
 import threading
 import time
+from collections import Counter
 from collections.abc import Callable, Coroutine
 from concurrent.futures import Future, ThreadPoolExecutor
 from typing import Any, Protocol, TypeVar
@@ -16,7 +17,7 @@ from .editorial_review import MAX_RESULTS, EditorialReviewer, ground_review, sho
 from .highlight_models import (
     ACTIVE,
     DISCOVERY_VERSION,
-    MAX_AUTO_WINDOW_SECONDS,
+    MAX_COVERAGE_WINDOW_SECONDS,
     OVERLAP_SECONDS,
     PROMPT_VERSION,
     WINDOW_SECONDS,
@@ -135,11 +136,15 @@ class Highlights:
             recording.duration,
             request,
             self.settings.highlight_max_windows,
-            window_seconds=min(
-                MAX_AUTO_WINDOW_SECONDS, max(WINDOW_SECONDS, request.max_seconds + OVERLAP_SECONDS)
-            )
-            if request.duration_mode == "auto"
-            else max(WINDOW_SECONDS, request.max_seconds + OVERLAP_SECONDS),
+            window_seconds=max(
+                WINDOW_SECONDS,
+                request.min_seconds + OVERLAP_SECONDS,
+                min(
+                    MAX_COVERAGE_WINDOW_SECONDS,
+                    (end - request.analysis_start) / self.settings.highlight_max_windows
+                    + OVERLAP_SECONDS,
+                ),
+            ),
         )
         instruction_bytes = (
             len(json.dumps({"project_instructions": request.ai_instructions}).encode("utf-8"))
@@ -317,16 +322,15 @@ class Highlights:
         request: HighlightRequest,
         duration: float,
         deadline: float,
-    ) -> tuple[list[Candidate], int]:
+    ) -> tuple[list[Candidate], Counter[str]]:
         queue = asyncio.Queue()
         for index, window in enumerate(windows):
             queue.put_nowait((index, window))
         results = {}
-        rejected = 0
+        rejected: Counter[str] = Counter()
         discovery_request = request.model_copy(update={"quality_mode": False, "max_candidates": 5})
 
         async def worker():
-            nonlocal rejected
             while not queue.empty():
                 index, window = queue.get_nowait()
                 # Retain a modest pool without changing the number of requested exports.
@@ -335,18 +339,23 @@ class Highlights:
                 )
                 job.input_tokens += response.input_tokens
                 job.output_tokens += response.output_tokens
-                grounded, invalid = ground_candidates(
-                    response.candidates, window, discovery_request, duration, job.id
+                grounded, _ = ground_candidates(
+                    response.candidates,
+                    window,
+                    discovery_request,
+                    duration,
+                    job.id,
+                    rejection_reasons=rejected,
                 )
                 results[index] = grounded
-                rejected += invalid
                 job.completed_windows += 1
                 self.results.update(
                     job.id,
                     completed_windows=job.completed_windows,
                     input_tokens=job.input_tokens,
                     output_tokens=job.output_tokens,
-                    rejected_candidates=rejected,
+                    rejected_candidates=rejected.total(),
+                    discovery_rejections=dict(rejected),
                 )
 
         tasks = [
@@ -363,7 +372,9 @@ class Highlights:
         candidates = [candidate for index in sorted(results) for candidate in results[index]]
         if rejected:
             logger.warning(
-                "Highlight job %s rejected %d ungrounded discovery candidates.", job.id, rejected
+                "Highlight job %s rejected discovery candidates by reason: %s.",
+                job.id,
+                dict(rejected),
             )
         if rejected and not candidates:
             raise HighlightError(
@@ -384,18 +395,25 @@ class Highlights:
             None if request.regenerate else self.results.discovery(job.recording_id, discovery_key)
         )
         if saved is None:
-            leads, rejected = await self._discover(job, windows, request, duration, deadline)
+            leads, discovery_rejections = await self._discover(
+                job, windows, request, duration, deadline
+            )
             self._check_revision(job)
-            self.results.save_discovery(job.recording_id, discovery_key, leads, rejected)
+            self.results.save_discovery(
+                job.recording_id, discovery_key, leads, dict(discovery_rejections)
+            )
         else:
-            leads, rejected = saved
+            leads, saved_rejections = saved
+            discovery_rejections = Counter(saved_rejections)
             self.results.update(
                 job.id,
                 discovery_cache_hit=True,
                 completed_windows=len(windows),
-                rejected_candidates=rejected,
+                rejected_candidates=discovery_rejections.total(),
+                discovery_rejections=saved_rejections,
             )
         self._check(deadline)
+        rejected = discovery_rejections.total()
         if not leads:
             return [], rejected
 
@@ -406,6 +424,7 @@ class Highlights:
             editorial_status="reviewing",
             discovered_candidates=len(leads),
             editorial_options=len(options),
+            discovery_duplicates=len(leads) - len(ranked),
             discovery_shortlist=[
                 {"start": option.lead.start, "end": option.lead.end} for option in options
             ],
@@ -424,18 +443,29 @@ class Highlights:
         job.input_tokens += inputs
         job.output_tokens += outputs
         self.results.update(job.id, input_tokens=job.input_tokens, output_tokens=job.output_tokens)
-        candidates, invalid = ground_review(proposal, options, request, duration, job.id, limit)
-        rejected += invalid
-        if invalid:
+        candidates, editorial_rejections = ground_review(
+            proposal, options, request, duration, job.id, limit
+        )
+        rejected += editorial_rejections.total()
+        ranked = self._rank(candidates, limit)
+        self.results.update(
+            job.id,
+            editorial_proposals=len(proposal.candidates),
+            editorial_duplicates=len(candidates) - len(ranked),
+            editorial_rejections=dict(editorial_rejections),
+            rejected_candidates=rejected,
+        )
+        if editorial_rejections:
             logger.warning(
-                "Highlight job %s rejected %d ungrounded editorial candidates.", job.id, invalid
+                "Highlight job %s rejected editorial candidates by reason: %s.",
+                job.id,
+                dict(editorial_rejections),
             )
-            self.results.update(job.id, rejected_candidates=rejected)
-        if invalid and not candidates:
+        if editorial_rejections and not candidates:
             raise HighlightError(
                 "Editorial review returned no valid intervals. Check usage before retrying explicitly."
             )
-        return self._rank(candidates, limit), rejected
+        return ranked, rejected
 
     def _rank(self, candidates: list[Candidate], limit: int) -> list[Candidate]:
         return rank_unique(

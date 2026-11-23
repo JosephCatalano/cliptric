@@ -2,6 +2,7 @@ import hashlib
 import json
 import math
 import re
+from collections import Counter
 from dataclasses import dataclass
 from uuid import uuid4
 
@@ -153,15 +154,26 @@ def window_text(window: list[Segment]) -> str:
     )
 
 
-def meets_quality(quality: EditorialQuality | None, first: Segment, last: Segment) -> bool:
-    return (
-        quality is not None
-        and min(quality.hook, quality.context, quality.payoff, quality.standalone) >= 3
-        and bool(quality.opening_evidence.strip())
-        and bool(quality.ending_evidence.strip())
+def _quality_rejection(
+    quality: EditorialQuality | None, first: Segment, last: Segment
+) -> str | None:
+    if (
+        quality is None
+        or min(quality.hook, quality.context, quality.payoff, quality.standalone) < 3
+    ):
+        return "quality"
+    if not (
+        quality.opening_evidence.strip()
+        and quality.ending_evidence.strip()
         and quality.opening_evidence in first.text
         and quality.ending_evidence in last.text
-    )
+    ):
+        return "boundary_evidence"
+    return None
+
+
+def meets_quality(quality: EditorialQuality | None, first: Segment, last: Segment) -> bool:
+    return _quality_rejection(quality, first, last) is None
 
 
 def ground_candidates(
@@ -170,6 +182,8 @@ def ground_candidates(
     request: HighlightRequest,
     duration: float,
     job_id: str,
+    *,
+    rejection_reasons: Counter[str] | None = None,
 ) -> tuple[list[Candidate], int]:
     if any(
         not (0 <= s.start < s.end <= duration + 0.05)
@@ -179,18 +193,18 @@ def ground_candidates(
         raise HighlightError("Transcript segments have invalid source timing or order.")
     positions = {segment.id: index for index, segment in enumerate(window)}
     result: list[Candidate] = []
-    rejected = 0
+    rejected: Counter[str] = Counter()
     for proposal in proposed.candidates:
         first, last = positions.get(proposal.first_segment), positions.get(proposal.last_segment)
         if first is None or last is None or last < first:
-            rejected += 1
+            rejected["segment_ids"] += 1
             continue
         selected = window[first : last + 1]
         start, end = selected[0].start, max(s.end for s in selected)
         text = " ".join(s.text for s in selected)
         if request.quality_mode:
-            if not meets_quality(proposal.quality, selected[0], selected[-1]):
-                rejected += 1
+            if reason := _quality_rejection(proposal.quality, selected[0], selected[-1]):
+                rejected[reason] += 1
                 continue
             # Bounded room around whole source segments, without adding adjacent speech.
             before = max(request.analysis_start, window[first - 1].end if first > 0 else 0)
@@ -208,23 +222,19 @@ def ground_candidates(
             lead = min(0.12, available, max(0, start - before))
             tail = min(0.18, max(0, available - lead), max(0, after - end))
             start, end = start - lead, end + tail
-        # Evidence must be a verbatim passage inside this exact selection.
-        if (
-            not (
-                math.isfinite(start)
-                and math.isfinite(end)
-                and request.min_seconds <= end - start <= request.max_seconds
-                and start >= request.analysis_start
-                and end
-                <= min(
-                    duration, request.analysis_end if request.analysis_end is not None else duration
-                )
-            )
-            or len(proposal.evidence) < 8
-            or proposal.evidence not in text
-            or overlaps(start, end, request.excluded_ranges)
+        if not request.min_seconds <= end - start <= request.max_seconds:
+            rejected["duration"] += 1
+            continue
+        if start < request.analysis_start or end > min(
+            duration, request.analysis_end if request.analysis_end is not None else duration
         ):
-            rejected += 1
+            rejected["source_bounds"] += 1
+            continue
+        if len(proposal.evidence) < 8 or proposal.evidence not in text:
+            rejected["evidence"] += 1
+            continue
+        if overlaps(start, end, request.excluded_ranges):
+            rejected["excluded_range"] += 1
             continue
         fingerprint = hashlib.sha256(
             json.dumps([start, end, proposal.evidence], ensure_ascii=False).encode()
@@ -246,7 +256,9 @@ def ground_candidates(
                 fingerprint=fingerprint,
             )
         )
-    return result, rejected
+    if rejection_reasons is not None:
+        rejection_reasons.update(rejected)
+    return result, rejected.total()
 
 
 def rank_unique(
@@ -269,6 +281,7 @@ def rank_unique(
             similarity = len(words & other_words) / max(1, len(words | other_words))
             if (
                 candidate.fingerprint == other.fingerprint
+                or (candidate.start == other.start and candidate.end == other.end)
                 or (intersection / union >= iou_threshold and similarity >= evidence_threshold)
                 or (
                     intersection == min(candidate.end - candidate.start, other.end - other.start)

@@ -23,6 +23,7 @@ from .youtube_api import CALLBACK_PATH, SCOPES, YouTubeAPI, YouTubeError
 
 logger = logging.getLogger(__name__)
 Privacy = Literal["private", "unlisted", "public"]
+MIN_BATCH_UPLOAD_INTERVAL = 10
 
 
 class Channel(BaseModel):
@@ -92,6 +93,12 @@ class UploadJob(BaseModel):
     error: str | None = None
     resume_after: float = 0
     can_resume: bool = False
+    batch_pending: bool = False
+
+
+class BatchUploadRequest(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+    uploads: list[UploadRequest] = Field(min_length=1, max_length=75)
 
 
 class YouTubePublishing:
@@ -127,6 +134,8 @@ class YouTubePublishing:
                 "SELECT payload FROM youtube_uploads WHERE status IN ('queued','initializing','uploading')"
             ).fetchall():
                 job = UploadJob.model_validate_json(row[0])
+                if job.status == "queued" and job.batch_pending:
+                    continue
                 job.status = "unknown" if job.can_resume else "failed"
                 job.error = (
                     "Local upload was interrupted. Check its status before resuming."
@@ -136,6 +145,9 @@ class YouTubePublishing:
                 self._save(job, db)
 
         self.accounts.initialize()
+        with self.store.connection() as db:
+            if self._next_batch_upload(db):
+                self.active = self.pool.submit(self._drain_batch)
 
     def _configured(self):
         if not self.settings.client_id or os.name != "nt":
@@ -411,14 +423,109 @@ class YouTubePublishing:
         if self.stop.is_set() or (self.active is not None and not self.active.done()):
             raise YouTubeError("Another YouTube upload is active. Wait for it to finish.", 409)
 
-    def validate_post(self, request):
-        creator = self.creator(request.account_id)
+    def validate_post(self, request, creator=None):
+        if creator is None:
+            creator = self.creator(request.account_id)
         if creator["account_id"] != request.account_id:
             raise YouTubeError("The destination account changed. Review again.", 409)
         if request.category_id not in {item["id"] for item in creator["categories"]}:
             raise YouTubeError("Select a currently assignable YouTube category.", 422)
         clip, path, _ = self.export(str(request.export_id))
         return creator, clip, path
+
+    @staticmethod
+    def _upload_job(request, creator, clip, path, *, batch_pending=False):
+        with path.open("rb") as stream:
+            digest = hashlib.file_digest(stream, "sha256").hexdigest()
+        return UploadJob(
+            id=str(request.id),
+            export_id=str(request.export_id),
+            account_id=request.account_id,
+            channel=Channel.model_validate(creator["channel"]),
+            created_at=now(),
+            request=request,
+            status="queued",
+            total_bytes=clip.size_bytes,
+            sha256=digest,
+            batch_pending=batch_pending,
+        )
+
+    def submit_batch(self, payload):
+        requests = payload.uploads
+        account = requests[0].account_id
+        if (
+            len({request.id for request in requests}) != len(requests)
+            or len({request.export_id for request in requests}) != len(requests)
+            or any(request.account_id != account for request in requests)
+        ):
+            raise YouTubeError(
+                "Choose distinct exports and one YouTube channel for the batch.", 422
+            )
+
+        with self.lock:
+            identifiers = [str(request.id) for request in requests]
+            placeholders = ",".join("?" for _ in identifiers)
+            with self.store.connection() as db:
+                existing = {
+                    row["id"]: UploadJob.model_validate_json(row["payload"])
+                    for row in db.execute(
+                        f"SELECT id,payload FROM youtube_uploads WHERE id IN ({placeholders})",
+                        identifiers,
+                    )
+                }
+            if existing:
+                if any(
+                    job_id not in existing or existing[job_id].request != request
+                    for job_id, request in zip(identifiers, requests, strict=True)
+                ):
+                    raise YouTubeError("These upload tokens belong to different approvals.", 409)
+                return [existing[job_id] for job_id in identifiers]
+
+            self._idle()
+            creator = self.creator(account)
+            jobs = []
+            for request in requests:
+                _, clip, path = self.validate_post(request, creator)
+                jobs.append(self._upload_job(request, creator, clip, path, batch_pending=True))
+
+            with self.store.connection() as db:
+                db.execute("BEGIN IMMEDIATE")
+                for job in jobs:
+                    if (
+                        db.execute(
+                            "SELECT 1 FROM youtube_uploads WHERE export_id=? AND account_id=? AND status!='failed'",
+                            (job.export_id, account),
+                        ).fetchone()
+                        or db.execute(
+                            "SELECT 1 FROM scheduled_posts WHERE platform='youtube' AND export_id=? "
+                            "AND account_id=? AND status IN ('scheduled','dispatching','submitted','unknown')",
+                            (job.export_id, account),
+                        ).fetchone()
+                    ):
+                        raise YouTubeError(
+                            f"{job.request.title} already has an upload or scheduled post for this channel.",
+                            409,
+                        )
+                    self._save(job, db)
+            self.active = self.pool.submit(self._drain_batch)
+            return jobs
+
+    @staticmethod
+    def _next_batch_upload(db):
+        return db.execute(
+            "SELECT id FROM youtube_uploads WHERE status='queued' "
+            "AND json_extract(payload,'$.batch_pending')=1 ORDER BY rowid LIMIT 1"
+        ).fetchone()
+
+    def _drain_batch(self):
+        while not self.stop.is_set():
+            with self.store.connection() as db:
+                row = self._next_batch_upload(db)
+            if row is None:
+                return
+            started = time.monotonic()
+            self._run(row["id"], False)
+            self.stop.wait(max(0, MIN_BATCH_UPLOAD_INTERVAL - (time.monotonic() - started)))
 
     def submit(self, request):
         with self.lock:
@@ -451,19 +558,7 @@ class YouTubePublishing:
                     >= 6
                 ):
                     raise YouTubeError("Wait a minute before starting another upload.", 429)
-            with path.open("rb") as stream:
-                digest = hashlib.file_digest(stream, "sha256").hexdigest()
-            job = UploadJob(
-                id=str(request.id),
-                export_id=str(request.export_id),
-                account_id=request.account_id,
-                channel=Channel.model_validate(creator["channel"]),
-                created_at=now(),
-                request=request,
-                status="queued",
-                total_bytes=clip.size_bytes,
-                sha256=digest,
-            )
+            job = self._upload_job(request, creator, clip, path)
             self._save(job)
             self.active = self.pool.submit(self._run, job.id, False)
             return job
@@ -551,6 +646,7 @@ class YouTubePublishing:
 
     def _run(self, identifier, resume):
         job = self.get(identifier)
+        job.batch_pending = False
         try:
             path = self.store.export_path(job.export_id)
             if path.is_symlink() or not path.is_file():

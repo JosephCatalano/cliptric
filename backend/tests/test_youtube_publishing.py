@@ -21,6 +21,7 @@ from backend.config import Settings
 from backend.main import create_app
 from backend.media import MediaInfo
 from backend.models import CaptionOptions, ExportRequest, Recording
+from backend.scheduling import Scheduler
 from backend.social_security import protect_secret
 from backend.storage import Store, now
 from backend.transcription_store import TranscriptStore
@@ -152,6 +153,7 @@ def integration(tmp_path):
     store = Store(tmp_path / "data")
     service = YouTubePublishing(store, FixtureMedia(), settings, "http://127.0.0.1:3000", api=api)
     service.initialize()
+    Scheduler(store, None, service).initialize()
     recording_id, export_id = str(uuid4()), str(uuid4())
     store.save_recording(
         Recording(
@@ -186,6 +188,53 @@ def integration(tmp_path):
 def connected(service):
     service._store_token(token_response())
     return service.status()["account_id"]
+
+
+def test_batch_approval_is_atomic_and_uploads_in_order(integration, monkeypatch):
+    service, state, export_id, client = integration
+    connected(service)
+    monkeypatch.setattr("backend.youtube_publishing.MIN_BATCH_UPLOAD_INTERVAL", 0)
+    first = upload_request(service, export_id, title="First upload")
+    second_export = str(uuid4())
+    second = upload_request(service, second_export, title="Second upload")
+    payload = {"uploads": [item.model_dump(mode="json") for item in (first, second)]}
+    assert client.post("/api/youtube-publishing/posts/batch", json=payload).status_code == 404
+    assert not service.posts() and state["init"] == 0
+
+    recording = service.store.clip(export_id).recording_id
+    service.store.create_clip(second_export, recording, ExportRequest(start=0, end=8))
+    path = service.store.export_path(second_export)
+    path.write_bytes(b"second fixture" * 200)
+    service.store.update_clip(
+        second_export, "succeeded", duration=8, size_bytes=path.stat().st_size
+    )
+    response = client.post("/api/youtube-publishing/posts/batch", json=payload)
+    assert response.status_code == 202
+    service.active.result(timeout=5)
+    assert [body for _, body in state["uploads"]] == [
+        service.store.export_path(export_id).read_bytes(),
+        path.read_bytes(),
+    ]
+    assert all(service.get(str(item.id)).status == "processing" for item in (first, second))
+    assert client.post("/api/youtube-publishing/posts/batch", json=payload).status_code == 202
+    assert state["init"] == 2
+
+
+def test_batch_recovery_only_dispatches_jobs_that_have_not_started(integration, monkeypatch):
+    service, state, export_id, _ = integration
+    connected(service)
+    request = upload_request(service, export_id)
+    creator, clip, path = service.validate_post(request)
+    pending = service._upload_job(request, creator, clip, path, batch_pending=True)
+    interrupted = pending.model_copy(update={"id": str(uuid4()), "status": "initializing"})
+    service._save(pending)
+    service._save(interrupted)
+    monkeypatch.setattr("backend.youtube_publishing.MIN_BATCH_UPLOAD_INTERVAL", 0)
+    service.initialize()
+    service.active.result(timeout=5)
+    assert service.get(pending.id).status == "processing"
+    assert service.get(interrupted.id).status == "failed"
+    assert state["init"] == 1
 
 
 def upload_request(service, export_id, **updates):

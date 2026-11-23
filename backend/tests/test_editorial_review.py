@@ -8,7 +8,7 @@ from uuid import uuid4
 import httpx2
 import pytest
 
-from backend.editorial_review import EditorialProposal, EditorialReviewer, shortlist
+from backend.editorial_review import MAX_OPTIONS, EditorialProposal, EditorialReviewer, shortlist
 from backend.highlight_models import (
     HighlightRequest,
     ProposedHighlights,
@@ -98,11 +98,15 @@ def test_review_meters_one_request_and_never_publishes_raw_leads(service, outcom
         assert len(result.candidates) == 1
         assert result.candidates[0].end == pytest.approx(34.18)
         assert result.candidates[0].score == 85
+        assert result.editorial_proposals == 1 and result.editorial_rejections == {}
         assert manager.submit(recording.id, payload).id == result.id
     else:
         assert result.candidates == []
         assert result.status == ("succeeded" if outcome == "empty" else "failed")
         assert manager.results.pool(result.pool_key) == []
+        if outcome == "invalid":
+            assert result.editorial_proposals == 1
+            assert result.editorial_rejections == {"unknown_option": 1}
         if outcome == "api_failure":
             assert result.error.startswith("Editorial review failed.")
             assert "synthetic private response" not in result.error
@@ -162,10 +166,11 @@ def test_overlapping_windows_send_a_unique_shortlist_and_review_can_drop_leads(
         windows.append(window)
         first = window[0].id
         proposals = (
-            [lead(first=4, last=7)]
+            [lead(first=4, last=7), lead(first=0, last=0)]
             if first == 0
             else [
                 lead(first=3, last=7, evidence="Evidence 4.", score=60),
+                lead(first=4, last=7, evidence="Evidence 7.", score=65),
                 lead(first=10, last=13, score=90),
             ]
         )
@@ -189,10 +194,32 @@ def test_overlapping_windows_send_a_unique_shortlist_and_review_can_drop_leads(
     monkeypatch.setattr(manager.reviewer, "review", review)
     job = finished(manager, manager.submit(recording.id, request(transcript)).id)
     assert job.status == "succeeded" and job.requests_made == 3
-    assert job.discovered_candidates == 3 and job.editorial_options == 2
+    assert job.discovered_candidates == 4 and job.editorial_options == 2
+    assert job.discovery_duplicates == 2 and job.discovery_rejections == {"duration": 1}
     assert [(c.start, c.end, c.title) for c in job.candidates] == [
         (20, 44, "Selected after global review"),
     ]
+
+
+def test_shortlist_reserves_review_space_across_the_recording():
+    starts = list(range(0, MAX_OPTIONS * 9, 9)) + [1_200, 2_400]
+    segments = [Segment(i, start, start + 8, f"Evidence {i}.") for i, start in enumerate(starts)]
+    payload = HighlightRequest(
+        transcription_id=uuid4(), revision=1, remote_consent=True, min_seconds=8
+    )
+    candidates = [
+        ground_candidates(
+            ProposedHighlights(candidates=[lead(i, i, score=100 - i)]),
+            segments,
+            payload,
+            3_000,
+            "job",
+        )[0][0]
+        for i in range(len(segments))
+    ]
+    options, _ = shortlist(candidates, [segments], payload)
+    assert len(options) == MAX_OPTIONS
+    assert [option.lead.start for option in options[:3]] == [0, 1_200, 2_400]
 
 
 def test_shortlist_sees_adjacent_window_but_never_crosses_exclusion():

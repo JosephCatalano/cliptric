@@ -13,15 +13,17 @@ from .prompt_settings import request_prompt
 ENDPOINT = "https://api.openai.com/v1/responses"
 MAX_RESPONSE_BYTES = 256 * 1024
 Proposal = TypeVar("Proposal", bound=BaseModel)
-DISCOVERY_INSTRUCTIONS = """Find promising spoken moments throughout this timed transcript window.
+DISCOVERY_INSTRUCTIONS = """Scan the entire timed transcript window for distinct promising moments.
 Look for jokes and callbacks, complete exchanges, surprises, emotional turns, useful insights,
-and stories with a payoff. Preserve setup and escalation. Include a promising window-edge
-moment when it has real evidence and may benefit from checking adjacent context later.
-Do not force a quota. Return at most max_candidates distinct leads. Rank by promise rather
-than polish. Use actual inclusive segment IDs, respect source durations including pauses,
-and quote 8-320 exact contiguous characters inside each lead. Give a faithful temporary
-title and a reason explaining its promise or missing context. Set quality to null; a
-separate review checks the final opening, context, payoff and standalone clarity.
+and stories with a payoff. For gameplay and compilations, look for reactions, reversals,
+failed plans, quick banter and short exchanges with a payoff. A brief grounded reaction can
+be a lead. If its meaning depends on footage, explain what needs checking in the reason and
+describe only what the transcript supports. Preserve available setup and escalation. Keep a
+promising window-edge lead when nearby speech may supply the setup or ending in final review.
+Return up to max_candidates distinct leads that have real promise. If there are more, prefer
+different moments over alternate cuts of the same moment. Use actual inclusive segment IDs,
+respect source durations including pauses, and quote 8-320 exact contiguous characters from
+inside each lead. Give a faithful temporary title and reason. Set quality to null.
 """
 
 

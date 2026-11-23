@@ -1,6 +1,4 @@
 "use client";
-import { SavedPostCopy } from "./saved-post-copy";
-
 import { useEffect, useRef, useState, type FormEvent } from "react";
 import Link from "next/link";
 import { ScheduleFields } from "./schedule-fields";
@@ -23,6 +21,7 @@ import {
 import { Textarea } from "@/components/ui/textarea";
 import { api, message } from "@/lib/client-api";
 import {
+  youtubeDefaults,
   youtubeStatus,
   type YouTubeConnection,
   type YouTubeCreator,
@@ -51,12 +50,20 @@ export function YouTubeComposer({
   const [busy, setBusy] = useState(false);
   const [reload, setReload] = useState(0);
   const [title, setTitle] = useState("");
-  const [description, setDescription] = useState("");
-  const [category, setCategory] = useState("");
-  const [privacy, setPrivacy] = useState("");
-  const [kids, setKids] = useState("");
-  const [synthetic, setSynthetic] = useState("");
-  const [notify, setNotify] = useState(false);
+  const [descriptionDraft, setDescription] = useState<string | null>(null);
+  const [savedDescription, setSavedDescription] = useState("");
+  const [copyError, setCopyError] = useState("");
+  const description = descriptionDraft ?? savedDescription;
+  const [categorySelection, setCategory] = useState<string | null>(null);
+  const category =
+    categorySelection ??
+    (creator?.categories.some((item) => item.id === youtubeDefaults.categoryId)
+      ? youtubeDefaults.categoryId
+      : "");
+  const [privacy, setPrivacy] = useState(youtubeDefaults.privacy);
+  const [kids, setKids] = useState(youtubeDefaults.kids);
+  const [synthetic, setSynthetic] = useState(youtubeDefaults.synthetic);
+  const [notify, setNotify] = useState(youtubeDefaults.notify);
   const [consent, setConsent] = useState(false);
   const token = useRef<{ signature: string; id: string } | null>(null);
 
@@ -64,7 +71,7 @@ export function YouTubeComposer({
     const controller = new AbortController();
     async function load() {
       try {
-        const [status, video, posts] = await Promise.all([
+        const [status, video, posts, copy] = await Promise.all([
           api<YouTubeConnection>(root, { signal: controller.signal }),
           api<YouTubeExport>(`${root}/exports/${exportId}`, {
             signal: controller.signal,
@@ -72,6 +79,14 @@ export function YouTubeComposer({
           api<YouTubePost[]>(`${root}/posts?export_id=${exportId}`, {
             signal: controller.signal,
           }),
+          api<{ ready_to_post: string | null }>(
+            `/api/clips/${exportId}/post-copy`,
+            {
+              signal: controller.signal,
+            },
+          )
+            .then((value) => ({ text: value.ready_to_post ?? "", error: "" }))
+            .catch((error) => ({ text: "", error: message(error) })),
         ]);
         if (controller.signal.aborted) return;
         setConnection(status);
@@ -79,6 +94,8 @@ export function YouTubeComposer({
         setJob(posts.find((post) => post.account_id === accountId) ?? null);
         setCreator(null);
         setConsent(false);
+        setSavedDescription(copy.text);
+        setCopyError(copy.error);
         setError("");
         if (status.connected) {
           const profile = await api<YouTubeCreator>(
@@ -332,15 +349,10 @@ export function YouTubeComposer({
                   onChange={(event) => setTitle(event.target.value)}
                 />
               </Field>
-              <SavedPostCopy
-                exportId={exportId}
-                onApply={(text) => {
-                  setDescription(text);
-                  setConsent(false);
-                }}
-              />
               <Field data-invalid={descriptionBytes > 5000}>
-                <FieldLabel htmlFor="short-description">Description</FieldLabel>
+                <FieldLabel htmlFor="short-description">
+                  Description and hashtags
+                </FieldLabel>
                 <Textarea
                   id="short-description"
                   maxLength={5000}
@@ -349,6 +361,9 @@ export function YouTubeComposer({
                   onChange={(event) => setDescription(event.target.value)}
                 />
                 <FieldDescription>
+                  {copyError
+                    ? `Saved posting copy could not load. ${copyError} `
+                    : ""}
                   {descriptionBytes}/5000 UTF-8 bytes
                 </FieldDescription>
               </Field>

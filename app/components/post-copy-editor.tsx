@@ -2,6 +2,7 @@
 import { useRef, useState } from "react";
 import { api, message } from "@/lib/client-api";
 import type { Project, ProjectItem } from "@/lib/projects";
+import { formatPostCopy, splitPostCopy } from "@/lib/post-copy";
 import { Button } from "@/components/ui/button";
 import {
   Dialog,
@@ -11,9 +12,13 @@ import {
   DialogTitle,
   DialogDescription,
 } from "@/components/ui/dialog";
-import { Field, FieldGroup, FieldLabel } from "@/components/ui/field";
+import {
+  Field,
+  FieldDescription,
+  FieldGroup,
+  FieldLabel,
+} from "@/components/ui/field";
 import { Textarea } from "@/components/ui/textarea";
-import { Input } from "@/components/ui/input";
 import { Checkbox } from "@/components/ui/checkbox";
 import { Alert, AlertDescription } from "@/components/ui/alert";
 import {
@@ -91,9 +96,15 @@ function CopyForm({
   onSaved: (project: Project) => void;
   onDirty: (dirty: boolean) => void;
 }) {
-  const initial = item.post_copy_selected ?? item.post_copy?.recommended;
-  const [description, setDescription] = useState(initial?.description ?? "");
-  const [tags, setTags] = useState(initial?.hashtags.join(" ") ?? "");
+  const initial = formatPostCopy(
+    item.post_copy_selected ?? item.post_copy?.recommended,
+  );
+  const [text, setText] = useState(initial);
+  const content = splitPostCopy(text);
+  const valid =
+    !!content.description &&
+    content.description.length <= 500 &&
+    content.hashtags.length <= 5;
   const [choice, setChoice] = useState("recommended");
   const [consent, setConsent] = useState(false);
   const [busy, setBusy] = useState(false);
@@ -104,8 +115,7 @@ function CopyForm({
   async function run(generate: boolean, newAttempt = false) {
     if (
       generate &&
-      (description !== (initial?.description ?? "") ||
-        tags !== (initial?.hashtags.join(" ") ?? "")) &&
+      text !== initial &&
       !window.confirm("Generate new options and replace unsaved posting text?")
     )
       return;
@@ -123,10 +133,7 @@ function CopyForm({
             ? { request_id: token.current, revision: item.revision, consent }
             : {
                 revision: item.revision,
-                content: {
-                  description,
-                  hashtags: tags.trim() ? tags.trim().split(/\s+/) : [],
-                },
+                content,
               },
         ),
       });
@@ -138,7 +145,6 @@ function CopyForm({
       setBusy(false);
     }
   }
-  const ready = description.trim() + (tags.trim() ? `\n\n${tags.trim()}` : "");
   return (
     <FieldGroup>
       {item.post_copy_error ? (
@@ -175,9 +181,9 @@ function CopyForm({
                     : item.post_copy!.alternatives.find(
                         (a) => a.style === e.target.value,
                       )!;
-                setDescription(value.description);
-                setTags(value.hashtags.join(" "));
-                onDirty(true);
+                const next = formatPostCopy(value);
+                setText(next);
+                onDirty(next !== initial);
               }}
             >
               <NativeSelectOption value="recommended">
@@ -197,43 +203,27 @@ function CopyForm({
       ) : null}
       <Field>
         <FieldLabel htmlFor={`copy-description-${item.id}`}>
-          Description
+          Description and hashtags
         </FieldLabel>
         <Textarea
           id={`copy-description-${item.id}`}
-          value={description}
-          maxLength={500}
+          value={text}
+          rows={5}
           disabled={busy || disabled}
           onChange={(e) => {
-            setDescription(e.target.value);
-            onDirty(
-              e.target.value !== (initial?.description ?? "") ||
-                tags !== (initial?.hashtags.join(" ") ?? ""),
-            );
+            setText(e.target.value);
+            onDirty(e.target.value !== initial);
           }}
         />
-      </Field>
-      <Field>
-        <FieldLabel htmlFor={`copy-tags-${item.id}`}>
-          Hashtags (up to five)
-        </FieldLabel>
-        <Input
-          id={`copy-tags-${item.id}`}
-          value={tags}
-          disabled={busy || disabled}
-          onChange={(e) => {
-            setTags(e.target.value);
-            onDirty(
-              description !== (initial?.description ?? "") ||
-                e.target.value !== (initial?.hashtags.join(" ") ?? ""),
-            );
-          }}
-        />
+        <FieldDescription>
+          Use up to 500 characters for the description and put up to five
+          hashtags on their own line at the end.
+        </FieldDescription>
       </Field>
       <div className="flex flex-wrap gap-2">
         <Button
           type="button"
-          disabled={busy || disabled || !description.trim()}
+          disabled={busy || disabled || !valid}
           onClick={() => void run(false)}
         >
           Save posting copy
@@ -241,10 +231,10 @@ function CopyForm({
         <Button
           type="button"
           variant="outline"
-          disabled={!description.trim()}
+          disabled={!text.trim()}
           onClick={() => {
             void navigator.clipboard
-              .writeText(ready)
+              .writeText(text.trim())
               .catch((e) => setError(message(e)));
           }}
         >

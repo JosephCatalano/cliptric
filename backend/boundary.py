@@ -97,6 +97,11 @@ class RequestBoundary:
         # Import bodies are streamed directly to disk by the endpoint. JSON control
         # requests are small and must be bounded before FastAPI buffers them.
         if request.method in {"POST", "PUT", "PATCH"} and request.url.path != "/api/recordings":
+            body_limit = (
+                1024 * 1024
+                if request.url.path == "/api/youtube-publishing/posts/batch"
+                else 16 * 1024
+            )
             body = bytearray()
             try:
                 async with asyncio.timeout(10):
@@ -105,9 +110,10 @@ class RequestBoundary:
                         if chunk["type"] == "http.disconnect":
                             return
                         body.extend(chunk.get("body", b""))
-                        if len(body) > 16 * 1024:
+                        if len(body) > body_limit:
                             await JSONResponse(
-                                {"detail": "Request body exceeds 16 KiB."}, status_code=413
+                                {"detail": f"Request body exceeds {body_limit // 1024} KiB."},
+                                status_code=413,
                             )(scope, receive, send)
                             return
                         if not chunk.get("more_body", False):

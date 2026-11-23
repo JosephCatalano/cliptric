@@ -158,7 +158,7 @@ def test_rank_deduplicates_same_beat_but_preserves_distinct_overlapping_evidence
             candidates=[
                 proposal(score=70),
                 proposal(score=90),
-                proposal(evidence="Another unexpected outcome.", score=80),
+                proposal(first_segment=10, evidence="Another unexpected outcome.", score=80),
             ]
         ),
         window,

@@ -252,6 +252,26 @@ def test_transcript_change_stops_remaining_billable_windows(service):
     assert result.candidates == []
 
 
+@pytest.mark.parametrize("duration_mode", ["auto", "manual"])
+def test_discovery_window_is_independent_of_maximum_clip_duration(service, duration_mode):
+    manager, recording, transcript, provider = service
+    with manager.store.connection() as db:
+        db.execute("UPDATE recordings SET duration=3000 WHERE id=?", (recording.id,))
+        db.execute(
+            "UPDATE transcript_words SET start=start+240,end=end+240 WHERE transcription_id=? AND id>=8",
+            (transcript.id,),
+        )
+    result = finished(
+        manager,
+        manager.submit(
+            recording.id, request(transcript, duration_mode=duration_mode, max_seconds=3000)
+        ).id,
+    )
+    assert result.status == "succeeded"
+    assert result.total_windows == provider.calls == 2
+    assert result.editorial_options == 2
+
+
 def test_provider_failure_preserves_previous_results_and_does_not_retry(service):
     manager, recording, transcript, provider = service
     old = finished(manager, manager.submit(recording.id, request(transcript)).id)

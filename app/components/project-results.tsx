@@ -29,6 +29,7 @@ import {
 import { ClipReview } from "./clip-review";
 import { ClipVersions } from "./clip-versions";
 import { ClipBulkActions } from "./clip-bulk-actions";
+import { YouTubeBatchUpload } from "./youtube-batch-upload";
 import { useUnsavedEdits } from "./use-unsaved-edits";
 import { reviewNeeded } from "@/lib/project-edit";
 import { useRouter } from "next/navigation";
@@ -174,6 +175,8 @@ export function ProjectResults({ id }: { id: string }) {
   const running = project ? active(project.status) : false;
   const readyItems = project?.items.filter(deliverable) ?? [];
   const selectedReady = readyItems.filter((i) => selected.has(i.id));
+  const allReadySelected =
+    readyItems.length > 0 && selectedReady.length === readyItems.length;
   const orderedItems = [...(project?.items ?? [])].sort((a, b) => {
     const duration = (item: ProjectItem) =>
       item.export?.duration ?? item.end - item.start;
@@ -401,6 +404,32 @@ export function ProjectResults({ id }: { id: string }) {
                   </a>
                 </Button>
               ) : null}
+              <Field orientation="horizontal" className="w-auto px-2">
+                <Checkbox
+                  id="select-all-ready-clips"
+                  disabled={!readyItems.length}
+                  checked={
+                    allReadySelected
+                      ? true
+                      : selectedReady.length
+                        ? "indeterminate"
+                        : false
+                  }
+                  onCheckedChange={(checked) =>
+                    setSelected((previous) => {
+                      const next = new Set(previous);
+                      for (const item of readyItems) {
+                        if (checked === true) next.add(item.id);
+                        else next.delete(item.id);
+                      }
+                      return next;
+                    })
+                  }
+                />
+                <FieldLabel htmlFor="select-all-ready-clips">
+                  Select all ready clips
+                </FieldLabel>
+              </Field>
               <Button
                 disabled={!project.items.length}
                 onClick={() =>
@@ -423,6 +452,14 @@ export function ProjectResults({ id }: { id: string }) {
             <div className="flex flex-wrap items-center justify-between gap-3">
               <p>{selected.size} selected across all filters</p>
               <div className="flex flex-wrap gap-2">
+                {selectedReady.length ? (
+                  <YouTubeBatchUpload
+                    items={selectedReady}
+                    disabled={
+                      running || busy || selectedReady.length !== selected.size
+                    }
+                  />
+                ) : null}
                 {selectedReady.length ? (
                   <Button asChild variant="outline">
                     <a

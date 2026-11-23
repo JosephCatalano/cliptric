@@ -2,12 +2,15 @@
 
 import json
 from bisect import bisect_left, bisect_right
+from collections import Counter
 from dataclasses import dataclass
+from itertools import zip_longest
 
 from pydantic import BaseModel, ConfigDict, Field
 
 from .config import Settings
 from .highlight_models import (
+    WINDOW_SECONDS,
     Candidate,
     HighlightError,
     HighlightRequest,
@@ -25,11 +28,14 @@ MAX_OPTION_BYTES = 96 * 1024
 CONTEXT_SECONDS = 30
 
 INSTRUCTIONS = """Compare these leads from one recording as Cliptric's final editor.
-Choose only the strongest independently watchable clips, up to max_candidates.
-Return fewer or none if the material is weak or the payoff is missing.
-Compare the actual speech, not the discovery rank. Remove alternate versions of
-the same story, central joke or payoff, including paraphrases across windows.
+Assess each lead on its own. Keep every distinct clip with a clear hook, usable context
+and a supported payoff, up to max_candidates. If more clips qualify, rank them and keep
+the strongest. Return fewer when fewer qualify. Compare the actual speech and remove alternate
+versions of the same story, central joke or payoff, including paraphrases across windows.
 Preserve independent moments from the same conversation when each resolves on its own.
+A quick gameplay reaction or exchange can qualify when its setup and payoff are clear from
+the transcript. A setup can be as short as one line. Reject a clip whose payoff requires
+assuming an unverified event. Keep clips as short as the full moment and duration bounds allow.
 Check the opening, context, escalation, payoff, pacing and standalone clarity.
 Preserve comedic setup, misdirection, meaningful pauses, callbacks and the ending.
 For an exchange, include the answer. For a story, include the authentic resolution.
@@ -37,7 +43,7 @@ Trim weak introductions, tangents and repetition only when the complete arc surv
 Adjacent timed speech can repair window-edge cuts. Use only inclusive IDs within the
 chosen option's segments, intersecting its original lead. Use each option at most once.
 Duration includes gaps in speech. Never invent delivery, visual events or audience reactions.
-Provide a specific title and reason, and a contiguous exact quote from the final range.
+Provide a specific title, a concise reason, and a short contiguous exact quote from the final range.
 Score 0-100 as editorial quality. In quality_mode, every dimension must be at least
 3 of 5. Use exact opening and ending evidence from the first and last selected segments,
 and score = 5 * (hook + context + payoff + standalone). Otherwise quality may be null.
@@ -59,6 +65,18 @@ class ReviewOption:
     segments: list[Segment]
 
 
+def _coverage_order(candidates: list[Candidate], start: float) -> list[Candidate]:
+    if len(candidates) <= 1:
+        return candidates
+    # Candidates arrive in score order. Cycle through time bands when spending the input budget.
+    width = max(WINDOW_SECONDS, (max(lead.start for lead in candidates) - start) / 6)
+    bands: dict[int, list[Candidate]] = {}
+    for lead in candidates:
+        band = min(5, int((lead.start - start) // width))
+        bands.setdefault(band, []).append(lead)
+    return [lead for group in zip_longest(*bands.values()) for lead in group if lead is not None]
+
+
 def shortlist(
     candidates: list[Candidate],
     windows: list[list[Segment]],
@@ -71,7 +89,7 @@ def shortlist(
     payload: list[dict] = []
     budget = MAX_OPTION_BYTES - 2  # Outer JSON array brackets.
     seen = set()
-    for lead in candidates:
+    for lead in _coverage_order(candidates, request.analysis_start):
         if len(options) == MAX_OPTIONS:
             break
         if lead.fingerprint in seen:
@@ -111,15 +129,18 @@ def ground_review(
     duration: float,
     job_id: str,
     limit: int,
-) -> tuple[list[Candidate], int]:
+) -> tuple[list[Candidate], Counter[str]]:
     if len(proposal.candidates) > limit:
         raise HighlightError("Editorial review returned more clips than its request limit.", 502)
     accepted: list[Candidate] = []
-    rejected = 0
+    rejected: Counter[str] = Counter()
     used = set()
     for candidate in proposal.candidates:
-        if candidate.option >= len(options) or candidate.option in used:
-            rejected += 1
+        if candidate.option >= len(options):
+            rejected["unknown_option"] += 1
+            continue
+        if candidate.option in used:
+            rejected["reused_option"] += 1
             continue
         option = options[candidate.option]
         grounded, invalid = ground_candidates(
@@ -128,11 +149,12 @@ def ground_review(
             request,
             duration,
             job_id,
+            rejection_reasons=rejected,
         )
-        if invalid or not (
-            grounded[0].start < option.lead.end and grounded[0].end > option.lead.start
-        ):
-            rejected += 1
+        if invalid:
+            continue
+        if not (grounded[0].start < option.lead.end and grounded[0].end > option.lead.start):
+            rejected["outside_original_lead"] += 1
             continue
         used.add(candidate.option)
         accepted.extend(grounded)

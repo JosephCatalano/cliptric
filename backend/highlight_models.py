@@ -9,11 +9,11 @@ from .limits import MAX_MEDIA_SECONDS
 from .transcription_models import TranscriptionJob, clean_text
 
 ACTIVE = {"queued", "analysing", "cancelling"}
-PROMPT_VERSION = "transcript-highlights-v6-two-stage"
-DISCOVERY_VERSION = "windowed-discovery-v1"
+PROMPT_VERSION = "transcript-highlights-v7-coverage"
+DISCOVERY_VERSION = "windowed-discovery-v2"
 WINDOW_SECONDS = 180
 OVERLAP_SECONDS = 30
-MAX_AUTO_WINDOW_SECONDS = 600
+MAX_COVERAGE_WINDOW_SECONDS = 600
 
 
 class HighlightError(Exception):
@@ -140,6 +140,11 @@ class HighlightJob(BaseModel):
     editorial_status: Literal["pending", "reviewing", "completed"] | None = None
     discovered_candidates: int = 0
     editorial_options: int = 0
+    discovery_duplicates: int = 0
+    discovery_rejections: dict[str, int] = Field(default_factory=dict)
+    editorial_proposals: int = 0
+    editorial_duplicates: int = 0
+    editorial_rejections: dict[str, int] = Field(default_factory=dict)
     discovery_shortlist: list[SourceRange] = Field(default_factory=list, max_length=24)
     pool_key: str | None = None
     cache_hit: bool = False

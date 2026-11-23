@@ -2,6 +2,14 @@ export type YouTubeConnection = {
   configured: boolean;
   connected: boolean;
   account_id: string | null;
+  accounts: { account_id: string; label: string }[];
+};
+export const youtubeDefaults = {
+  categoryId: "20",
+  privacy: "public",
+  kids: "no",
+  synthetic: "no",
+  notify: true,
 };
 export type YouTubeCreator = {
   account_id: string;
@@ -21,7 +29,15 @@ export type YouTubePost = {
   export_id: string;
   account_id: string;
   channel: { id: string; title: string };
-  status: "queued" | "initializing" | "uploading" | "paused" | "processing" | "ready" | "failed" | "unknown";
+  status:
+    | "queued"
+    | "initializing"
+    | "uploading"
+    | "paused"
+    | "processing"
+    | "ready"
+    | "failed"
+    | "unknown";
   total_bytes: number;
   uploaded_bytes: number;
   video_id: string | null;

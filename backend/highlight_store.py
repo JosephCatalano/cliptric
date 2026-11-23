@@ -112,7 +112,9 @@ class HighlightStore:
                 (job.id, job.recording_id, key, job.status, job.model_dump_json(), job.created_at),
             )
 
-    def discovery(self, recording_id: str, key: str) -> tuple[list[Candidate], int] | None:
+    def discovery(
+        self, recording_id: str, key: str
+    ) -> tuple[list[Candidate], dict[str, int]] | None:
         with self.store.connection() as db:
             row = db.execute(
                 "SELECT payload FROM highlight_discovery WHERE recording_id=? AND cache_key=?",
@@ -121,12 +123,13 @@ class HighlightStore:
         if row is None:
             return None
         payload = json.loads(row[0])
-        return [Candidate.model_validate(candidate) for candidate in payload["leads"]], payload[
-            "rejected"
-        ]
+        return (
+            [Candidate.model_validate(candidate) for candidate in payload["leads"]],
+            payload["rejection_reasons"],
+        )
 
     def save_discovery(
-        self, recording_id: str, key: str, leads: list[Candidate], rejected: int
+        self, recording_id: str, key: str, leads: list[Candidate], rejection_reasons: dict[str, int]
     ) -> None:
         with self.store.connection() as db:
             db.execute(
@@ -138,7 +141,7 @@ class HighlightStore:
                     json.dumps(
                         {
                             "leads": [candidate.model_dump() for candidate in leads],
-                            "rejected": rejected,
+                            "rejection_reasons": rejection_reasons,
                         }
                     ),
                 ),
