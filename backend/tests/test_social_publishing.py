@@ -77,6 +77,8 @@ def publishing(tmp_path, request):
             state["uploads"].append((token, base64.b64decode(part["media"]), part["segment_index"]))
             return httpx2.Response(204)
         elif path in {"/2/media/upload/789/finalize", "/2/media/upload"}:
+            if path == state.get("rejected_path"):
+                return httpx2.Response(402, json={"detail": "private provider details"})
             result = {
                 "data": {
                     "id": "789",
@@ -495,6 +497,31 @@ def test_x_processing_polls_fixed_status_endpoint(publishing, monkeypatch):
     monkeypatch.setattr(service.stop, "wait", lambda _: False)
     assert finish(service, approved(export_id, account)).status == "published"
     assert ("GET", "api.x.com", "/2/media/upload") in state["calls"]
+
+
+@pytest.mark.parametrize(
+    ("path", "operation"),
+    [
+        ("/2/media/upload/789/finalize", "finalizing the video upload"),
+        ("/2/media/upload", "checking video processing"),
+    ],
+)
+def test_x_saves_redacted_upload_rejection(publishing, monkeypatch, path, operation):
+    service, state, export_id, _ = publishing
+    if service.platform != "x":
+        pytest.skip("X-only upload diagnostics")
+    account, _ = connect(service)
+    state.update(processing="pending", rejected_path=path)
+    monkeypatch.setattr(service.stop, "wait", lambda _: False)
+
+    job = finish(service, approved(export_id, account))
+
+    assert job.status == "failed"
+    assert job.uploaded_bytes == job.total_bytes
+    assert f"{operation} (HTTP 402)" in job.error
+    assert "API credits" in job.error
+    assert "private provider details" not in job.error
+    assert not state["posts"]
 
 
 def test_facebook_cannot_connect_page_outside_authorized_list(publishing):

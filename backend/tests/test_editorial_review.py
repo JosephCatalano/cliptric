@@ -113,6 +113,8 @@ def test_review_meters_one_request_and_never_publishes_raw_leads(service, outcom
         if outcome == "invalid":
             assert result.editorial_proposals == 1
             assert result.editorial_rejections == {"unknown_option": 1}
+            assert "outside its shortlist" in result.error
+            assert "before approving a retry" in result.error
         if outcome == "api_failure":
             assert result.error.startswith("Editorial review failed.")
             assert "synthetic private response" not in result.error

@@ -508,7 +508,8 @@ class Media:
                     raise RenderCancelled()
                 if process.returncode != 0:
                     raise MediaError(
-                        "Export failed. Details are saved in the local processing log."
+                        f"FFmpeg stopped before the export was ready. Check the local export log "
+                        f"({log_path.name}) for the encoder or input error, then retry the export."
                     )
             finally:
                 if process.poll() is None:

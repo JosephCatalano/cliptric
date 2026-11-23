@@ -14,9 +14,10 @@ from .config import ROOT
 
 
 class SocialError(ValueError):
-    def __init__(self, message, status_code=502):
+    def __init__(self, message, status_code=502, *, provider_status=None):
         super().__init__(message)
         self.status_code = status_code
+        self.provider_status = provider_status
 
 
 def identifier(value):
@@ -123,9 +124,18 @@ class Transport:
                     content=content,
                 ) as response:
                     if response.status_code not in {200, 201, 202, 204}:
+                        status = response.status_code
+                        guidance = {
+                            400: "Review the post details and media requirements.",
+                            401: "Reconnect the account and review its access.",
+                            402: "Check the developer app’s API credits.",
+                            403: "Check that the developer app and account have publishing permission.",
+                            429: "Wait for the provider’s rate limit to reset.",
+                        }.get(status, "Check saved publishing status before retrying.")
                         raise SocialError(
-                            "The provider rejected the request. Check app permissions, account access, media limits and API credits.",
-                            429 if response.status_code == 429 else 502,
+                            f"The publishing provider rejected the request (HTTP {status}). {guidance}",
+                            429 if status == 429 else 502,
+                            provider_status=status,
                         )
                     payload = bytearray()
                     for part in response.iter_bytes(chunk_size=8192):

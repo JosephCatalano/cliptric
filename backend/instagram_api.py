@@ -89,9 +89,16 @@ class InstagramAPI:
                     method, url, headers=headers, params=params, data=data, content=content
                 ) as response:
                     if response.status_code not in {200, 201}:
+                        status = response.status_code
+                        guidance = {
+                            400: "Review the Reel requirements and make sure the account is eligible to publish.",
+                            401: "Reconnect the Instagram account in Cliptric.",
+                            403: "Check the account’s publishing permissions and the Meta app’s access.",
+                            429: "Wait for Meta’s request limit to reset before retrying.",
+                        }.get(status, "Check saved Reel status before retrying.")
                         raise InstagramError(
-                            "Meta rejected the request. Check account access, app permissions and publishing limits.",
-                            429 if response.status_code == 429 else 502,
+                            f"Meta rejected the Instagram request (HTTP {status}). {guidance}",
+                            429 if status == 429 else 502,
                         )
                     payload = bytearray()
                     for part in response.iter_bytes(chunk_size=8192):

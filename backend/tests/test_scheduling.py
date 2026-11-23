@@ -203,11 +203,17 @@ def test_failed_handoff_can_be_scheduled_again_after_reconciliation(scheduled):
     scheduler.tick()
     with scheduler.store.connection() as db:
         db.execute(
-            "INSERT INTO tiktok_posts(id,export_id,account_id,status) VALUES (?,?,?,'failed')",
-            (identifier, str(request.post.request.export_id), request.post.request.account_id),
+            "INSERT INTO tiktok_posts(id,export_id,account_id,status,payload) VALUES (?,?,?,'failed',?)",
+            (
+                identifier,
+                str(request.post.request.export_id),
+                request.post.request.account_id,
+                '{"error":"Reconnect the connected TikTok account."}',
+            ),
         )
     scheduler.tick()
     assert row(scheduler, identifier)["status"] == "failed"
+    assert row(scheduler, identifier)["error"] == "Reconnect the connected TikTok account."
     replacement = request.model_copy(deep=True)
     replacement.post.request.id = uuid4()
     assert scheduler.create(replacement)

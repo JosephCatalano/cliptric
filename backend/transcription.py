@@ -402,7 +402,11 @@ class Transcriptions:
         except Exception:
             logger.exception("Unexpected transcription failure for %s", job.id)
             self._log_failure(job.id)
-            self._fail(job.id, "Transcription failed. Check the local processing log and retry.")
+            self._fail(
+                job.id,
+                f"Cliptric could not finish transcription because of an internal processing error. "
+                f"Check the local transcription log (transcription-{job.id}.log) before retrying.",
+            )
         finally:
             try:
                 self._cleanup(work)
@@ -542,7 +546,9 @@ class Transcriptions:
                 if warm and (work / "worker-error.log").is_file():
                     log.write((work / "worker-error.log").read_bytes()[:16_384])
                 raise TranscriptionError(
-                    "Audio processing failed. Details are saved in the local transcription log."
+                    f"The speech worker stopped before transcription completed. "
+                    f"Check the local transcription log (transcription-{transcription_id}.log) "
+                    f"for the model or audio error, then retry transcription."
                 )
             succeeded = True
             if warm:

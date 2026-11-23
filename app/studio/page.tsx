@@ -175,6 +175,7 @@ export default function Workspace() {
   const [clipOffset, setClipOffset] = useState(0);
   const [playerReady, setPlayerReady] = useState(false);
   const [captionState, setCaptionState] = useState<CaptionState | null>(null);
+  const [previewSlot, setPreviewSlot] = useState<HTMLDivElement | null>(null);
   const [captionsEnabled, setCaptionsEnabled] = useState(false);
   const [captionPosition, setCaptionPosition] =
     useState<CaptionPosition>("auto");
@@ -760,6 +761,7 @@ export default function Workspace() {
           ) : (
             <div className="studio-content">
               <div className="editor-grid">
+                <div ref={setPreviewSlot} className="clip-preview-column" />
                 <div className="editor-column">
                   <Card className="source-panel" aria-labelledby="source-title">
                     <CardHeader className="source-heading flex flex-wrap items-start justify-between gap-4">
@@ -842,9 +844,10 @@ export default function Workspace() {
                           {previewError && (
                             <Alert role="status" variant="default">
                               <AlertDescription>
-                                This browser cannot preview the source format.
-                                The recording is imported; try an MP4 for
-                                playback.
+                                The source preview could not play. Check that
+                                Cliptric is connected and reopen the recording.
+                                If this format still will not play, import an
+                                MP4 copy to preview it.
                               </AlertDescription>
                             </Alert>
                           )}
@@ -1027,7 +1030,6 @@ export default function Workspace() {
                       }
                     />
                   )}
-                </div>
                 <Card
                   className="export-panel"
                   aria-label="Export settings"
@@ -1144,6 +1146,24 @@ export default function Workspace() {
                           mode={mode}
                           layout={splitLayout}
                           cropRegion={cropRegion}
+                          previewSlot={previewSlot}
+                          previewOptions={{
+                            captions: {
+                              preset: captionsEnabled ? captionPreset : "none",
+                              position: captionPosition,
+                              customization: captionCustomization,
+                            },
+                            headline,
+                            transcriptionId: currentCaption?.transcriptionId,
+                            transcriptRevision: currentCaption?.revision,
+                            emphasis: parseEmphasis(emphasisText),
+                            savedExportId: clips.find(
+                              (clip) => clip.status === "succeeded" &&
+                                clip.recording_id === selectedId &&
+                                clip.start === rangeStart && clip.end === rangeEnd,
+                            )?.id,
+                          }}
+                          quality={quality}
                           autoLayout={
                             clips.find(
                               (clip) =>
@@ -1163,7 +1183,7 @@ export default function Workspace() {
                                 clip.end === rangeEnd,
                             )?.follow_plan
                           }
-                          end={rangeEnd}
+                          end={validRange ? rangeEnd : undefined}
                           sourceUrl={
                             selected
                               ? `/api/recordings/${selected.id}/media`
@@ -1460,6 +1480,7 @@ export default function Workspace() {
                       )}
                   </CardContent>
                 </Card>
+                </div>
               </div>
               <section
                 className="exports"

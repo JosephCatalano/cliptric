@@ -31,6 +31,7 @@ from backend.youtube_api import (
     YouTubeAPI,
     YouTubeError,
     YouTubeSettings,
+    provider_error,
 )
 from backend.youtube_publishing import UploadRequest, YouTubePublishing
 from backend.youtube_routes import create_youtube_publishing_router
@@ -41,6 +42,22 @@ class FixtureMedia:
 
     def probe(self, path):
         return self.info
+
+
+def test_google_quota_rejection_explains_recovery_without_raw_details():
+    error = provider_error(
+        httpx2.Response(
+            403,
+            json={
+                "error": {
+                    "errors": [{"reason": "quotaExceeded", "message": "private provider details"}]
+                }
+            },
+        )
+    )
+    assert error.status_code == 403
+    assert "Google Cloud project’s quota" in str(error)
+    assert "private provider details" not in str(error)
 
 
 def token_response(**updates):

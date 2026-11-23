@@ -89,10 +89,34 @@ def provider_error(response):
         return YouTubeError(
             "Google authorization is no longer valid. Disconnect and reconnect YouTube.", 409
         )
-    if code in {403, 429}:
+    if code in {400, 403, 429}:
+        reasons = {
+            "quotaExceeded": "The YouTube Data API quota was exceeded. Check the Google Cloud project’s quota before retrying.",
+            "dailyLimitExceeded": "The Google Cloud project reached its daily YouTube API limit. Check its quota before retrying.",
+            "uploadLimitExceeded": "The channel reached its YouTube upload limit. Check YouTube Studio before retrying.",
+            "accessNotConfigured": "The Google Cloud project lacks YouTube Data API access. Enable YouTube Data API v3 and verify the configured OAuth client.",
+            "insufficientPermissions": "The connected account did not grant the required YouTube access. Reconnect it and grant the permissions.",
+            "invalidCategoryId": "YouTube rejected the video category. Choose a category available to the connected channel.",
+        }
+        try:
+            error = response_json(response).get("error")
+            entries = error.get("errors") if isinstance(error, dict) else None
+            if isinstance(entries, list):
+                for entry in entries:
+                    reason = entry.get("reason") if isinstance(entry, dict) else None
+                    if isinstance(reason, str) and reason in reasons:
+                        return YouTubeError(f"{reasons[reason]} (HTTP {code})", code)
+        except YouTubeError, httpx2.HTTPError:
+            pass
+    if code == 429:
         return YouTubeError(
-            "Google refused this request. Check API access, permissions, and quota in Google Cloud and YouTube Studio before retrying.",
-            429 if code == 429 else 403,
+            "Google rate-limited the request (HTTP 429). Check the saved upload status and wait before retrying.",
+            429,
+        )
+    if code == 403:
+        return YouTubeError(
+            "Google refused the YouTube request (HTTP 403). Check the project’s API access and the channel’s permissions in Google Cloud and YouTube Studio.",
+            403,
         )
     return YouTubeError(
         f"Google did not confirm the request (HTTP {code}). Check saved upload status before retrying."

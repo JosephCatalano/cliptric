@@ -51,7 +51,7 @@ export async function POST(request: Request) {
       {
         detail: signal.aborted
           ? "Import interrupted or timed out. Reload the library before retrying."
-          : "Cannot reach the local API. Start it and retry.",
+          : "The connection to the local Cliptric API failed. Check that it is running and look for the recording in your library before retrying.",
       },
       { status: signal.aborted ? 408 : 502 },
     );

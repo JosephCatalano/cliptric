@@ -135,7 +135,12 @@ export function ProjectResults({ id }: { id: string }) {
       } catch (error) {
         if (!controller.signal.aborted) {
           setError(message(error));
-          if (!(error instanceof ApiError) || error.status >= 500)
+          if (
+            !(error instanceof ApiError) ||
+            error.status === 0 ||
+            error.status === 408 ||
+            error.status >= 500
+          )
             timer = setTimeout(load, 5000);
         }
       }
@@ -856,7 +861,14 @@ function ClipCard({
     item.quality ?? defaultQuality,
   );
   const [draftEnd, setDraftEnd] = useState(String(item.end));
+  const [previewSlot, setPreviewSlot] = useState<HTMLDivElement | null>(null);
+  const [draftTitle, setDraftTitle] = useState(item.title);
+  const [draftHeadline, setDraftHeadline] = useState(item.headline_enabled);
+  const [draftHeadlinePosition, setDraftHeadlinePosition] = useState(item.headline_position);
   const [openingText, setOpeningText] = useState(item.opening_text ?? "");
+  const [draftOverlays, setDraftOverlays] = useState(item.overlays ?? []);
+  const [draftEmphasis, setDraftEmphasis] = useState((item.emphasis_words ?? []).join(", "));
+  const [reassess, setReassess] = useState(false);
   const [framing, setFraming] = useState<FramingMode>(
     item.framing ?? project.settings.framing,
   );
@@ -947,7 +959,13 @@ function ClipCard({
     });
     setDraftStart(String(item.start));
     setDraftEnd(String(item.end));
+    setDraftTitle(item.title);
+    setDraftHeadline(item.headline_enabled);
+    setDraftHeadlinePosition(item.headline_position);
     setOpeningText(item.opening_text ?? "");
+    setDraftOverlays(item.overlays ?? []);
+    setDraftEmphasis((item.emphasis_words ?? []).join(", "));
+    setReassess(false);
     setFraming(item.framing ?? project.settings.framing);
     setCropRegion(
       item.framing
@@ -1309,7 +1327,7 @@ function ClipCard({
           }}
         >
           <DialogContent
-            className="max-h-[90dvh] overflow-y-auto sm:max-w-4xl"
+            className="max-h-[94dvh] overflow-y-auto sm:max-w-6xl"
             onCloseAutoFocus={(event) => {
               event.preventDefault();
               moreTrigger.current?.focus();
@@ -1324,10 +1342,15 @@ function ClipCard({
             </DialogHeader>
             {editing ? (
               <form
+                className="grid min-w-0 items-start gap-6 lg:grid-cols-[minmax(16rem,0.85fr)_minmax(0,1.15fr)]"
                 key={editing.revision}
                 onSubmit={save}
-                onChangeCapture={() => setDirty(true)}
+                onChangeCapture={(event) => {
+                  if (!(event.target instanceof Element && event.target.closest(".live-clip-preview"))) setDirty(true);
+                }}
               >
+                <div ref={setPreviewSlot} className="clip-preview-column" />
+                <div className="flex min-w-0 flex-col gap-3">
                 <p role="status" className="text-sm text-muted-foreground">
                   {saving ? "Saving..." : dirty ? "Unsaved changes" : "Saved"}
                 </p>
@@ -1336,6 +1359,11 @@ function ClipCard({
                     <Checkbox
                       id={`${fieldId}-presentation`}
                       name="auto_presentation"
+                      checked={reassess}
+                      onCheckedChange={(value) => {
+                        setReassess(value === true);
+                        setDirty(true);
+                      }}
                     />
                     <FieldLabel htmlFor={`${fieldId}-presentation`}>
                       Re-analyze automatic presentation on save (local, no AI
@@ -1350,7 +1378,8 @@ function ClipCard({
                       id={`${fieldId}-3-${editing.revision}`}
                       type="text"
                       name="title"
-                      defaultValue={editing.title}
+                      value={draftTitle}
+                      onChange={(event) => setDraftTitle(event.target.value)}
                       required
                       maxLength={120}
                     />
@@ -1424,9 +1453,20 @@ function ClipCard({
                     mode={framing}
                     layout={splitLayout}
                     cropRegion={cropRegion}
-                    followPlan={item.export?.follow_plan}
-                    autoLayout={item.export?.auto_layout}
-                    end={Number(draftEnd)}
+                    followPlan={reassess ? null : item.export?.follow_plan}
+                    autoLayout={reassess ? null : item.export?.auto_layout}
+                    previewSlot={previewSlot}
+                    previewOptions={{
+                      savedExportId: item.export?.status === "succeeded" ? item.export.id : null,
+                      transcriptionId: project.transcription_id,
+                      transcriptRevision: project.transcript_revision,
+                      captions: captionStyle,
+                      headline: draftHeadline ? { text: openingText.trim() || draftTitle, position: draftHeadlinePosition, seconds: 8 } : null,
+                      emphasis: parseEmphasis(draftEmphasis),
+                      overlays: draftOverlays,
+                    }}
+                    quality={reassess ? { ...quality, smart_framing: null } : quality}
+                    end={draftStart.trim() && draftEnd.trim() ? Number(draftEnd) : undefined}
                     sourceUrl={
                       project.recording_id
                         ? `/api/recordings/${project.recording_id}/media`
@@ -1451,7 +1491,11 @@ function ClipCard({
                       <Checkbox
                         id={fieldId + "-headline-enabled"}
                         name="headline_enabled"
-                        defaultChecked={editing.headline_enabled}
+                        checked={draftHeadline}
+                        onCheckedChange={(value) => {
+                          setDraftHeadline(value === true);
+                          setDirty(true);
+                        }}
                       />
                       <FieldLabel htmlFor={fieldId + "-headline-enabled"}>
                         Show headline for the first eight seconds
@@ -1464,7 +1508,8 @@ function ClipCard({
                       <NativeSelect
                         id={fieldId + "-headline-position"}
                         name="headline_position"
-                        defaultValue={editing.headline_position ?? "auto"}
+                        value={draftHeadlinePosition}
+                        onChange={(event) => setDraftHeadlinePosition(event.target.value as typeof draftHeadlinePosition)}
                         className="w-full"
                       >
                         <NativeSelectOption value="auto">
@@ -1497,6 +1542,10 @@ function ClipCard({
                   </FieldSet>
                   <TextOverlayFields
                     initial={editing.overlays ?? []}
+                    onChange={(overlays) => {
+                      setDraftOverlays(overlays);
+                      setDirty(true);
+                    }}
                     duration={Math.max(
                       0,
                       Number(draftEnd) - Number(draftStart),
@@ -1504,7 +1553,10 @@ function ClipCard({
                   />
                   <OutputQualityControls
                     value={quality}
-                    onChange={setQuality}
+                    onChange={(value) => {
+                      setQuality(value);
+                      setDirty(true);
+                    }}
                     recordingId={project.recording_id!}
                     start={Number(draftStart)}
                     end={Number(draftEnd)}
@@ -1551,7 +1603,10 @@ function ClipCard({
                   />
                   <CaptionStyleLibrary
                     value={captionStyle}
-                    onApply={setCaptionStyle}
+                    onApply={(style) => {
+                      setCaptionStyle(style);
+                      setDirty(true);
+                    }}
                     disabled={locked || saving}
                   />
                   <CaptionCustomizationFields
@@ -1577,7 +1632,11 @@ function ClipCard({
                   />
                   <CaptionEmphasisField
                     name="emphasis_words"
-                    defaultValue={(editing.emphasis_words ?? []).join(", ")}
+                    value={draftEmphasis}
+                    onChange={(value) => {
+                      setDraftEmphasis(value);
+                      setDirty(true);
+                    }}
                     disabled={locked || saving}
                     source={
                       project.transcription_id && project.transcript_revision
@@ -1636,6 +1695,7 @@ function ClipCard({
                     <AlertDescription>{error}</AlertDescription>
                   </Alert>
                 ) : null}
+                </div>
               </form>
             ) : null}
           </DialogContent>

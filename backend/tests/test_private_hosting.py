@@ -80,6 +80,23 @@ def test_nonlocal_peer_cannot_claim_gateway(private_app):
         assert client.get("/api/health", headers=GATEWAY).status_code == 403
 
 
+def test_unexpected_api_failure_has_safe_reference_and_recovery(private_app, caplog):
+    @private_app.post("/api/unexpected")
+    def broken():
+        raise RuntimeError("private exception details")
+
+    with TestClient(private_app, base_url=ORIGIN, client=("127.0.0.1", 1234)) as client:
+        response = client.post("/api/unexpected", headers={**GATEWAY, "Origin": ORIGIN})
+
+    assert response.status_code == 500
+    assert response.headers["cache-control"] == "no-store"
+    detail = response.json()["detail"]
+    assert "Refresh the saved status before trying again" in detail
+    reference = detail.split("Error reference ")[1].rstrip(".")
+    assert reference in caplog.text
+    assert "private exception details" not in detail + caplog.text
+
+
 def test_stream_forwarded_from_next_uses_same_boundary(private_app, recordings):
     with TestClient(
         private_app, base_url="http://127.0.0.1:8765", client=("127.0.0.1", 1234)

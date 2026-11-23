@@ -462,8 +462,23 @@ class Highlights:
                 dict(editorial_rejections),
             )
         if editorial_rejections and not candidates:
+            reason, count = editorial_rejections.most_common(1)[0]
+            explanation = {
+                "unknown_option": "the review referenced a clip that was outside its shortlist",
+                "reused_option": "the review submitted the same shortlist option more than once",
+                "segment_ids": "the proposed timestamps did not match available transcript segments",
+                "quality": "the proposals did not meet the Quality mode requirements",
+                "boundary_evidence": "the opening or closing evidence did not match the transcript",
+                "duration": "the proposals did not fit the allowed clip duration",
+                "source_bounds": "the proposals were outside the selected source range",
+                "evidence": "the main evidence quotes did not match the selected transcript text",
+                "excluded_range": "the proposals overlapped a used or excluded section",
+                "outside_original_lead": "the proposed cuts moved outside their shortlisted moments",
+            }.get(reason, "the proposals did not pass source validation")
             raise HighlightError(
-                "Editorial review returned no valid intervals. Check usage before retrying explicitly."
+                f"Editorial review found no valid clips. Most common reason ({count} of "
+                f"{len(proposal.candidates)} proposed): {explanation}. "
+                "Review the saved AI usage before approving a retry, or choose a clip manually."
             )
         return ranked, rejected
 

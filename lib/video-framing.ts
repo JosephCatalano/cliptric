@@ -70,7 +70,10 @@ export function pixelRegion(
   return { x, y, width: w, height: h };
 }
 
-export function followRegion(plan: FollowPlan, at: number): SourceRegion {
+export function followRegion(
+  plan: Pick<FollowPlan, "strategy" | "points" | "width" | "height">,
+  at: number,
+): SourceRegion {
   if (plan.strategy === "fit") return { x: 0, y: 0, width: 1, height: 1 };
   let low = 0,
     high = plan.points.length - 1;

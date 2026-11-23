@@ -1,12 +1,18 @@
 import asyncio
+import logging
 import secrets
+from pathlib import Path
+from traceback import extract_tb
 from urllib.parse import urlsplit
+from uuid import uuid4
 
 from starlette.requests import Request
 from starlette.responses import JSONResponse
 from starlette.types import ASGIApp, Receive, Scope, Send
 
 from .config import Settings
+
+logger = logging.getLogger(__name__)
 
 LOOPBACK_HOSTS = {"localhost", "127.0.0.1"}
 OAUTH_CALLBACKS = {
@@ -57,9 +63,12 @@ class RequestBoundary:
             hosts.add(hostname(forwarded_host))
         accepted_hosts = LOOPBACK_HOSTS | ({self.public_host} if self.public_host else set())
         if not hosts <= accepted_hosts:
-            await JSONResponse({"detail": "Request host is not allowed."}, status_code=400)(
-                scope, receive, send
-            )
+            await JSONResponse(
+                {
+                    "detail": "This address is not configured for Cliptric. Open your usual Cliptric workspace address."
+                },
+                status_code=400,
+            )(scope, receive, send)
             return
         hosted = bool(self.public_host and self.public_host in hosts)
         request.state.hosted = hosted
@@ -73,7 +82,10 @@ class RequestBoundary:
                 or not secrets.compare_digest(token, self.settings.gateway_token)
             ):
                 await JSONResponse(
-                    {"detail": "The private Cliptric gateway is required."}, status_code=403
+                    {
+                        "detail": "The private Cliptric gateway is required. Open the workspace through its HTTPS address. If it still fails, check that the gateway is running with matching configuration."
+                    },
+                    status_code=403,
                 )(scope, receive, send)
                 return
             allowed = {self.settings.public_origin}
@@ -90,7 +102,10 @@ class RequestBoundary:
             )
         ):
             await JSONResponse(
-                {"detail": "Cross-origin requests are not allowed."}, status_code=403
+                {
+                    "detail": "Cliptric blocked a request from another site or tab context. Open the workspace directly in a new tab and retry the action there."
+                },
+                status_code=403,
             )(scope, receive, send)
             return
 
@@ -113,16 +128,21 @@ class RequestBoundary:
                         body.extend(chunk.get("body", b""))
                         if len(body) > body_limit:
                             await JSONResponse(
-                                {"detail": f"Request body exceeds {body_limit // 1024} KiB."},
+                                {
+                                    "detail": f"The request exceeds {body_limit // 1024} KiB. Shorten the submitted text or select fewer items at once."
+                                },
                                 status_code=413,
                             )(scope, receive, send)
                             return
                         if not chunk.get("more_body", False):
                             break
             except TimeoutError:
-                await JSONResponse({"detail": "Request timed out."}, status_code=408)(
-                    scope, receive, send
-                )
+                await JSONResponse(
+                    {
+                        "detail": "Cliptric timed out while receiving the request. Check your connection and submit it again."
+                    },
+                    status_code=408,
+                )(scope, receive, send)
                 return
             original_receive = receive
             delivered = False
@@ -136,12 +156,38 @@ class RequestBoundary:
 
             receive = replay
 
+        response_started = False
+
         async def secure_headers(message):
+            nonlocal response_started
             if message["type"] == "http.response.start":
+                response_started = True
                 message["headers"] = list(message.get("headers", [])) + [
                     (b"x-content-type-options", b"nosniff"),
                     (b"cache-control", b"no-store"),
                 ]
             await send(message)
 
-        await self.app(scope, receive, secure_headers)
+        try:
+            await self.app(scope, receive, secure_headers)
+        except Exception as exc:
+            if response_started:
+                raise
+            reference = uuid4().hex[:12]
+            # Log code locations only. Exception text can include local paths or credentials.
+            frames = extract_tb(exc.__traceback__)
+            locations = " > ".join(
+                f"{Path(frame.filename).name}:{frame.lineno}" for frame in frames
+            )
+            logger.error("API error %s (%s) at %s", reference, type(exc).__name__, locations)
+            recovery = (
+                "Reload the page. If it fails again, share the reference so the backend log can be checked."
+                if request.method in {"GET", "HEAD"}
+                else "Refresh the saved status before trying again. Share the reference if the error persists."
+            )
+            await JSONResponse(
+                {
+                    "detail": f"Cliptric encountered an internal error. {recovery} Error reference {reference}."
+                },
+                status_code=500,
+            )(scope, receive, secure_headers)

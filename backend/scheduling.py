@@ -350,7 +350,11 @@ class Scheduler:
             for platform in self.services:
                 table = POST_TABLES[platform]
                 db.execute(
-                    f"UPDATE scheduled_posts SET status='failed',error=? WHERE platform=? "
+                    f"UPDATE scheduled_posts SET status='failed',error=COALESCE(("
+                    f"SELECT CASE WHEN json_valid(payload) THEN "
+                    f"NULLIF(TRIM(json_extract(payload,'$.error')),'') END FROM {table} "
+                    f"WHERE {table}.id=scheduled_posts.id AND {table}.status='failed'"
+                    f"),?) WHERE platform=? "
                     f"AND status IN ('submitted','unknown') AND EXISTS "
                     f"(SELECT 1 FROM {table} WHERE {table}.id=scheduled_posts.id AND {table}.status='failed')",
                     (

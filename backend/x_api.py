@@ -33,14 +33,37 @@ class XAPI(Transport):
             path,
         ):
             raise ValueError("Unsupported X endpoint")
-        return self.send(
-            method,
-            f"https://api.x.com/2/{path}",
-            headers={"Authorization": f"Bearer {token}"},
-            body=body,
-            params=params,
-            timeout=timeout,
-        )
+        try:
+            return self.send(
+                method,
+                f"https://api.x.com/2/{path}",
+                headers={"Authorization": f"Bearer {token}"},
+                body=body,
+                params=params,
+                timeout=timeout,
+            )
+        except SocialError as exc:
+            if exc.provider_status is None:
+                raise
+            operation = {
+                "initialize": "starting the video upload",
+                "append": "sending a video chunk",
+                "finalize": "finalizing the video upload",
+                "upload": "checking video processing",
+                "tweets": "creating the post",
+            }.get(path.rsplit("/", 1)[-1], "checking account or post access")
+            guidance = {
+                400: "Check the export format and post details against X’s requirements.",
+                401: "Reconnect the X account and review its access.",
+                402: "Check the app’s API credits in the X Developer Console.",
+                403: "Check app permissions and account access in the X Developer Console.",
+                429: "Wait for the X API rate limit to reset before reviewing a retry.",
+            }.get(exc.provider_status, "Check X API access and saved publishing status.")
+            raise SocialError(
+                f"X rejected the request while {operation} (HTTP {exc.provider_status}). {guidance}",
+                exc.status_code,
+                provider_status=exc.provider_status,
+            ) from exc
 
     def token(self, **form):
         basic = base64.b64encode(

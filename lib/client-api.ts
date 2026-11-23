@@ -8,6 +8,50 @@ export class ApiError extends Error {
   }
 }
 
+function responseError(status: number, payload: unknown, recovery: string) {
+  const detail =
+    payload && typeof payload === "object" && "detail" in payload
+      ? payload.detail
+      : null;
+  if (typeof detail === "string" && detail.trim()) {
+    return new ApiError(detail, status);
+  }
+  if (Array.isArray(detail) && typeof detail[0]?.msg === "string") {
+    const field = Array.isArray(detail[0].loc)
+      ? detail[0].loc
+          .filter(
+            (part: unknown) =>
+              (typeof part === "string" || typeof part === "number") &&
+              part !== "body",
+          )
+          .join(".")
+      : "";
+    return new ApiError(
+      `Correct ${field ? `the “${field}” field` : "the request inputs"} and submit again. ${detail[0].msg}`,
+      status,
+    );
+  }
+  const known: Record<number, string> = {
+    400: "Cliptric could not read the request. Reload the page and review the inputs.",
+    401: "Your Cliptric sign-in is required. Open the workspace and sign in again.",
+    403: "Access was denied. Open Cliptric from the address you normally sign in to and reload the page.",
+    404: "This item or page could not be found. Return to the list and reopen it.",
+    409: "This action conflicts with the current state. Refresh the item before deciding whether to retry.",
+    413: "The request was too large. Choose a smaller file or reduce the submitted content.",
+    429: "Too many requests were sent. Wait a moment before trying again.",
+  };
+  const explanation =
+    known[status] ??
+    (status === 408 || status === 504
+      ? `The request timed out. ${recovery}`
+      : status === 502 || status === 503
+        ? `Cliptric did not receive a usable response from the backend or a connected service. ${recovery}`
+        : status >= 500
+          ? `Cliptric encountered a server error. ${recovery}`
+          : `Cliptric could not complete the request. ${recovery}`);
+  return new ApiError(`${explanation} (HTTP ${status})`, status);
+}
+
 export async function creationFingerprint(value: unknown): Promise<string> {
   const bytes = await crypto.subtle.digest(
     "SHA-256",
@@ -33,42 +77,43 @@ export async function api<T>(
   options?: RequestInit,
   timeoutMs?: number,
 ): Promise<T> {
-  const response = await fetch(path, {
-    cache: "no-store",
-    ...options,
-    signal: AbortSignal.any([
-      AbortSignal.timeout(
-        timeoutMs ?? (options?.body instanceof File ? 1_830_000 : 20_000),
-      ),
-      ...(options?.signal ? [options.signal] : []),
-    ]),
-  });
-  if (!response.ok) {
-    const payload: unknown = await response.json().catch(() => null);
-    const detail =
-      payload && typeof payload === "object" && "detail" in payload
-        ? payload.detail
-        : null;
-    const field =
-      Array.isArray(detail) && Array.isArray(detail[0]?.loc)
-        ? detail[0].loc
-            .filter(
-              (part: unknown) =>
-                (typeof part === "string" || typeof part === "number") &&
-                part !== "body",
-            )
-            .join(".")
-        : "";
+  const write = !["GET", "HEAD"].includes(
+    (options?.method ?? "GET").toUpperCase(),
+  );
+  const recovery = write
+    ? "Refresh the saved status before deciding whether to try again."
+    : "Check that the local Cliptric backend is running, then reload.";
+  const timeout = AbortSignal.timeout(
+    timeoutMs ?? (options?.body instanceof File ? 1_830_000 : 20_000),
+  );
+  const signal = options?.signal
+    ? AbortSignal.any([timeout, options.signal])
+    : timeout;
+  let value: unknown;
+  try {
+    const response = await fetch(path, {
+      cache: "no-store",
+      ...options,
+      signal,
+    });
+    value = await response.json().catch((error) => {
+      if (signal.aborted) throw error;
+      if (!response.ok) return null;
+      throw new ApiError(
+        `Cliptric received an unreadable response. ${recovery}`,
+        502,
+      );
+    });
+    if (!response.ok) throw responseError(response.status, value, recovery);
+  } catch (error) {
+    if (options?.signal?.aborted || error instanceof ApiError) throw error;
+    if (timeout.aborted)
+      throw new ApiError(`The request timed out. ${recovery}`, 408);
     throw new ApiError(
-      typeof detail === "string"
-        ? detail
-        : Array.isArray(detail) && typeof detail[0]?.msg === "string"
-          ? `${field ? `${field}: ` : ""}${detail[0].msg}`
-          : `Request failed (${response.status}). Check your selection and try again.`,
-      response.status,
+      `The connection to Cliptric failed. Check your network connection. ${recovery}`,
+      0,
     );
   }
-  const value: unknown = await response.json();
   if (
     typeof window !== "undefined" &&
     options?.method &&
@@ -99,7 +144,9 @@ export async function api<T>(
 }
 
 export const message = (error: unknown) =>
-  error instanceof Error ? error.message : "Something went wrong. Try again.";
+  error instanceof Error && error.message
+    ? error.message
+    : "Cliptric could not complete the action. Check the saved status before trying again.";
 
 // Fetch does not expose upload progress. Keep the same local streaming route
 // and timeout while reporting bytes transferred by the browser.
@@ -127,30 +174,20 @@ export function uploadRecording<T>(
     };
     request.upload.onload = () => onProgress(100);
     request.onload = () => {
-      let payload: unknown;
+      const recovery = "Check your imported videos before retrying.";
+      let payload: unknown = null;
       try {
         payload = JSON.parse(request.responseText);
       } catch {
-        reject(
-          new Error(
-            "The import response could not be read. Check your imported videos before retrying.",
-          ),
-        );
-        return;
+        if (request.status >= 200 && request.status < 300) {
+          reject(
+            new Error(`The import response could not be read. ${recovery}`),
+          );
+          return;
+        }
       }
       if (request.status < 200 || request.status >= 300) {
-        const detail =
-          payload && typeof payload === "object" && "detail" in payload
-            ? payload.detail
-            : null;
-        reject(
-          new ApiError(
-            typeof detail === "string"
-              ? detail
-              : `Import failed (${request.status}). Check your video and try again.`,
-            request.status,
-          ),
-        );
+        reject(responseError(request.status, payload, recovery));
         return;
       }
       resolve(payload as T);

@@ -1,7 +1,7 @@
 "use client";
 import { FramingEditor } from "./framing-editor";
 
-import { useEffect, useRef, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import { api, message } from "@/lib/client-api";
 import { itemEdit } from "@/lib/project-edit";
 import { useUnsavedEdits } from "./use-unsaved-edits";
@@ -61,7 +61,7 @@ export function ClipReview({
         if (!value) leave(onClose);
       }}
     >
-      <DialogContent className="max-h-[94dvh] overflow-y-auto sm:max-w-5xl">
+      <DialogContent className="max-h-[94dvh] overflow-y-auto sm:max-w-6xl">
         <DialogHeader>
           <DialogTitle>
             Review clip {index + 1} of {items.length}
@@ -144,6 +144,10 @@ function ReviewItem({
   onBusy: (value: boolean) => void;
 }) {
   const player = useRef<HTMLVideoElement>(null);
+  const [previewSlot, setPreviewSlot] = useState<HTMLDivElement | null>(null);
+  const setPlayer = useCallback((node: HTMLVideoElement | null) => {
+    player.current = node;
+  }, []);
   const [title, setTitle] = useState(item.title);
   const [text, setText] = useState(item.opening_text ?? "");
   const [headline, setHeadline] = useState(item.headline_enabled);
@@ -163,8 +167,6 @@ function ReviewItem({
     JSON.stringify(framing) !== JSON.stringify(originalFraming);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState("");
-  const [videoError, setVideoError] = useState(false);
-  const [reload, setReload] = useState(0);
   const dirty =
     title !== item.title ||
     text !== (item.opening_text ?? "") ||
@@ -255,46 +257,12 @@ function ReviewItem({
   return (
     <div
       onKeyDown={keyboard}
-      className="grid gap-6 md:grid-cols-[minmax(0,1fr)_minmax(18rem,1fr)]"
+      className="grid items-start gap-6 lg:grid-cols-[minmax(16rem,0.85fr)_minmax(0,1.15fr)]"
       tabIndex={0}
       aria-label="Clip review workspace"
     >
-      <div className="flex flex-col gap-3">
-        {item.export?.status === "succeeded" ? (
-          <video
-            ref={player}
-            aria-label={`Preview of ${item.title}`}
-            key={`${item.export.id}-${reload}`}
-            controls
-            playsInline
-            preload="metadata"
-            className="max-h-[65dvh] w-full rounded-lg bg-muted object-contain"
-            src={`/api/clips/${item.export.id}/media`}
-            onError={() => setVideoError(true)}
-          />
-        ) : (
-          <p role="status">
-            {item.error ??
-              "This export is being prepared. You can still review its saved settings."}
-          </p>
-        )}
-        {videoError ? (
-          <Alert>
-            <AlertDescription>
-              Video could not load.{" "}
-              <Button
-                type="button"
-                variant="link"
-                onClick={() => {
-                  setVideoError(false);
-                  setReload((v) => v + 1);
-                }}
-              >
-                Retry playback
-              </Button>
-            </AlertDescription>
-          </Alert>
-        ) : null}
+      <div ref={setPreviewSlot} className="clip-preview-column" />
+      <div className="flex min-w-0 flex-col gap-4">
         <p>
           {item.start.toFixed(1)}–{item.end.toFixed(1)}s in the source
         </p>
@@ -304,6 +272,18 @@ function ReviewItem({
           cropRegion={framing.crop}
           followPlan={item.export?.follow_plan}
           autoLayout={item.export?.auto_layout}
+          previewSlot={previewSlot}
+          previewOptions={{
+            savedExportId: item.export?.status === "succeeded" ? item.export.id : null,
+            onPlaybackTarget: setPlayer,
+            transcriptionId: item.transcription_id ?? project.transcription_id,
+            transcriptRevision: item.transcript_revision ?? project.transcript_revision,
+            captions: { preset: item.caption_preset, position: captions, customization: item.caption_customization },
+            headline: headline ? { text: text.trim() || title, position, seconds: 8 } : null,
+            emphasis: item.emphasis_words,
+            overlays: item.overlays,
+          }}
+          quality={framingChanged ? { ...item.quality, smart_framing: null } : item.quality}
           sourceUrl={
             project.recording_id || item.recording_id
               ? `/api/recordings/${item.recording_id ?? project.recording_id}/media`
@@ -343,7 +323,6 @@ function ReviewItem({
             {item.posted ? "Mark unposted" : "Mark posted"}
           </Button>
         </div>
-      </div>
       <form
         onSubmit={(event) => {
           event.preventDefault();
@@ -427,9 +406,7 @@ function ReviewItem({
               ? "Saving…"
               : dirty
                 ? "Unsaved changes. Save before using review actions."
-                : "Saved"}{" "}
-            The player shows the last rendered export. Appearance changes need a
-            new render.
+                : "Saved"}
           </p>
           <Button type="submit" disabled={!dirty || busy || locked}>
             Save changes
@@ -441,6 +418,7 @@ function ReviewItem({
           ) : null}
         </FieldGroup>
       </form>
+      </div>
     </div>
   );
 }

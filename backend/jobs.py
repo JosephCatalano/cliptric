@@ -330,7 +330,10 @@ class Jobs:
             logger.exception("Unexpected export failure for %s", clip.id)
             with self.lock:
                 self.store.update_clip(
-                    clip.id, "failed", "Unexpected export failure. Check the server log."
+                    clip.id,
+                    "failed",
+                    f"Cliptric could not finish the export because of an internal processing error. "
+                    f"Check the backend log for export {clip.id} before retrying.",
                 )
         finally:
             try:

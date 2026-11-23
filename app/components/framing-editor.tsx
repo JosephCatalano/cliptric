@@ -1,13 +1,16 @@
 "use client";
 
 import {
+  useCallback,
   useEffect,
   useId,
+  useMemo,
   useRef,
   useState,
   type PointerEvent,
   type KeyboardEvent,
 } from "react";
+import { createPortal } from "react-dom";
 import { Move, Scaling } from "lucide-react";
 import {
   fitPortraitRegion,
@@ -25,6 +28,8 @@ import {
   FieldSet,
 } from "@/components/ui/field";
 import { Progress } from "@/components/ui/progress";
+import { previewIntervals } from "@/lib/clip-preview";
+import { LiveClipStage, type LiveClipOptions } from "./live-clip-stage";
 import {
   NativeSelect,
   NativeSelectOption,
@@ -36,6 +41,7 @@ import {
   type AutoLayoutPlan,
   type SourceRegion,
   type SplitLayout,
+  type QualityOptions,
 } from "../../lib/projects";
 
 function clamp(value: number, min: number, max: number) {
@@ -56,6 +62,9 @@ export function FramingEditor({
   disabled = false,
   downloadProgress,
   allowSplit = true,
+  previewSlot,
+  previewOptions,
+  quality,
 }: {
   mode: FramingMode;
   layout: SplitLayout | null;
@@ -74,12 +83,22 @@ export function FramingEditor({
   disabled?: boolean;
   downloadProgress?: number | null;
   allowSplit?: boolean;
+  previewSlot?: HTMLElement | null;
+  previewOptions?: LiveClipOptions;
+  quality?: QualityOptions;
 }) {
   const id = useId();
   const [regionName, setRegionName] = useState<"webcam" | "gameplay">("webcam");
   const [mediaError, setMediaError] = useState(false);
   const picture = useRef<HTMLDivElement>(null);
   const video = useRef<HTMLVideoElement>(null);
+  const [previewPlayer, setPreviewPlayer] = useState<HTMLVideoElement | null>(null);
+  const livePreview = previewOptions !== undefined;
+  const mountVideo = useCallback((node: HTMLVideoElement | null) => {
+    video.current = node;
+    if (livePreview) setPreviewPlayer(node);
+    onPlayer?.(node);
+  }, [onPlayer, livePreview]);
   const [dimensions, setDimensions] = useState({
     width: 16,
     height: 9,
@@ -109,6 +128,11 @@ export function FramingEditor({
     end !== undefined && Number.isFinite(end) && end > rangeStart
       ? end
       : undefined;
+  const removals = quality?.removals;
+  const kept = useMemo(
+    () => rangeEnd === undefined ? [] : previewIntervals(rangeStart, rangeEnd, removals ?? []),
+    [rangeStart, rangeEnd, removals],
+  );
   const tracking =
     followPlan && followPlan.start === rangeStart && followPlan.end === rangeEnd
       ? followPlan
@@ -118,6 +142,10 @@ export function FramingEditor({
       ? autoLayout
       : null;
   const viewMode = mode === "auto" ? (decision?.mode ?? "pad") : mode;
+  const smart = mode === "pad" && !cropRegion &&
+    quality?.smart_framing?.points[0]?.at === rangeStart &&
+    (quality?.smart_framing?.points.at(-1)?.at ?? Infinity) <= (rangeEnd ?? -1)
+    ? quality.smart_framing : null;
   const regionLabel = mode === "crop" ? "portrait crop" : regionName;
 
   useEffect(() => {
@@ -129,6 +157,7 @@ export function FramingEditor({
       defaultSplitLayout();
     const context = target.getContext("2d");
     if (!context) return;
+    context.setTransform(target.width / 270, 0, 0, target.height / 480, 0, 0);
     context.clearRect(0, 0, 270, 480);
     let frame: number | undefined;
     const cancelFrame = () => {
@@ -136,6 +165,16 @@ export function FramingEditor({
     };
     function draw() {
       if (!context || !player || player.readyState < 2) return;
+      if (!player.paused && !player.seeking && rangeEnd !== undefined &&
+        !kept.some(([from, to]) => from <= player.currentTime && player.currentTime < to)) {
+        const next = kept.find(([from]) => from > player.currentTime);
+        if (next) {
+          player.currentTime = next[0];
+          return;
+        }
+        player.pause();
+        player.currentTime = Math.max(rangeStart, (kept.at(-1)?.[1] ?? rangeEnd) - 0.01);
+      }
       const panel = (
         crop: SourceRegion,
         top: number,
@@ -179,14 +218,15 @@ export function FramingEditor({
         context.restore();
       };
       context.clearRect(0, 0, 270, 480);
-      if (viewMode === "follow") {
+      if (viewMode === "follow" || smart) {
+        const moving = smart ?? tracking;
         panel(
-          tracking
-            ? followRegion(tracking, player.currentTime)
+          moving
+            ? followRegion(moving, player.currentTime)
             : { x: 0, y: 0, width: 1, height: 1 },
           0,
           480,
-          !tracking || tracking.strategy === "fit",
+          !moving || moving.strategy === "fit",
         );
       } else if (viewMode === "split") {
         panel(configuration.webcam, 0, 160, false);
@@ -238,6 +278,11 @@ export function FramingEditor({
     sourceUrl,
     video,
     reload,
+    previewSlot,
+    rangeStart,
+    rangeEnd,
+    kept,
+    smart,
   ]);
 
   useEffect(() => {
@@ -250,6 +295,11 @@ export function FramingEditor({
       );
     }
   }, [timestamp, sourceUrl, video]);
+
+  const retryPreview = () => {
+    setMediaError(false);
+    setReload((value) => value + 1);
+  };
 
   function updateRegion(next: SourceRegion) {
     if (mode === "crop") onChange("crop", null, next);
@@ -331,6 +381,24 @@ export function FramingEditor({
   }
 
   return (
+    <>
+    {previewSlot && previewOptions ? createPortal(
+      <LiveClipStage
+        key={sourceUrl}
+        player={previewPlayer}
+        start={rangeStart}
+        end={rangeEnd}
+        kept={kept}
+        options={previewOptions}
+        split={viewMode === "split"}
+        pendingPresentation={(mode === "auto" && !decision) || (viewMode === "follow" && !tracking)}
+        mediaError={mediaError}
+        onRetry={retryPreview}
+      >
+        <canvas ref={canvas} width={432} height={768} className="size-full" aria-label="Live portrait composition" />
+      </LiveClipStage>,
+      previewSlot,
+    ) : null}
     <FieldSet className="framing-editor" disabled={disabled}>
       <FieldLegend>Framing</FieldLegend>
       <Field>
@@ -457,10 +525,7 @@ export function FramingEditor({
               }}
             >
               <video
-                ref={(node) => {
-                  video.current = node;
-                  onPlayer?.(node);
-                }}
+                ref={mountVideo}
                 key={`${sourceUrl}-${reload}`}
                 controls
                 muted
@@ -573,7 +638,7 @@ export function FramingEditor({
               ) : null}
             </div>
           ) : null}
-          {sourceUrl ? (
+          {sourceUrl && !previewOptions ? (
             <div className="flex flex-col gap-2">
               <p>
                 {mode === "auto"
@@ -590,7 +655,7 @@ export function FramingEditor({
                 ref={canvas}
                 width={270}
                 height={480}
-                className="w-full max-w-[270px] rounded-md bg-editor-preview"
+                className="w-full max-w-[320px] rounded-md bg-editor-preview"
                 aria-label="Live clip framing preview"
               />
             </div>
@@ -602,21 +667,19 @@ export function FramingEditor({
         {mediaError ? (
           <Alert>
             <AlertDescription>
-              Source preview could not load.{" "}
+              The source preview could not load. Retry after checking your
+              connection to Cliptric. If it still fails, reopen the recording.{" "}
               <Button
                 type="button"
                 variant="link"
-                onClick={() => {
-                  setMediaError(false);
-                  setReload((value) => value + 1);
-                }}
+                onClick={retryPreview}
               >
                 Retry preview
               </Button>
             </AlertDescription>
           </Alert>
         ) : null}
-        {!sourceUrl ? (
+        {!sourceUrl && !previewOptions ? (
           <div className="flex max-w-sm flex-col gap-2" role="status">
             <p>
               Video preview and crop selection will be available when the video
@@ -685,5 +748,6 @@ export function FramingEditor({
         ) : null}
       </>
     </FieldSet>
+    </>
   );
 }

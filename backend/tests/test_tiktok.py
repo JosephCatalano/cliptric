@@ -34,6 +34,24 @@ class FixtureMedia:
         return MediaInfo(8, 1080, 1920, True)
 
 
+def test_http_rejection_preserves_tiktok_recovery_without_raw_details():
+    transport = httpx2.MockTransport(
+        lambda _: httpx2.Response(
+            403,
+            json={
+                "error": {
+                    "code": "unaudited_client_can_only_post_to_private_accounts",
+                    "message": "private provider details",
+                }
+            },
+        )
+    )
+    client = TikTokAPI(TikTokSettings("fixture", "fixture"), transport=transport)
+    with pytest.raises(TikTokError, match="private TikTok account") as rejected:
+        client.request("/v2/post/publish/video/init/", token="fixture")
+    assert "private provider details" not in str(rejected.value)
+
+
 def token_response(**updates):
     return {
         "access_token": "unit-access",

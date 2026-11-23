@@ -98,36 +98,47 @@ class TikTokAPI:
                     data=form,
                     json=body,
                 ) as response:
-                    if response.status_code != 200:
-                        raise TikTokError(
-                            "TikTok rejected the request. Check permissions, eligibility and rate limits.",
-                            429 if response.status_code == 429 else 502,
-                        )
+                    status = response.status_code
                     payload = bytearray()
                     for part in response.iter_bytes(chunk_size=8192):
                         payload.extend(part)
                         if len(payload) > MAX_RESPONSE_BYTES:
                             raise TikTokError("TikTok returned an oversized response.")
-            result = json.loads(payload or b"{}")
-            if not isinstance(result, dict):
-                raise TikTokError("TikTok returned an invalid response.")
-            error = result.get("error")
+            try:
+                result = json.loads(payload or b"{}")
+            except json.JSONDecodeError, UnicodeError:
+                if status == 200:
+                    raise
+                result = None
+            error = result.get("error") if isinstance(result, dict) else None
             code = error.get("code") if isinstance(error, dict) else error
-            if code is not None and not isinstance(code, str):
-                raise TikTokError("TikTok returned an invalid error response.")
-            if code and code != "ok":
-                messages = {
-                    "access_token_invalid": "TikTok access has expired or was revoked. Reconnect your account.",
-                    "scope_not_authorized": "Authorize the video.publish permission before posting.",
-                    "rate_limit_exceeded": "TikTok's request limit was reached. Try again later.",
-                    "spam_risk_too_many_posts": "TikTok's posting limit was reached. Try again later.",
-                    "unaudited_client_can_only_post_to_private_accounts": "This test app requires a private TikTok account and Only me visibility.",
-                }
+            messages = {
+                "access_token_invalid": "TikTok access has expired or was revoked. Reconnect your account.",
+                "scope_not_authorized": "Authorize the video.publish permission before posting.",
+                "rate_limit_exceeded": "TikTok's request limit was reached. Try again later.",
+                "spam_risk_too_many_posts": "TikTok's posting limit was reached. Try again later.",
+                "unaudited_client_can_only_post_to_private_accounts": "This test app requires a private TikTok account and Only me visibility.",
+            }
+            if isinstance(code, str) and code in messages:
+                raise TikTokError(messages[code], 429 if status == 429 else 502)
+            if status != 200:
+                advice = {
+                    400: "Review the post settings and TikTok’s video requirements.",
+                    401: "Reconnect the TikTok account in Cliptric.",
+                    403: "Check TikTok app permissions and account eligibility.",
+                    429: "Wait for TikTok’s rate limit to reset before retrying.",
+                }.get(status, "Check saved posting status before retrying.")
                 raise TikTokError(
-                    messages.get(
-                        code,
-                        "TikTok rejected this operation. Check the app's permissions and account eligibility.",
-                    )
+                    f"TikTok rejected the request (HTTP {status}). {advice}",
+                    429 if status == 429 else 502,
+                )
+            if not isinstance(result, dict) or (code is not None and not isinstance(code, str)):
+                raise TikTokError(
+                    "TikTok returned an invalid response. Check saved posting status before retrying."
+                )
+            if code and code != "ok":
+                raise TikTokError(
+                    "TikTok rejected this operation. Check the app's permissions and account eligibility."
                 )
             return result
         except (httpx2.HTTPError, json.JSONDecodeError, UnicodeError) as exc:
