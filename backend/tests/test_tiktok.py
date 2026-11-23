@@ -104,7 +104,10 @@ def integration(tmp_path):
         resolver=lambda *args, **kwargs: [(None, None, None, None, ("8.8.8.8", 443))],
     )
     store = Store(tmp_path / "data")
-    service = TikTok(store, FixtureMedia(), settings, "http://127.0.0.1:3000", api=api)
+    service = TikTok(
+        store, FixtureMedia(), settings, "http://127.0.0.1:3000",
+        public_origin="https://cliptric.com", api=api,
+    )
     service.initialize()
     recording_id, export_id = str(uuid4()), str(uuid4())
     store.save_recording(
@@ -127,10 +130,13 @@ def integration(tmp_path):
     )
     app = FastAPI()
     app.add_middleware(
-        RequestBoundary, settings=SimpleNamespace(web_origin=service.web_origin, public_origin="")
+        RequestBoundary,
+        settings=SimpleNamespace(
+            web_origin=service.web_origin, public_origin=service.public_origin, gateway_token="a" * 64
+        ),
     )
     app.include_router(create_tiktok_router(service))
-    with TestClient(app, base_url="http://127.0.0.1:8765") as client:
+    with TestClient(app, base_url="http://127.0.0.1:8765", client=("127.0.0.1", 1234)) as client:
         try:
             yield service, state, export_id, client
         finally:
@@ -189,6 +195,39 @@ def test_oauth_state_pkce_cookie_and_replay(integration):
         client.get("/api/tiktok/callback", params={"state": nonce, "code": "unit-code"}).status_code
         == 400
     )
+
+
+def test_hosted_oauth_uses_web_redirect_and_binds_callback(integration):
+    service, state, _, client = integration
+    origin = service.public_origin
+    callback = f"{origin}/api/tiktok/callback"
+    gateway = {"X-Cliptric-Gateway": "a" * 64}
+    response = client.post(f"{origin}/api/tiktok/connect", headers={**gateway, "Origin": origin})
+    assert response.status_code == 200
+    cookie = response.headers["set-cookie"]
+    assert all(flag in cookie for flag in ("Secure", "HttpOnly", "SameSite=lax"))
+    query = parse_qs(urlsplit(response.json()["url"]).query)
+    assert query["redirect_uri"] == [callback]
+    assert query["scope"] == ["video.publish"]
+    assert "code_challenge" not in query and "code_challenge_method" not in query
+    nonce = query["state"][0]
+    args = {"state": nonce, "code": "unit-code"}
+    assert client.get(
+        "/api/tiktok/callback", params=args, headers={"Cookie": f"tiktok_oauth_state={nonce}"}
+    ).status_code == 400
+    assert not state["calls"]
+    response = client.get(
+        callback, params=args, headers={**gateway, "Sec-Fetch-Site": "cross-site"},
+        follow_redirects=False,
+    )
+    assert response.status_code == 303
+    assert response.headers["location"] == f"{origin}/connections?tiktok=connected"
+    assert "Secure" in response.headers["set-cookie"]
+    form = parse_qs(state["calls"][0][1].decode())
+    assert form["redirect_uri"] == [callback]
+    assert "code_verifier" not in form
+    assert service.status()["connected"]
+    assert client.get(callback, params=args, headers=gateway).status_code == 400
 
 
 @pytest.mark.parametrize("failure", ["wrong_cookie", "expired", "cancelled"])

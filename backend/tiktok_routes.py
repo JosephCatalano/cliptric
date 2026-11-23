@@ -34,6 +34,7 @@ def create_tiktok_router(service):
             httponly=True,
             samesite="lax",
             path=CALLBACK_PATH,
+            secure=getattr(request.state, "hosted", False),
         )
         return response
 
@@ -44,14 +45,15 @@ def create_tiktok_router(service):
         code: str = Query(default="", max_length=2048),
         error: str = Query(default="", max_length=128),
     ):
+        hosted = getattr(request.state, "hosted", False)
         try:
             destination = service.finish(
-                state, request.cookies.get("tiktok_oauth_state"), code, bool(error)
+                state, request.cookies.get("tiktok_oauth_state"), code, bool(error), hosted=hosted
             )
             response = RedirectResponse(destination, status_code=303)
         except TikTokError as exc:
             response = JSONResponse({"detail": str(exc)}, status_code=exc.status_code)
-        response.delete_cookie("tiktok_oauth_state", path=CALLBACK_PATH)
+        response.delete_cookie("tiktok_oauth_state", path=CALLBACK_PATH, secure=hosted, httponly=True)
         response.headers["Referrer-Policy"] = "no-referrer"
         return response
 

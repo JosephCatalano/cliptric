@@ -97,8 +97,11 @@ class PostJob(BaseModel):
 
 
 class TikTok:
-    def __init__(self, store, media, settings, web_origin, *, api=None, protector=protect_tokens):
+    def __init__(
+        self, store, media, settings, web_origin, *, public_origin="", api=None, protector=protect_tokens
+    ):
         self.store, self.media, self.settings, self.web_origin = store, media, settings, web_origin
+        self.public_origin = public_origin
         self.api = api or TikTokAPI(settings)
         self.protector = protector
         self.accounts = Accounts(store, "tiktok_account", "client_key", TikTokError)
@@ -157,12 +160,15 @@ class TikTok:
 
     def begin(self, origin):
         self._configured()
-        allowed = {self.web_origin, self.web_origin.replace("127.0.0.1", "localhost")}
-        if origin not in allowed:
+        if self.public_origin and origin == self.public_origin:
+            redirect = self.public_origin + CALLBACK_PATH
+            verifier = None
+        elif origin in {self.web_origin, self.web_origin.replace("127.0.0.1", "localhost")}:
+            redirect = f"http://{urlsplit(origin).hostname}:8765{CALLBACK_PATH}"
+            verifier = secrets.token_urlsafe(64)
+        else:
             raise TikTokError("Start account connection from the local app.", 403)
-        host = urlsplit(origin).hostname
-        redirect = f"http://{host}:8765{CALLBACK_PATH}"
-        state, verifier = secrets.token_urlsafe(32), secrets.token_urlsafe(64)
+        state = secrets.token_urlsafe(32)
         with self.lock:
             self.pending = {
                 key: item for key, item in self.pending.items() if item[0] > time.monotonic()
@@ -172,39 +178,40 @@ class TikTok:
                     "Too many connection attempts. Wait ten minutes and try again.", 429
                 )
             self.pending[state] = (time.monotonic() + 600, verifier, redirect, origin)
-        query = urlencode(
-            {
-                "client_key": self.settings.client_key,
-                "response_type": "code",
-                "scope": "video.publish",
-                "redirect_uri": redirect,
-                "state": state,
-                "code_challenge": hashlib.sha256(verifier.encode()).hexdigest(),
-                "code_challenge_method": "S256",
-            }
-        )
-        return state, "https://www.tiktok.com/v2/auth/authorize/?" + query
+        query = {
+            "client_key": self.settings.client_key,
+            "response_type": "code",
+            "scope": "video.publish",
+            "redirect_uri": redirect,
+            "state": state,
+        }
+        if verifier is not None:
+            query["code_challenge"] = hashlib.sha256(verifier.encode()).hexdigest()
+            query["code_challenge_method"] = "S256"
+        return state, "https://www.tiktok.com/v2/auth/authorize/?" + urlencode(query)
 
-    def finish(self, state, cookie, code, denied):
+    def finish(self, state, cookie, code, denied, *, hosted=False):
         self._configured()
         with self.lock:
             if not state or not cookie or not secrets.compare_digest(state, cookie):
                 raise TikTokError("TikTok connection could not be verified. Start again.", 400)
-            pending = self.pending.pop(state, None)
+            pending = self.pending.get(state)
             if not pending or pending[0] < time.monotonic():
                 raise TikTokError(
                     "TikTok connection expired or was already used. Start again.", 400
                 )
+            _, verifier, redirect, origin = pending
+            if hosted != (origin == self.public_origin):
+                raise TikTokError("TikTok connection could not be verified. Start again.", 400)
+            del self.pending[state]
             if denied or not code:
-                return pending[3] + "/connections?tiktok=cancelled"
+                return origin + "/connections?tiktok=cancelled"
+            fields = {"code_verifier": verifier} if verifier is not None else {}
             response = self.api.token(
-                grant_type="authorization_code",
-                code=code,
-                code_verifier=pending[1],
-                redirect_uri=pending[2],
+                grant_type="authorization_code", code=code, redirect_uri=redirect, **fields
             )
             self._store_token(response)
-            return pending[3] + "/connections?tiktok=connected"
+            return origin + "/connections?tiktok=connected"
 
     def _store_token(self, response, expected_account=None):
         try:

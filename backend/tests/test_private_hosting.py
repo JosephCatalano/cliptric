@@ -12,6 +12,7 @@ from backend.social_transport import SocialSettings
 from backend.tests.test_pipeline import recordings as recordings
 from backend.tests.test_pipeline import settings as settings
 from backend.tests.test_pipeline import tools as tools
+from backend.tiktok_api import TikTokSettings
 
 ORIGIN = "https://cliptric.com"
 GATEWAY = {"X-Cliptric-Gateway": "a" * 64}
@@ -22,6 +23,7 @@ def private_app(settings, monkeypatch):
     monkeypatch.setattr(
         InstagramSettings, "load", lambda: InstagramSettings("1", "fixture-secret", "2", "3")
     )
+    monkeypatch.setattr(TikTokSettings, "load", lambda: TikTokSettings("key", "fixture-secret"))
     monkeypatch.setattr(
         SocialSettings,
         "load",
@@ -103,7 +105,7 @@ def test_stream_forwarded_from_next_uses_same_boundary(private_app, recordings):
         )
 
 
-@pytest.mark.parametrize("platform", ["x", "instagram", "facebook"])
+@pytest.mark.parametrize("platform", ["x", "instagram", "facebook", "tiktok"])
 def test_public_oauth_callback_cookie_binding_and_redirect(private_app, platform):
     if __import__("os").name != "nt":
         pytest.skip("Publishing requires Windows credential storage.")

@@ -73,7 +73,9 @@ def create_app(settings: Settings | None = None) -> FastAPI:
     caption_styles = CaptionStyles(store)
     previews = Previews(store, media)
     quality_analysis = QualityAnalysis(store, media, transcriptions)
-    tiktok = TikTok(store, media, TikTokSettings.load(), settings.web_origin)
+    tiktok = TikTok(
+        store, media, TikTokSettings.load(), settings.web_origin, public_origin=settings.public_origin
+    )
     secure_tiktok_logs()
     youtube_publishing = YouTubePublishing(
         store, media, YouTubeSettings.load(), settings.web_origin

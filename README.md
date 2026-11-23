@@ -2,6 +2,43 @@
 
 A local video workspace built with Next.js, TypeScript, FastAPI, and FFmpeg.
 
+## Start Cliptric on Windows
+
+For a new PC, complete [Windows setup](#setup-on-windows) and [Caddy setup](#private-hosting-at-cliptriccom) first. To start the full app, open **three PowerShell windows**. Run each block in its own window from the Cliptric repository root. For this checkout, run `cd C:\Users\josep\projects\cliptric` in each window.
+
+### 1. Start the backend
+
+```powershell
+if (-not $env:CLIPPING_FFMPEG) {
+    $env:CLIPPING_FFMPEG = [Environment]::GetEnvironmentVariable('CLIPPING_FFMPEG', 'User')
+}
+if (-not $env:CLIPPING_FFPROBE) {
+    $env:CLIPPING_FFPROBE = [Environment]::GetEnvironmentVariable('CLIPPING_FFPROBE', 'User')
+}
+npm.cmd run api:private
+```
+
+Wait for `Application startup complete`. Restart this process after editing `backend/.env`.
+
+### 2. Start the frontend
+
+```powershell
+npm.cmd run build  # Run before the first start and after frontend or dependency changes.
+npm.cmd run start
+```
+
+On a routine restart, run only `npm.cmd run start` to reuse the existing build. Wait for Next.js to report `Ready`.
+
+### 3. Start Caddy for cliptric.com
+
+```powershell
+.\.tools\caddy\caddy.exe run --config .\hosting\Caddyfile --envfile .\hosting\.env.private
+```
+
+Keep the three windows open and the PC awake while serving [cliptric.com](https://cliptric.com). For local use, the backend and frontend are enough. Open [the local workspace](http://127.0.0.1:3000), or use [local Accounts](http://127.0.0.1:3000/connections) when connecting YouTube. To stop the app, press **Ctrl+C** in each running window.
+
+## Overview
+
 Import a recording, transcribe English speech locally, optionally find AI-suggested moments, review and correct timed words, and export a captioned 1080 x 1920 H.264/AAC MP4. The workspace includes fit/crop and webcam/gameplay framing, saved selections, three caption positions, cancellable processing, paginated history, and interrupted-job recovery. Each captioned export retains its exact transcript revision and word snapshot.
 
 Highlight analysis is opt-in and sends saved transcript text and source timestamps to OpenAI. Video/audio stay local. It needs a backend API key and separately billed API usage; manual selection, transcription, and export remain usable without a key. Campaign checks, multilingual transcription, and a general timeline editor remain later milestones.
@@ -359,14 +396,14 @@ Saved exports retain their exact accepted words/times. Transcript timing edits i
 
 Manual review: choose fonts/weights/colours and none/pop/fade; create or edit a clip, reopen, and compare the rendered output before/during/after speech. Check Flow/Glow and keyword emphasis independently. Review caption censor matches and verify the audio is unchanged. Review AI suggestions before saving. Save/load/delete a style, apply it to selected/all eligible clips, and confirm overrides, unaffected clips, and earlier exports behave as labelled. Correct/restore word timing in the studio and check speech sync and boundaries. Browser, human readability/playback, and live AI emphasis quality remain separate from automated persistence/media checks.
 
-## TikTok connection and direct posting (local setup)
+## TikTok connection and direct posting
 
 Open **Connected accounts** from Home or Projects. Once configured, **Connect TikTok** opens TikTok's own login/permission screen. A completed project clip has **Post to TikTok** beside Download. Review the actual export, destination account, editable post caption, visibility, interaction settings and disclosures, then explicitly approve sending it. Caption recognition warnings remain visible. No upload starts merely by connecting an account or viewing the form.
 
 One developer app must be configured for this installation:
 
-1. Register an app at [TikTok for Developers](https://developers.tiktok.com/). Add **Desktop Login Kit** and **Content Posting API**, enable **Direct Post**, and obtain access to `video.publish`.
-2. Register both loopback callback URIs: `http://127.0.0.1:8765/api/tiktok/callback` and `http://localhost:8765/api/tiktok/callback`. Desktop authorization uses TikTok's documented SHA-256 hex PKCE challenge. The callback goes directly to the API so OAuth codes do not pass through frontend access logs.
+1. Register an app at [TikTok for Developers](https://developers.tiktok.com/). Add **Login Kit** and **Content Posting API**, enable **Direct Post**, and obtain access to `video.publish`. Select the **Web** platform to connect from `cliptric.com`, or **Desktop** for localhost. In Sandbox, apply the changes and add your TikTok account as a target user.
+2. For **Web**, use `https://cliptric.com` as the website and register `https://cliptric.com/api/tiktok/callback` as the exact **Web Redirect URI**. Start the connection from `https://cliptric.com/connections`. For **Desktop**, register `http://127.0.0.1:8765/api/tiktok/callback` and `http://localhost:8765/api/tiktok/callback`, then start from the matching local frontend. The Desktop flow uses TikTok's SHA-256 hex PKCE challenge. Both callbacks go directly to the API and require single-use browser-bound state. The Web callback also requires the authenticated gateway and uses a Secure state cookie.
 3. Add the values from `backend/tiktok.env.example` to ignored `backend/.env`, preserving your existing OpenAI configuration. Set `TIKTOK_CLIENT_KEY` and `TIKTOK_CLIENT_SECRET`. Leave `TIKTOK_AUDITED=false` until TikTok has actually approved the app's Direct Post audit. Restart the API; configuration persists between starts. Never put secrets in frontend variables or tracked files.
 4. Connect the account and review a finished clip. For unaudited testing, TikTok requires a private account and **Only me** visibility. Connecting and public posting depend on TikTok's product/scope approval; registering credentials alone does not grant access. TikTok's review rules exclude tools intended solely for personal/internal uploads or arbitrary copying from other platforms. Broad public use must satisfy its intended-use and review requirements.
 
@@ -374,9 +411,9 @@ The backend stores access/refresh tokens encrypted with Windows user-scoped DPAP
 
 Posting uses the immutable local export with sequential `FILE_UPLOAD` chunks, bounded memory, one local upload at a time, and persisted approval/settings, account identity, export ID, publish ID and confirmed bytes. It checks current creator permissions, duration and visibility, plus media geometry/rate and the existing 512 MiB export cap. Posts have idempotency tokens and duplicate protection. No post/upload is automatically retried. An uncertain upload or restart with a publish ID requires status reconciliation; a confirmed failed attempt can be reviewed and submitted anew. Upload progress is distinct from TikTok-confirmed publication. Public post IDs may remain unavailable for private posts or pending moderation. Status polling is bounded and manual refresh remains available.
 
-Local endpoints: `GET /api/tiktok`, `POST /api/tiktok/connect`, `GET /api/tiktok/callback`, `POST /api/tiktok/disconnect`, `GET /api/tiktok/creator`, `GET /api/tiktok/exports/{export_id}`, `GET /api/tiktok/posts?export_id=...`, `POST /api/tiktok/posts`, and `POST /api/tiktok/posts/{id}/refresh`. This remains a trusted single-user loopback API. Public hosting requires a separate authenticated, isolated deployment and web OAuth configuration. Local scheduling is described below; analytics and batch social posting remain later work.
+Endpoints: `GET /api/tiktok`, `POST /api/tiktok/connect`, `GET /api/tiktok/callback`, `POST /api/tiktok/disconnect`, `GET /api/tiktok/creator`, `GET /api/tiktok/exports/{export_id}`, `GET /api/tiktok/posts?export_id=...`, `POST /api/tiktok/posts`, and `POST /api/tiktok/posts/{id}/refresh`. The API remains bound to loopback and hosted access uses the owner-only HTTPS gateway. Local scheduling is described below; analytics and batch social posting remain later work.
 
-Contract references: [desktop login](https://developers.tiktok.com/docs/en/login-kit-desktop), [Direct Post](https://developers.tiktok.com/docs/en/content-posting-api-reference-direct-post), [chunk transfer](https://developers.tiktok.com/docs/en/content-posting-api-media-transfer-guide), and [sharing/review requirements](https://developers.tiktok.com/docs/en/content-sharing-guidelines). Automated TikTok checks use an explicitly simulated HTTP transport and real Windows encryption; they do not establish live approval or publishing. Human UI review and a permitted private test post remain pending.
+Contract references: [web login](https://developers.tiktok.com/docs/en/login-kit-web), [desktop login](https://developers.tiktok.com/docs/en/login-kit-desktop), [Direct Post](https://developers.tiktok.com/docs/en/content-posting-api-reference-direct-post), [chunk transfer](https://developers.tiktok.com/docs/en/content-posting-api-media-transfer-guide), and [sharing/review requirements](https://developers.tiktok.com/docs/en/content-sharing-guidelines). Automated TikTok checks use an explicitly simulated HTTP transport and real Windows encryption; they do not establish live approval or publishing. Human UI review and a permitted private test post remain pending.
 
 ## YouTube Shorts connection and uploading (local setup)
 
@@ -658,7 +695,7 @@ Caddy is the only public listener. The domain opens the public product page at `
 2. Stop the existing local frontend and API in their terminals. To run the production frontend, run `npm.cmd run build`, then `npm.cmd run start`. In a second terminal, run `npm.cmd run api:private`. Both stay on loopback. The private API command keeps the real proxy peer and disables access logs for OAuth callback requests.
 3. Reserve the PC's LAN IP on your router. Forward **TCP 443 only** to that PC and allow Caddy on TCP 443 through Windows Firewall. Ask your ISP about inbound access if the router has no routable WAN IP or is behind CGNAT. Set Porkbun's apex (`@`) A record to your current public IPv4 address, replacing the parking A records. Keep unrelated records. Remove an apex AAAA record only if it points to an old destination and you are not configuring IPv6 hosting. Update the A record if your public IP changes.
 4. From the repository root in a third terminal, run `.\.tools\caddy\caddy.exe run --config .\hosting\Caddyfile --envfile .\hosting\.env.private`. The Caddyfile uses the TLS certificate challenge on port 443, so it does not need port 80. Once the certificate is issued, test `https://cliptric.com` from outside your Wi-Fi. Verify that the product, privacy, terms, and deletion pages load without credentials. A fresh browser should prompt at `/workspace` and `/api/health`. Then sign in and try a small upload before a large one. Keep all three processes and the PC running for remote access and scheduled posting.
-5. After HTTPS works, add `https://cliptric.com/api/x/callback`, `https://cliptric.com/api/instagram/callback`, and `https://cliptric.com/api/facebook/callback` to the appropriate provider dashboards. Connect these accounts from the domain and verify the selected destination. Provider acceptance and live publishing require separate testing. TikTok and YouTube still use their desktop callbacks, so connect or reconnect them from localhost. An existing connection can be used for posting from the private site.
+5. After HTTPS works, register `https://cliptric.com/api/x/callback`, `https://cliptric.com/api/instagram/callback`, `https://cliptric.com/api/facebook/callback`, and `https://cliptric.com/api/tiktok/callback` in the appropriate provider dashboards. For TikTok select Web Login Kit. Connect these accounts from the domain and verify the selected destination. YouTube uses its desktop callback, so connect or reconnect it from localhost. Provider acceptance and live publishing require separate testing.
 
 For developer applications, use `https://cliptric.com` as the official website and the public legal URLs as requested. For Meta, `/data-deletion` provides instructions. For TikTok, verify domain ownership in the developer portal and use Sandbox for an owner-only integration. The public pages describe the local installation and remain subject to platform review requirements.
 

@@ -1,4 +1,4 @@
-"""TikTok's documented desktop OAuth and Direct Post transport. No automatic retries."""
+"""TikTok's OAuth and Direct Post transport. No automatic retries."""
 
 import ipaddress
 import json
