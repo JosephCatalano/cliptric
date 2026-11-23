@@ -42,7 +42,7 @@ import {
 import { Checkbox } from "@/components/ui/checkbox";
 import { DownloadIcon, FilmIcon, UploadIcon } from "lucide-react";
 
-import { useId, useEffect, useRef, useState } from "react";
+import { useId, useEffect, useLayoutEffect, useRef, useState } from "react";
 import Link from "next/link";
 import { api, ApiError, message, uploadRecording } from "../../lib/client-api";
 import { Progress } from "@/components/ui/progress";
@@ -158,6 +158,11 @@ export default function Workspace() {
   const [loading, setLoading] = useState(true);
   const [importing, setImporting] = useState(false);
   const [uploadProgress, setUploadProgress] = useState(0);
+  const [twitchUrl, setTwitchUrl] = useState("");
+  const [twitchStatus, setTwitchStatus] = useState("");
+  const [twitchError, setTwitchError] = useState("");
+  const [pendingTwitchRecording, setPendingTwitchRecording] =
+    useState<Recording | null>(null);
   const importRequest = useRef<AbortController | null>(null);
   useEffect(() => () => importRequest.current?.abort(), []);
   const [submitting, setSubmitting] = useState(false);
@@ -246,6 +251,10 @@ export default function Workspace() {
     !!currentCaption && (currentCaption.dirty || currentCaption.busy);
   const settingsLocked = draftLoading || draftSaving || !draft;
   const navigationLocked = draftDirty || correctionsLocked || draftSaving;
+  const latestNavigationLocked = useRef(navigationLocked);
+  useLayoutEffect(() => {
+    latestNavigationLocked.current = navigationLocked;
+  }, [navigationLocked]);
   const { setLocked } = useWorkspaceNavigation();
   useEffect(() => {
     setLocked(navigationLocked);
@@ -445,6 +454,86 @@ export default function Workspace() {
       setError(message(reason));
     } finally {
       setImporting(false);
+    }
+  }
+
+  async function loadTwitchClip(event: React.FormEvent<HTMLFormElement>) {
+    event.preventDefault();
+    if (importing || submitting || loading || libraryBusy || navigationLocked)
+      return;
+    const url = twitchUrl.trim();
+    if (!url) return;
+    const controller = new AbortController();
+    importRequest.current = controller;
+    setImporting(true);
+    setTwitchError("");
+    setPendingTwitchRecording(null);
+    setTwitchStatus("Checking Twitch clip…");
+    const endpoint = "/api/twitch-discovery/editor-imports";
+    const timeout = AbortSignal.timeout(300_000);
+    const signal = AbortSignal.any([controller.signal, timeout]);
+    type ImportState = {
+      id: string;
+      status: "queued" | "running" | "ready" | "failed";
+      recording: Recording | null;
+      detail: string | null;
+    };
+    try {
+      let result = await api<ImportState>(endpoint, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ url }),
+        signal,
+      });
+      while (result.status === "queued" || result.status === "running") {
+        setTwitchStatus(
+          result.detail ??
+            (result.status === "queued"
+              ? "Waiting for the Twitch import worker…"
+              : "Downloading and checking your Twitch clip…"),
+        );
+        await new Promise((resolve) => setTimeout(resolve, 1500));
+        signal.throwIfAborted();
+        result = await api<ImportState>(
+          `${endpoint}/${encodeURIComponent(result.id)}`,
+          {
+            signal,
+          },
+        );
+      }
+      signal.throwIfAborted();
+      if (result.status !== "ready" || !result.recording) {
+        throw new Error(
+          result.detail ?? "Cliptric could not load the Twitch clip.",
+        );
+      }
+      const recording = result.recording;
+      setRecordings((items) => [
+        recording,
+        ...items.filter((item) => item.id !== recording.id),
+      ]);
+      if (
+        latestNavigationLocked.current &&
+        selectionRef.current !== recording.id
+      ) {
+        setPendingTwitchRecording(recording);
+      } else if (selectionRef.current !== recording.id) {
+        selectRecording(recording);
+      }
+      setTwitchUrl("");
+    } catch (reason) {
+      if (!controller.signal.aborted) {
+        setTwitchError(
+          timeout.aborted
+            ? "The import is still in progress. Select Load Twitch clip again to reopen it."
+            : message(reason),
+        );
+      }
+    } finally {
+      if (!controller.signal.aborted) {
+        setTwitchStatus("");
+        setImporting(false);
+      }
     }
   }
 
@@ -718,13 +807,13 @@ export default function Workspace() {
               </Button>
               <ImportLimitNotice limits={limits} />
               <p role="status">
-                {importing
+                {importing && !twitchStatus
                   ? uploadProgress < 100
                     ? `${Math.floor(uploadProgress)}% transferred. Keep this page open.`
                     : "Saving and checking your video…"
                   : `MP4, MOV, MKV, M4V, WebM. Up to ${limits.label}.`}
               </p>
-              {importing ? (
+              {importing && !twitchStatus ? (
                 <Progress
                   value={uploadProgress}
                   aria-label="Recording transfer progress"
@@ -732,6 +821,83 @@ export default function Workspace() {
               ) : null}
             </section>
           </div>
+          <form onSubmit={loadTwitchClip} className="mb-4">
+            <FieldGroup>
+              <Field>
+                <FieldLabel htmlFor={`${fieldId}-twitch-link`}>
+                  Twitch Clip link
+                </FieldLabel>
+                <div className="flex flex-wrap items-center gap-2">
+                  <Input
+                    id={`${fieldId}-twitch-link`}
+                    type="url"
+                    placeholder="https://clips.twitch.tv/ClipName"
+                    required
+                    maxLength={2048}
+                    className="w-full sm:max-w-md"
+                    value={twitchUrl}
+                    disabled={importing}
+                    onChange={(event) => setTwitchUrl(event.target.value)}
+                  />
+                  <Button
+                    type="submit"
+                    variant="outline"
+                    disabled={
+                      importing ||
+                      submitting ||
+                      loading ||
+                      libraryBusy ||
+                      navigationLocked ||
+                      !twitchUrl.trim()
+                    }
+                  >
+                    Load Twitch clip
+                  </Button>
+                </div>
+              </Field>
+              {twitchStatus && (
+                <p role="status" className="text-sm text-muted-foreground">
+                  {twitchStatus}
+                </p>
+              )}
+              {twitchError && (
+                <Alert variant="destructive">
+                  <AlertDescription>
+                    {twitchError}{" "}
+                    <Link
+                      href="/discover"
+                      className="underline"
+                      aria-disabled={navigationLocked}
+                      onClick={(event) => {
+                        if (navigationLocked) event.preventDefault();
+                      }}
+                    >
+                      Open Discover
+                    </Link>
+                  </AlertDescription>
+                </Alert>
+              )}
+              {pendingTwitchRecording && (
+                <div className="flex flex-wrap items-center gap-2">
+                  <p role="status" className="text-sm text-muted-foreground">
+                    The Twitch clip is ready. Save or discard your current edits
+                    to open it.
+                  </p>
+                  <Button
+                    type="button"
+                    variant="outline"
+                    disabled={navigationLocked || importing || submitting}
+                    onClick={() => {
+                      selectRecording(pendingTwitchRecording);
+                      setPendingTwitchRecording(null);
+                    }}
+                  >
+                    Open imported clip
+                  </Button>
+                </div>
+              )}
+            </FieldGroup>
+          </form>
           {error && (
             <Alert role="alert" variant="destructive">
               <AlertDescription>
@@ -1079,7 +1245,8 @@ export default function Workspace() {
                               }
                             />
                             <FieldLabel htmlFor="studio-headline-enabled">
-                              Show a headline for the first {OPENING_HEADLINE_SECONDS} seconds
+                              Show a headline for the first{" "}
+                              {OPENING_HEADLINE_SECONDS} seconds
                             </FieldLabel>
                           </Field>
                           {headline ? (
@@ -1162,9 +1329,11 @@ export default function Workspace() {
                             transcriptRevision: currentCaption?.revision,
                             emphasis: parseEmphasis(emphasisText),
                             savedExportId: clips.find(
-                              (clip) => clip.status === "succeeded" &&
+                              (clip) =>
+                                clip.status === "succeeded" &&
                                 clip.recording_id === selectedId &&
-                                clip.start === rangeStart && clip.end === rangeEnd,
+                                clip.start === rangeStart &&
+                                clip.end === rangeEnd,
                             )?.id,
                           }}
                           quality={quality}

@@ -564,7 +564,7 @@ export function TwitchDiscovery() {
     (clip) =>
       selected.includes(clip.id) &&
       clip.processing_eligible &&
-      !clip.intake_status,
+      (!clip.intake_status || clip.intake_status === "recording"),
   );
   const running = latest?.status === "running" || latest?.status === "queued";
   const history = active ? detail?.intake : list?.intake;
@@ -1434,7 +1434,9 @@ export function TwitchDiscovery() {
                             <Badge variant="outline">
                               {clip.intake_status === "project"
                                 ? "In Projects"
-                                : clip.intake_status}
+                                : clip.intake_status === "recording"
+                                  ? "In Editor"
+                                  : clip.intake_status}
                             </Badge>
                           )}
                           {clip.same_moment && (

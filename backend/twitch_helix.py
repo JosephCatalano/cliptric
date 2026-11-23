@@ -22,6 +22,33 @@ class TwitchError(Exception):
         self.status = status
 
 
+def clip_slug(value: str) -> str:
+    # Extract the identifier only. The pasted URL is never a network destination.
+    try:
+        parts = urlsplit(value.strip())
+        if (
+            parts.scheme == "https"
+            and not parts.username
+            and not parts.password
+            and parts.port in (None, 443)
+        ):
+            if parts.hostname == "clips.twitch.tv":
+                match = re.fullmatch(r"/([A-Za-z0-9_-]{1,150})/?", parts.path)
+                if match and match[1].lower() != "embed":
+                    return match[1]
+            elif parts.hostname in {"twitch.tv", "www.twitch.tv"}:
+                match = re.fullmatch(
+                    r"/[A-Za-z0-9_]{1,25}/clip/([A-Za-z0-9_-]{1,150})/?", parts.path
+                )
+                if match:
+                    return match[1]
+    except ValueError:
+        pass
+    raise TwitchError(
+        422, "Paste a Twitch Clip share link, such as https://clips.twitch.tv/ClipName."
+    )
+
+
 def login(value: str) -> str:
     value = value.strip().lower()
     if "://" in value:
@@ -295,3 +322,12 @@ class TwitchHelix:
         paging = body.get("pagination") or {}
         cursor = paging.get("cursor") if isinstance(paging, dict) else None
         return clips, (cursor if isinstance(cursor, str) and len(cursor) < 4096 else None), ignored
+
+    def clip(self, slug):
+        clips, _, ignored = self.page({"id": slug})
+        item = next((clip for clip in clips if clip.id == slug), None)
+        if not item:
+            if ignored:
+                raise TwitchError(502, "Twitch returned invalid clip information.")
+            raise TwitchError(404, "That Twitch clip is unavailable. Check the share link.")
+        return item

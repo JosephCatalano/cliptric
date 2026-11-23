@@ -15,8 +15,8 @@ from pydantic import BaseModel, Field
 
 from .autopilot import POLL_ENABLED, Autopilot
 from .twitch_editor import CALLBACK
-from .twitch_helix import ScanSettings, TwitchClip, TwitchError, TwitchHelix
-from .twitch_intake import Grant, ImportRequest
+from .twitch_helix import ScanSettings, TwitchClip, TwitchError, TwitchHelix, clip_slug
+from .twitch_intake import EditorImportRequest, Grant, ImportRequest
 
 logger = logging.getLogger(__name__)
 PERIODS = {"24h": 1, "7d": 7, "30d": 30, "90d": 90}
@@ -515,6 +515,24 @@ class TwitchDiscovery:
 
 def create_twitch_discovery_router(service, editor, deletions, previews):
     router = APIRouter(prefix="/api/twitch-discovery")
+
+    @router.post("/editor-imports", status_code=202)
+    def editor_import(request: EditorImportRequest):
+        try:
+            result = service.intake.open_in_editor(clip_slug(request.url))
+        except TwitchError as exc:
+            raise HTTPException(exc.status, str(exc)) from exc
+        service.wake.set()
+        return result
+
+    @router.get("/editor-imports/{slug}")
+    def editor_import_status(slug: str):
+        if not re.fullmatch(r"[A-Za-z0-9_-]{1,150}", slug):
+            raise HTTPException(404, "Twitch clip import not found.")
+        result = service.intake.editor_status(slug)
+        if not result:
+            raise HTTPException(404, "Twitch clip import not found.")
+        return result
 
     @router.get("")
     def scans():

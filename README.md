@@ -572,6 +572,10 @@ Manual review of this migration remains pending: check the sidebar and keyboard 
 
 ## Studio interface
 
+Paste a **Twitch Clip link** and choose **Load Twitch clip** to open an authorized clip as a recording in the Editor. Both `https://clips.twitch.tv/<clip-id>` and `https://www.twitch.tv/<channel>/clip/<clip-id>` share links work. Connect a Twitch editor and record reuse rights in Discover first. The editor fetches clip metadata by ID, uses the same guarded Twitch download queue, and reopens an existing local recording for repeated links. The direct import creates no project and starts no transcription, AI work or render. If your current edit becomes unsaved during the import, Cliptric lets you open the new recording after saving or discarding the edit.
+
+The Editor uses `POST /api/twitch-discovery/editor-imports` with `{url}` and polls `GET /api/twitch-discovery/editor-imports/{clipId}` until the recording is available. Video link imports on Home continue to handle full YouTube videos and completed Twitch VODs. For manual verification, paste an authorized clip link, confirm its player and trim controls open, then paste the alternate link format and confirm the same recording opens.
+
 Project clip cards use 9:16 portrait thumbnails, pending-preview placeholders, and inline video players to match vertical exports. The results workspace uses the available width, with four clip cards per row at 1536px and above, three from 1024px, two from 640px, and one below that. Source thumbnails fill the portrait frame with a centre crop; playback contains the full rendered clip. Project-library source previews remain landscape.
 
 The studio uses the shared Cliptric design system with shadcn cards, tabs, fields, controls, alerts, badges, progress, and empty states. The recording library remains available on wide screens, with a source selector and older-recording access on smaller screens. Instrument Sans is bundled locally through `next/font/local`; its SIL Open Font License is retained in `app/fonts/OFL.txt`. There are no remote font requests.

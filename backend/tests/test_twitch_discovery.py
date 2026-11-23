@@ -10,6 +10,7 @@ from uuid import uuid4
 from fastapi.testclient import TestClient
 
 from backend.main import create_app
+from backend.tests.test_pipeline import recordings as recordings
 from backend.tests.test_pipeline import settings as settings
 from backend.tests.test_pipeline import tools as tools
 from backend.twitch_helix import TwitchClip, TwitchError
@@ -292,3 +293,71 @@ def test_editor_oauth_binds_callback_and_expires_revoked_session(settings, monke
         editor.next_check = 0
         editor.validate_due()
         assert client.get(ROOT).json()["editor"]["profile"] is None
+
+
+def test_editor_link_import_requires_rights_and_reuses_one_recording(
+    settings, recordings, monkeypatch
+):
+    app = create_app(settings)
+    with TestClient(app, base_url="http://127.0.0.1:8765") as client:
+        calls = []
+        downloads = []
+
+        def page(params):
+            calls.append(params)
+            return [clip()], None, 0
+
+        service = setup_api(app, monkeypatch, page)
+        endpoint = f"{ROOT}/editor-imports"
+        share_url = "https://clips.twitch.tv/test-clip?tt_content=share"
+        assert (
+            client.post(
+                endpoint, json={"url": "https://clips.twitch.tv.evil.test/test-clip"}
+            ).status_code
+            == 422
+        )
+        assert not calls
+        assert client.post(endpoint, json={"url": share_url}).status_code == 403
+        assert calls == [{"id": "test-clip"}]
+
+        intake = service.intake
+        with service.store.connection() as db:
+            db.execute(
+                "INSERT INTO twitch_editor VALUES(1,'42','fixture',?,?)",
+                (b"test credential", time.time()),
+            )
+        assert (
+            client.post(
+                f"{ROOT}/rights",
+                json={
+                    "broadcaster_id": "42",
+                    "rights": True,
+                    "expires": (datetime.now(UTC) + timedelta(days=1)).isoformat(),
+                },
+            ).status_code
+            == 204
+        )
+        monkeypatch.setattr(
+            intake.editor, "downloads", lambda *_: {"test-clip": "https://example.test/media"}
+        )
+
+        def download(_url, dest, _limit, _stop):
+            downloads.append(dest)
+            shutil.copyfile(recordings[False], dest)
+            return dest.stat().st_size
+
+        monkeypatch.setattr(intake, "download", download)
+        queued = client.post(endpoint, json={"url": share_url})
+        assert queued.status_code == 202, queued.text
+        ready = poll(client, f"{endpoint}/test-clip", lambda data: data["status"] == "ready")
+        recording = ready["recording"]
+        reused = client.post(endpoint, json={"url": "https://www.twitch.tv/fixture/clip/test-clip"})
+        assert reused.status_code == 202 and reused.json()["recording"]["id"] == recording["id"]
+        assert len(downloads) == 1 and len(calls) == 2
+        assert client.get(f"/api/recordings/{recording['id']}/draft").status_code == 200
+        assert client.get(f"/api/recordings/{recording['id']}/media").status_code == 200
+        with service.store.connection() as db:
+            assert db.execute("SELECT count(*) FROM projects").fetchone()[0] == 0
+            assert db.execute("SELECT count(*) FROM transcriptions").fetchone()[0] == 0
+        assert client.delete(f"{ROOT}/rights/42").status_code == 204
+        assert client.get(f"{endpoint}/test-clip").status_code == 403

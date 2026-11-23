@@ -52,6 +52,10 @@ class ImportRequest(BaseModel):
     ids: list[str] = Field(min_length=1, max_length=15)
 
 
+class EditorImportRequest(BaseModel):
+    url: str = Field(min_length=1, max_length=2048)
+
+
 class TwitchIntake:
     def __init__(self, store, editor, projects, media, settings):
         self.store, self.editor, self.projects, self.media, self.settings = (
@@ -268,6 +272,26 @@ class TwitchIntake:
                     db, clip.id, clip.broadcaster_id, clip.video_id, clip.vod_offset, clip.duration
                 ):
                     continue
+                metadata = json.dumps(
+                    {
+                        **options,
+                        "title": clean_text(clip.title)[:120] or "Twitch clip",
+                        "vod_id": clip.video_id,
+                        "vod_start": clip.vod_offset,
+                        "duration": clip.duration,
+                    }
+                )
+                if not automatic:
+                    changed = db.execute(
+                        "UPDATE twitch_intake SET scan_id=?,options=?,status='queued',queued=?,detail=NULL "
+                        "WHERE clip_id=? AND editor_id=? AND broadcaster_id=? AND status='recording'",
+                        (scan_id, metadata, stamp, clip.id, editor[0], clip.broadcaster_id),
+                    ).rowcount
+                    if changed:
+                        count += changed
+                        if count >= quota:
+                            break
+                        continue
                 count += db.execute(
                     "INSERT INTO twitch_intake VALUES(?,?,?,?,?,?,?,'queued',NULL,?) "
                     "ON CONFLICT(clip_id) DO NOTHING",
@@ -279,20 +303,121 @@ class TwitchIntake:
                         str(uuid4()),
                         str(uuid4()),
                         stamp,
-                        json.dumps(
-                            {
-                                **options,
-                                "title": clean_text(clip.title)[:120] or "Twitch clip",
-                                "vod_id": clip.video_id,
-                                "vod_start": clip.vod_offset,
-                                "duration": clip.duration,
-                            }
-                        ),
+                        metadata,
                     ),
                 ).rowcount
                 if count >= quota:
                     break
             return count
+
+    def editor_status(self, slug, *, db=None):
+        if db is None:
+            with self.store.connection() as connection:
+                return self.editor_status(slug, db=connection)
+        job = db.execute("SELECT * FROM twitch_intake WHERE clip_id=?", (slug,)).fetchone()
+        if not job:
+            return None
+        if not self.rights(db, job["broadcaster_id"], job["editor_id"], time.time()):
+            raise HTTPException(
+                403, "Connect the authorized Twitch editor and check reuse rights in Discover."
+            )
+        raw = db.execute("SELECT * FROM recordings WHERE id=?", (job["recording_id"],)).fetchone()
+        recording = Recording.model_validate(dict(raw)) if raw else None
+        if recording:
+            if (self.store.root / "sources" / f"{recording.id}.mp4").is_file():
+                return {"id": slug, "status": "ready", "recording": recording, "detail": None}
+            return {
+                "id": slug,
+                "status": "failed",
+                "recording": None,
+                "detail": "The saved Twitch file is missing. Check the local import in Discover.",
+            }
+        status = job["status"]
+        detail = job["detail"]
+        if not json.loads(job["options"]).get("editor_only") and status != "running":
+            status = "failed"
+            detail = "This clip already has a preparation job. Check Discover for its status or retry it there."
+        if status in {"recording", "project"}:
+            status, detail = "failed", "The saved Twitch recording is unavailable on disk."
+        return {"id": slug, "status": status, "recording": None, "detail": detail}
+
+    def open_in_editor(self, slug):
+        existing = self.editor_status(slug)
+        if existing and existing["status"] != "failed":
+            return existing
+        clip = None if existing else self.editor.api.clip(slug)
+        stamp = time.time()
+        with self.store.connection() as db:
+            db.execute("BEGIN IMMEDIATE")
+            existing = self.editor_status(slug, db=db)
+            if existing and existing["status"] != "failed":
+                return existing
+            if (
+                existing
+                and not db.execute(
+                    "SELECT 1 FROM twitch_intake j WHERE clip_id=? AND json_extract(options,'$.editor_only')=1 "
+                    "AND NOT EXISTS(SELECT 1 FROM recordings r WHERE r.id=j.recording_id)",
+                    (slug,),
+                ).fetchone()
+            ):
+                return existing
+            if (
+                db.execute(
+                    "SELECT count(*) FROM twitch_intake WHERE status IN ('queued','running')"
+                ).fetchone()[0]
+                >= 60
+            ):
+                raise HTTPException(
+                    409, "The Twitch import queue is full. Try again after some work finishes."
+                )
+            if existing:
+                db.execute(
+                    "UPDATE twitch_intake SET status='queued',detail=NULL,"
+                    "options=json_set(options,'$.attempts',0,'$.retry_at',0) WHERE clip_id=?",
+                    (slug,),
+                )
+            else:
+                if clip is None:
+                    raise HTTPException(
+                        409, "The Twitch import changed. Paste the link again to retry."
+                    )
+                if (
+                    db.execute(
+                        "SELECT count(*) FROM twitch_intake WHERE queued>=?", (stamp - 86400,)
+                    ).fetchone()[0]
+                    >= 30
+                ):
+                    raise HTTPException(
+                        429, "The Editor's daily Twitch import limit has been reached."
+                    )
+                editor = db.execute("SELECT editor_id FROM twitch_editor WHERE slot=1").fetchone()
+                if not editor or not self.rights(db, clip.broadcaster_id, editor[0], stamp):
+                    raise HTTPException(
+                        403,
+                        "Connect a Twitch editor and record this broadcaster's reuse rights in Discover.",
+                    )
+                options = {
+                    "editor_only": True,
+                    "auto": False,
+                    "paid": 0,
+                    "title": clean_text(clip.title)[:120] or "Twitch clip",
+                    "vod_id": clip.video_id,
+                    "vod_start": clip.vod_offset,
+                    "duration": clip.duration,
+                }
+                db.execute(
+                    "INSERT INTO twitch_intake VALUES(?,?,?,NULL,?,?,?,'queued',NULL,?)",
+                    (
+                        slug,
+                        clip.broadcaster_id,
+                        editor[0],
+                        str(uuid4()),
+                        str(uuid4()),
+                        stamp,
+                        json.dumps(options),
+                    ),
+                )
+            return self.editor_status(slug, db=db)
 
     def retry(self, scan_id, clip_id):
         with self.store.connection() as db:
@@ -333,8 +458,9 @@ class TwitchIntake:
             db.execute(
                 "UPDATE twitch_intake SET status='running' WHERE clip_id=?", (job["clip_id"],)
             )
-        status, detail = "project", None
-        previous = json.loads(job["options"]).get("attempts", 0)
+        options = json.loads(job["options"])
+        status, detail = ("recording" if options.get("editor_only") else "project"), None
+        previous = options.get("attempts", 0)
         attempts, retry_at = previous + 1, 0
         try:
             self.process(job, stop)
@@ -424,6 +550,8 @@ class TwitchIntake:
                 if not committed:
                     remove_artifact(destination)
         self.check_rights(job, options)
+        if options.get("editor_only"):
+            return
         overrides = options.get("preset") or {"presentation_mode": "auto"}
         if not recording.has_audio:
             overrides = {**overrides, "caption_preset": "none"}
