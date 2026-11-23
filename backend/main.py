@@ -46,6 +46,9 @@ from .tiktok import TikTok
 from .tiktok_api import TikTokSettings, secure_tiktok_logs
 from .tiktok_routes import create_tiktok_router
 from .transcription import Transcriptions, create_transcription_router
+from .twitch_discovery import TwitchDiscovery, create_twitch_discovery_router
+from .twitch_editor import TwitchEditor
+from .twitch_intake import TwitchIntake
 from .x_api import XAPI
 from .youtube_api import YouTubeSettings, secure_youtube_logs
 from .youtube_imports import YouTubeImports, create_youtube_router
@@ -74,7 +77,11 @@ def create_app(settings: Settings | None = None) -> FastAPI:
     previews = Previews(store, media)
     quality_analysis = QualityAnalysis(store, media, transcriptions)
     tiktok = TikTok(
-        store, media, TikTokSettings.load(), settings.web_origin, public_origin=settings.public_origin
+        store,
+        media,
+        TikTokSettings.load(),
+        settings.web_origin,
+        public_origin=settings.public_origin,
     )
     secure_tiktok_logs()
     youtube_publishing = YouTubePublishing(
@@ -107,6 +114,9 @@ def create_app(settings: Settings | None = None) -> FastAPI:
     scheduler = Scheduler(
         store, tiktok, youtube_publishing, instagram=instagram, x=x_publishing, facebook=facebook
     )
+    discovery = TwitchDiscovery(store)
+    twitch_editor = TwitchEditor(store, discovery.api, settings)
+    discovery.intake = TwitchIntake(store, twitch_editor, projects, media, settings)
     deletions = Deletions(
         store,
         projects,
@@ -138,6 +148,9 @@ def create_app(settings: Settings | None = None) -> FastAPI:
             x_publishing.initialize()
             facebook.initialize()
             scheduler.initialize()
+            discovery.initialize()
+            twitch_editor.initialize()
+            discovery.intake.initialize()
             deletions.initialize()
             app.state.jobs = jobs
             app.state.transcriptions = transcriptions
@@ -149,10 +162,13 @@ def create_app(settings: Settings | None = None) -> FastAPI:
             app.state.instagram = instagram
             app.state.x_publishing = x_publishing
             app.state.facebook = facebook
+            app.state.twitch_discovery = discovery
             try:
                 scheduler.start()
+                discovery.start()
                 yield
             finally:
+                await run_in_threadpool(discovery.close)
                 await run_in_threadpool(scheduler.close)
                 previews.stop.set()
                 quality_analysis.stop.set()
@@ -203,6 +219,9 @@ def create_app(settings: Settings | None = None) -> FastAPI:
     app.include_router(create_tiktok_router(tiktok))
     app.include_router(create_youtube_publishing_router(youtube_publishing))
     app.include_router(create_scheduling_router(scheduler))
+    app.include_router(
+        create_twitch_discovery_router(discovery, twitch_editor, deletions, previews)
+    )
     app.include_router(create_instagram_router(instagram))
     app.include_router(create_social_router(x_publishing))
     app.include_router(create_social_router(facebook))
@@ -402,6 +421,8 @@ def create_app(settings: Settings | None = None) -> FastAPI:
             return app.state.jobs.submit(str(recording_id), validated, words)
         except ExportBusy as exc:
             raise HTTPException(409, str(exc)) from exc
+        except MediaError as exc:
+            raise HTTPException(403, str(exc)) from exc
 
     @app.get("/api/recordings/{recording_id}/draft", response_model=SelectionDraft)
     def get_draft(recording_id: UUID):

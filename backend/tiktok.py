@@ -18,6 +18,7 @@ from .social_accounts import Accounts
 from .storage import now
 from .tiktok_api import CALLBACK_PATH, TikTokAPI, TikTokError, chunk_plan, protect_tokens
 from .transcription_store import TranscriptStore
+from .twitch_rights import publishing_error
 
 logger = logging.getLogger(__name__)
 Privacy = Literal["PUBLIC_TO_EVERYONE", "MUTUAL_FOLLOW_FRIENDS", "FOLLOWER_OF_CREATOR", "SELF_ONLY"]
@@ -376,6 +377,11 @@ class TikTok:
         return [PostJob.model_validate_json(row[0]) for row in rows]
 
     def validate_post(self, request, creator=None):
+        blocked = publishing_error(
+            self.store, request.export_id, "tiktok", request.account_id, request.id
+        )
+        if blocked:
+            raise TikTokError(blocked, 409)
         if creator is None:
             creator = self.creator(request.account_id)
         if creator["account_id"] != request.account_id:
@@ -452,6 +458,11 @@ class TikTok:
     def _run(self, identifier):
         job = self.get(identifier)
         try:
+            blocked = publishing_error(
+                self.store, job.export_id, "tiktok", job.account_id, job.id, reserve=True
+            )
+            if blocked:
+                raise TikTokError(blocked, 409)
             with self.lock:
                 token, account = self._token(job.account_id)
                 if account != job.account_id:

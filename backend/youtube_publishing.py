@@ -19,6 +19,7 @@ from .social_accounts import Accounts
 from .social_security import CredentialError, protect_secret
 from .storage import now
 from .transcription_store import TranscriptStore
+from .twitch_rights import publishing_error
 from .youtube_api import CALLBACK_PATH, SCOPES, YouTubeAPI, YouTubeError
 
 logger = logging.getLogger(__name__)
@@ -424,6 +425,11 @@ class YouTubePublishing:
             raise YouTubeError("Another YouTube upload is active. Wait for it to finish.", 409)
 
     def validate_post(self, request, creator=None):
+        blocked = publishing_error(
+            self.store, request.export_id, "youtube", request.account_id, request.id
+        )
+        if blocked:
+            raise YouTubeError(blocked, 409)
         if creator is None:
             creator = self.creator(request.account_id)
         if creator["account_id"] != request.account_id:
@@ -648,6 +654,11 @@ class YouTubePublishing:
         job = self.get(identifier)
         job.batch_pending = False
         try:
+            blocked = publishing_error(
+                self.store, job.export_id, "youtube", job.account_id, job.id, reserve=True
+            )
+            if blocked:
+                raise YouTubeError(blocked, 409)
             path = self.store.export_path(job.export_id)
             if path.is_symlink() or not path.is_file():
                 raise YouTubeError("The approved export is unavailable.")

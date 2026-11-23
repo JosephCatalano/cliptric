@@ -45,7 +45,8 @@ def deferred(context, tmp_path, monkeypatch):
         (work / "result.json").write_text(json.dumps(result), encoding="utf-8")
         return 0
 
-    def transcribe(recording_id, *, identifier):
+    def transcribe(recording_id, *, identifier, allow_no_audio=False):
+        assert not allow_no_audio
         events.append("transcribe")
         transcript = manager.transcriptions.transcripts.create(identifier, recording_id)
         words = [

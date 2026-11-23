@@ -5,7 +5,7 @@ from __future__ import annotations
 import logging
 from contextlib import ExitStack
 from pathlib import PurePosixPath
-from sqlite3 import Connection
+from sqlite3 import Connection, IntegrityError
 from typing import TYPE_CHECKING
 from uuid import UUID
 
@@ -52,8 +52,10 @@ class Deletions:
             paths = [row[0] for row in db.execute("SELECT path FROM deleted_files")]
         for relative in paths:
             parts = PurePosixPath(relative).parts
-            if len(parts) != 2 or parts[0] not in {"exports", "logs", "thumbnails"}:
+            if len(parts) != 2 or parts[0] not in {"exports", "logs", "thumbnails", "sources"}:
                 raise RuntimeError("Invalid deletion cleanup path.")
+            if parts[0] == "sources" and parts[1] != f"{UUID(parts[1].removesuffix('.mp4'))}.mp4":
+                raise RuntimeError("Invalid source cleanup path.")
             path = self.store.root.joinpath(*parts)
             if not path.parent.resolve().is_relative_to(self.store.root.resolve()):
                 raise RuntimeError("Deletion cleanup directory is outside local storage.")
@@ -82,6 +84,79 @@ class Deletions:
             raise HTTPException(
                 409, "Cancel project processing and wait for it to stop before deleting."
             )
+
+    def purge_twitch(self, clip_id, previews):
+        # Remove only an intake-owned recording with no project/export references.
+        locks = [*self.locks, self.projects.transcriptions.lock, *previews.frames]
+        with ExitStack() as stack:
+            for lock in locks:
+                if not lock.acquire(blocking=False):
+                    raise HTTPException(409, "Wait for media work before purging this Twitch clip.")
+                stack.callback(lock.release)
+            with self.store.connection() as db:
+                db.execute("BEGIN IMMEDIATE")
+                job = db.execute(
+                    "SELECT * FROM twitch_intake WHERE clip_id=?", (clip_id,)
+                ).fetchone()
+                if not job:
+                    raise HTTPException(404, "Twitch import not found.")
+                if job["status"] == "running":
+                    raise HTTPException(409, "Wait for the Twitch import to finish.")
+                identifier = str(UUID(job["recording_id"]))
+                if (
+                    db.execute(
+                        "SELECT 1 FROM projects p WHERE p.recording_id=? "
+                        "OR EXISTS(SELECT 1 FROM json_each(p.payload,'$.recording_ids') WHERE value=?)",
+                        (identifier, identifier),
+                    ).fetchone()
+                    or db.execute(
+                        "SELECT 1 FROM clips WHERE recording_id=?", (identifier,)
+                    ).fetchone()
+                ):
+                    raise HTTPException(
+                        409, "Delete projects and remaining exports using this recording first."
+                    )
+                if (
+                    db.execute(
+                        "SELECT 1 FROM transcriptions WHERE recording_id=? "
+                        "AND status IN ('queued','preparing','transcribing','cancelling')",
+                        (identifier,),
+                    ).fetchone()
+                    or db.execute(
+                        "SELECT 1 FROM highlight_jobs WHERE recording_id=?", (identifier,)
+                    ).fetchone()
+                ):
+                    raise HTTPException(
+                        409, "This recording still has transcription or highlight work."
+                    )
+                paths = [f"sources/{identifier}.mp4"]
+                paths.extend(f"thumbnails/source-{identifier}-{i}.jpg" for i in range(6))
+                for row in db.execute(
+                    "SELECT id FROM transcriptions WHERE recording_id=?", (identifier,)
+                ):
+                    transcript = str(UUID(row[0]))
+                    db.execute(
+                        "DELETE FROM transcript_word_timings WHERE transcription_id=?",
+                        (transcript,),
+                    )
+                    db.execute(
+                        "DELETE FROM transcript_words WHERE transcription_id=?", (transcript,)
+                    )
+                    paths.append(f"logs/transcription-{transcript}.log")
+                db.execute("DELETE FROM transcriptions WHERE recording_id=?", (identifier,))
+                db.execute("DELETE FROM selection_drafts WHERE recording_id=?", (identifier,))
+                db.execute("DELETE FROM project_selections WHERE recording_id=?", (identifier,))
+                try:
+                    db.execute("DELETE FROM recordings WHERE id=?", (identifier,))
+                except IntegrityError as exc:
+                    raise HTTPException(
+                        409, "Another local record still references this source."
+                    ) from exc
+                db.execute("DELETE FROM twitch_scan_results WHERE clip_id=?", (clip_id,))
+                db.execute("DELETE FROM twitch_scan_review WHERE clip_id=?", (clip_id,))
+                db.execute("DELETE FROM twitch_intake WHERE clip_id=?", (clip_id,))
+                self._queue(db, paths)
+            return {"deleted": True, "cleanup_pending": self.cleanup()}
 
     def delete(
         self,

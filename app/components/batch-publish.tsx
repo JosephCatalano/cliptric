@@ -37,10 +37,29 @@ import {
 import { privacyLabels, type TikTokCreator } from "@/lib/tiktok";
 import { youtubeDefaults, type YouTubeCreator } from "@/lib/youtube-publishing";
 
-const platforms = ["youtube", "x", "tiktok"] as const;
+const platforms = ["youtube", "x", "tiktok", "instagram", "facebook"] as const;
 type Platform = (typeof platforms)[number];
-const emptySelection = { youtube: false, x: false, tiktok: false };
-const emptyAccounts = { youtube: "", x: "", tiktok: "" };
+const emptySelection = {
+  youtube: false,
+  x: false,
+  tiktok: false,
+  instagram: false,
+  facebook: false,
+};
+const emptyAccounts = {
+  youtube: "",
+  x: "",
+  tiktok: "",
+  instagram: "",
+  facebook: "",
+};
+const captionLimits: Record<Platform, number> = {
+  youtube: 5000,
+  x: 280,
+  tiktok: 2200,
+  instagram: 2200,
+  facebook: 5000,
+};
 const tiktokDefaults = {
   privacy: "",
   allow_comments: false,
@@ -115,7 +134,7 @@ function BatchReview({
     items.map((item) => ({
       exportId: item.export_id!,
       title: Array.from(item.title).slice(0, 100).join(""),
-      copies: { youtube: "", x: "", tiktok: "" },
+      copies: { ...emptyAccounts },
       warning: item.transcription_warning,
     })),
   );
@@ -131,6 +150,8 @@ function BatchReview({
   const [tiktok, setTiktok] = useState(tiktokDefaults);
   const [loadedCopy, setLoadedCopy] = useState(false);
   const [settings, setSettings] = useState(youtubeDefaults);
+  const [shareToInstagramFeed, setShareToInstagramFeed] = useState(false);
+  const [facebookDisclosure, setFacebookDisclosure] = useState(false);
   const [approved, setApproved] = useState(false);
   const [error, setError] = useState("");
   const [profileError, setProfileError] = useState({ youtube: "", tiktok: "" });
@@ -193,6 +214,8 @@ function BatchReview({
               youtube: descriptions[index],
               x: descriptions[index],
               tiktok: descriptions[index],
+              instagram: descriptions[index],
+              facebook: descriptions[index],
             },
           })),
         );
@@ -299,6 +322,7 @@ function BatchReview({
   const ready =
     loadedCopy &&
     destinations.length > 0 &&
+    destinations.length * drafts.length <= 225 &&
     destinations.every((platform) => accounts[platform]) &&
     (!selected.youtube || !!category) &&
     (!selected.tiktok ||
@@ -311,7 +335,12 @@ function BatchReview({
         (!!draft.title.trim() &&
           new TextEncoder().encode(draft.copies.youtube).length <= 5000)) &&
       (!selected.x || Array.from(draft.copies.x).length <= 280) &&
-      (!selected.tiktok || draft.copies.tiktok.length <= 2200),
+      (!selected.tiktok ||
+        draft.copies.tiktok.length <= captionLimits.tiktok) &&
+      (!selected.instagram ||
+        draft.copies.instagram.length <= captionLimits.instagram) &&
+      (!selected.facebook ||
+        draft.copies.facebook.length <= captionLimits.facebook),
   );
 
   const receiptId = receipt?.id;
@@ -381,7 +410,26 @@ function BatchReview({
               commercial: tiktok.your_brand || tiktok.branded_content,
             },
           };
-        return { platform, request: { ...basics, caption: draft.copies.x } };
+        const caption = draft.copies[platform];
+        if (platform === "instagram")
+          return {
+            platform,
+            request: {
+              ...basics,
+              caption,
+              share_to_feed: shareToInstagramFeed,
+            },
+          };
+        if (platform === "facebook")
+          return {
+            platform,
+            request: {
+              ...basics,
+              caption,
+              is_ai_generated: facebookDisclosure,
+            },
+          };
+        return { platform, request: { ...basics, caption } };
       }),
     );
     const key = JSON.stringify(posts);
@@ -472,6 +520,38 @@ function BatchReview({
       <FieldSet disabled={busy}>
         <FieldLegend>Destinations for all selected clips</FieldLegend>
         <FieldGroup>
+          <Button
+            type="button"
+            variant="outline"
+            className="w-fit"
+            disabled={
+              !platforms.some(
+                (platform) => connections[platform]?.accounts.length,
+              )
+            }
+            onClick={() => {
+              setSelected({
+                ...emptySelection,
+                ...Object.fromEntries(
+                  platforms.map((platform) => [
+                    platform,
+                    Boolean(connections[platform]?.accounts.length),
+                  ]),
+                ),
+              });
+              setApproved(false);
+            }}
+          >
+            Select all connected platforms
+          </Button>
+          {destinations.length * drafts.length > 225 && (
+            <Alert variant="destructive">
+              <AlertDescription>
+                A single batch can contain up to 225 posts. Choose fewer clips
+                or platforms.
+              </AlertDescription>
+            </Alert>
+          )}
           {error || profileError.youtube || profileError.tiktok ? (
             <Alert variant="destructive">
               <AlertDescription>
@@ -546,6 +626,36 @@ function BatchReview({
               ) : null}
             </FieldGroup>
           ))}
+          {selected.instagram && (
+            <Field orientation="horizontal">
+              <Checkbox
+                id="batch-instagram-feed"
+                checked={shareToInstagramFeed}
+                onCheckedChange={(value) => {
+                  setShareToInstagramFeed(value === true);
+                  setApproved(false);
+                }}
+              />
+              <FieldLabel htmlFor="batch-instagram-feed">
+                Share Instagram Reels to the feed
+              </FieldLabel>
+            </Field>
+          )}
+          {selected.facebook && (
+            <Field orientation="horizontal">
+              <Checkbox
+                id="batch-facebook-ai"
+                checked={facebookDisclosure}
+                onCheckedChange={(value) => {
+                  setFacebookDisclosure(value === true);
+                  setApproved(false);
+                }}
+              />
+              <FieldLabel htmlFor="batch-facebook-ai">
+                Disclose AI-generated media on Facebook
+              </FieldLabel>
+            </Field>
+          )}
           {selected.youtube ? (
             <FieldSet>
               <FieldLegend>YouTube settings</FieldLegend>
@@ -806,12 +916,7 @@ function BatchReview({
                             : platform === "x"
                               ? Array.from(copy).length
                               : copy.length;
-                        const limit =
-                          platform === "youtube"
-                            ? 5000
-                            : platform === "x"
-                              ? 280
-                              : 2200;
+                        const limit = captionLimits[platform];
                         const field = `batch-copy-${platform}-${draft.exportId}`;
                         return (
                           <Field key={platform} data-invalid={count > limit}>

@@ -10,6 +10,7 @@ import { useWorkspaceNavigation } from "./workspace-navigation";
 import { usePathname } from "next/navigation";
 import {
   CalendarDaysIcon,
+  CompassIcon,
   FolderOpenIcon,
   LinkIcon,
   MonitorCheckIcon,
@@ -40,6 +41,7 @@ import { toggleTheme } from "../lib/theme";
 
 const destinations = [
   { href: "/workspace", label: "Home", icon: HouseIcon },
+  { href: "/discover", label: "Discover", icon: CompassIcon },
   { href: "/projects", label: "Projects", icon: FolderOpenIcon },
   { href: "/studio", label: "Editor", icon: ScissorsIcon },
   { href: "/calendar", label: "Publishing", icon: CalendarDaysIcon },

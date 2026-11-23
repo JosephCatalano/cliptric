@@ -21,6 +21,7 @@ OAUTH_CALLBACKS = {
     "/api/instagram/callback",
     "/api/x/callback",
     "/api/facebook/callback",
+    "/api/twitch-discovery/callback",
 }
 
 

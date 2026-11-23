@@ -49,6 +49,7 @@ from .project_store import ProjectStore
 from .social_copy import SocialCopyWriter
 from .storage import now
 from .transcription_models import ACTIVE_STATUSES, TranscriptionError
+from .twitch_rights import processing_error
 from .youtube_imports import ACTIVE as DOWNLOAD_ACTIVE
 from .youtube_imports import YouTubeRequest
 
@@ -268,6 +269,14 @@ class Projects:
                         409, "This creation token already belongs to different project settings."
                     )
                 return self.get(existing.id)
+            if request.recording_id and processing_error(self.store, str(request.recording_id)):
+                raise HTTPException(
+                    403, "Current Twitch reuse rights do not permit this processing."
+                )
+            for recording_id in request.recording_ids:
+                blocked = processing_error(self.store, str(recording_id))
+                if blocked:
+                    raise HTTPException(403, blocked)
             if request.recording_ids:
                 return self._create_batch(request)
             recording = (
@@ -1071,6 +1080,8 @@ class Projects:
             project = self._check(identifier)
             item = next(i for i in project.items if i.id == item_id)
             recording_id = item.recording_id or project.recording_id
+            if blocked := processing_error(self.store, recording_id):
+                raise HTTPException(403, blocked)
             transcription_id = (
                 item.transcription_id if project.recording_ids else project.transcription_id
             )
@@ -1182,6 +1193,8 @@ class Projects:
             item = next(i for i in project.items if i.id == item_id)
             if item.review == "rejected":
                 return
+            if blocked := processing_error(self.store, item.recording_id):
+                raise HTTPException(403, blocked)
             needs_title = (
                 project.generate_titles and not item.title_complete and not item.title_attempted
             )
@@ -1279,6 +1292,8 @@ class Projects:
                 item.title_error = "Title request outcome is unconfirmed. Check API usage before explicitly retrying titles. The filename title is retained."
                 self.records.save(project)
             try:
+                if blocked := processing_error(self.store, item.recording_id, ai=True):
+                    raise HTTPException(403, blocked)
                 with self._timed(identifier, "ai"):
                     title, input_tokens, output_tokens = asyncio.run(
                         self.titles.suggest(words, ai_instructions=project.settings.ai_instructions)
@@ -1306,6 +1321,8 @@ class Projects:
         with self.lock:
             project = self._check(identifier)
             item = next(i for i in project.items if i.id == item_id)
+            if blocked := processing_error(self.store, item.recording_id, ai=True):
+                raise HTTPException(403, blocked)
             recording = self.store.recording(item.recording_id)
             page = self.transcriptions.transcripts.words(
                 item.transcription_id,
@@ -1543,6 +1560,8 @@ class Projects:
             kept = retained_intervals(start, end, item.quality)
             instructions = project.settings.ai_instructions
         try:
+            if blocked := processing_error(self.store, recording_id, ai=True):
+                raise HighlightError(blocked, 403)
             if not transcript_id or transcript_revision is None:
                 raise HighlightError(
                     "No saved speech transcript is available. Add posting copy manually.", 422

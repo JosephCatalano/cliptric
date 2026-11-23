@@ -42,6 +42,7 @@ from .transcription_models import (
 )
 from .transcription_store import TranscriptStore
 from .transcription_worker import CONTEXT_SECONDS, SAMPLE_RATE, TRANSCRIBE_OPTIONS, WINDOW_SECONDS
+from .twitch_rights import processing_error
 from .warm_transcription import WarmTranscription
 
 logger = logging.getLogger(__name__)
@@ -93,6 +94,8 @@ class Transcriptions:
     def submit(
         self, recording_id: str, *, identifier: str | None = None, allow_no_audio: bool = False
     ) -> TranscriptionJob:
+        if blocked := processing_error(self.store, recording_id):
+            raise TranscriptionError(blocked, 403)
         recording = self._recording(recording_id)
         if not recording.has_audio and not allow_no_audio:
             raise TranscriptionError("This recording has no audio to transcribe.")
@@ -282,6 +285,8 @@ class Transcriptions:
         work = self.work_root / job.id
         deadline = time.monotonic() + self.settings.transcription_timeout_seconds
         try:
+            if blocked := processing_error(self.store, job.recording_id):
+                raise TranscriptionError(blocked, 403)
             work.mkdir()
             with self.lock:
                 self._check_running(deadline)

@@ -19,6 +19,7 @@ from .social_accounts import Accounts
 from .social_security import CredentialError, protect_secret
 from .storage import now
 from .transcription_store import TranscriptStore
+from .twitch_rights import publishing_error
 
 logger = logging.getLogger(__name__)
 
@@ -376,8 +377,16 @@ class Instagram:
         with path.open("rb") as stream:
             return hashlib.file_digest(stream, "sha256").hexdigest()
 
-    def validate_post(self, request):
-        creator = self.creator(request.account_id)
+    def validate_post(self, request, creator=None):
+        blocked = publishing_error(
+            self.store, request.export_id, "instagram", request.account_id, request.id
+        )
+        if blocked:
+            raise InstagramError(blocked, 409)
+        if creator is None:
+            creator = self.creator(request.account_id)
+        if creator["account_id"] != request.account_id:
+            raise InstagramError("The destination account changed. Review the post again.", 409)
         clip, path, _ = self.export(str(request.export_id))
         return creator, clip, path
 
@@ -424,6 +433,11 @@ class Instagram:
     def _run(self, identifier):
         job = self.get(identifier)
         try:
+            blocked = publishing_error(
+                self.store, job.export_id, "instagram", job.account_id, job.id, reserve=True
+            )
+            if blocked:
+                raise InstagramError(blocked, 409)
             token, account = self._token(job.account_id)
             _, path, _ = self.export(job.export_id)
             if account != job.account_id or self.checksum(path) != job.sha256:

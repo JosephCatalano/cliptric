@@ -17,6 +17,7 @@ from .models import Clip, ExportRequest
 from .overlays import layout as text_layout
 from .overlays import resolve_caption_position, write_presentation
 from .storage import Store
+from .twitch_rights import processing_error
 
 logger = logging.getLogger(__name__)
 
@@ -48,6 +49,8 @@ class Jobs:
         *,
         clip_id: str | None = None,
     ) -> Clip:
+        if blocked := processing_error(self.store, recording_id):
+            raise MediaError(blocked)
         with self.lock:
             if self.stopping:
                 raise ExportBusy("Export service is stopping. Retry after it restarts.")
@@ -196,6 +199,8 @@ class Jobs:
         headline_path = self.store.root / "exports" / f"{clip.id}.headline.partial.ass"
         cover_path = self.store.root / "exports" / f"{clip.id}.cover.partial.jpg"
         try:
+            if blocked := processing_error(self.store, clip.recording_id):
+                raise MediaError(blocked)
             with self.lock:
                 if self.cancel_event.is_set():
                     raise RenderCancelled()

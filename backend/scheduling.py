@@ -64,22 +64,22 @@ POST_TABLES = {
 PUBLISHING_ERRORS = (TikTokError, YouTubeError, InstagramError, SocialError)
 
 
-BatchPost = Annotated[YouTubeSchedule | XSchedule | TikTokSchedule, Field(discriminator="platform")]
+ScheduledPost = Annotated[
+    TikTokSchedule | YouTubeSchedule | InstagramSchedule | XSchedule | FacebookSchedule,
+    Field(discriminator="platform"),
+]
 
 
 class BatchPostRequest(BaseModel):
     model_config = ConfigDict(extra="forbid")
     id: UUID
-    posts: list[BatchPost] = Field(min_length=1, max_length=225)
+    posts: list[ScheduledPost] = Field(min_length=1, max_length=225)
 
 
 class ScheduleRequest(BaseModel):
     model_config = ConfigDict(extra="forbid")
     scheduled_at: AwareDatetime
-    post: Annotated[
-        TikTokSchedule | YouTubeSchedule | InstagramSchedule | XSchedule | FacebookSchedule,
-        Field(discriminator="platform"),
-    ]
+    post: ScheduledPost
 
 
 class Scheduler:

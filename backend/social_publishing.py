@@ -20,6 +20,7 @@ from .social_accounts import Accounts
 from .social_security import CredentialError, protect_secret
 from .social_transport import Credentials, SocialError, identifier
 from .storage import now
+from .twitch_rights import publishing_error
 
 logger = logging.getLogger(__name__)
 
@@ -268,6 +269,11 @@ class SocialPublisher:
             return hashlib.file_digest(stream, "sha256").hexdigest()
 
     def validate_post(self, request, creator=None):
+        blocked = publishing_error(
+            self.store, request.export_id, self.platform, request.account_id, request.id
+        )
+        if blocked:
+            raise SocialError(blocked, 409)
         if self.platform == "x" and (len(request.caption) > 280 or request.is_ai_generated):
             raise SocialError(
                 "Use at most 280 characters for X. AI disclosure here applies only to Facebook; X also validates weighted text length.",
@@ -371,6 +377,11 @@ class SocialPublisher:
     def _run(self, job_id):
         job = self.get(job_id)
         try:
+            blocked = publishing_error(
+                self.store, job.export_id, self.platform, job.account_id, job.id, reserve=True
+            )
+            if blocked:
+                raise SocialError(blocked, 409)
             record, _ = self._token(job.account_id)
             _, path, _ = self.export(job.export_id)
             if self.checksum(path) != job.sha256:

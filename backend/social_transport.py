@@ -74,13 +74,24 @@ class SocialSettings:
 class SensitiveSocialLogs(logging.Filter):
     def filter(self, record):
         message = record.getMessage()
-        if re.search(r"/api/(?:x|facebook)/callback\?", message):
+        if re.search(r"/api/(?:x|facebook|twitch-discovery)/callback\?", message):
             record.msg = re.sub(
-                r"(/api/(?:x|facebook)/callback)\?[^\s\"]*", r"\1?[redacted]", message
+                r"(/api/(?:x|facebook|twitch-discovery)/callback)\?[^\s\"]*",
+                r"\1?[redacted]",
+                message,
             )
             record.args = ()
         elif any(
-            host in message for host in ("api.x.com", "graph.facebook.com", "rupload.facebook.com")
+            host in message
+            for host in (
+                "api.x.com",
+                "graph.facebook.com",
+                "rupload.facebook.com",
+                "id.twitch.tv",
+                ".twitchcdn.net",
+                ".ttvnw.net",
+                ".jtvnw.net",
+            )
         ):
             record.msg, record.args = "Social API request (credentials redacted)", ()
         return True

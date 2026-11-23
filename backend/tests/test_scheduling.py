@@ -104,7 +104,8 @@ def row(scheduler, identifier):
 def test_publish_batch_is_atomic_and_survives_restart(scheduled):
     scheduler, publishing, _ = scheduled
     posts = [
-        payload(platform).post.model_dump(mode="json") for platform in ("youtube", "x", "tiktok")
+        payload(platform).post.model_dump(mode="json")
+        for platform in ("youtube", "x", "instagram", "facebook", "tiktok")
     ]
     app = FastAPI()
     app.include_router(create_scheduling_router(scheduler))
@@ -120,15 +121,15 @@ def test_publish_batch_is_atomic_and_survives_restart(scheduled):
         posts[-1]["request"]["id"] = str(uuid4())
         response = client.post("/api/schedule/batch", json=body)
         assert response.status_code == 202
-        assert [item["status"] for item in response.json()["posts"]] == ["scheduled"] * 3
+        assert [item["status"] for item in response.json()["posts"]] == ["scheduled"] * 5
         scheduler.initialize()
         for post in posts:
             make_due(scheduler, post["request"]["id"], minutes=10)
-        # Delaying one platform still lets the two other approved posts start.
+        # Delaying one platform still lets the other approved posts start.
         youtube = type(publishing)()
         youtube.active = Future()
         scheduler.services["youtube"] = youtube
-        for _ in range(3):
+        for _ in posts:
             scheduler.tick()
         assert [call.id for call in publishing.calls] == [
             UUID(post["request"]["id"]) for post in posts[1:]
@@ -139,7 +140,7 @@ def test_publish_batch_is_atomic_and_survives_restart(scheduled):
         assert len(youtube.calls) == 1
         assert client.post("/api/schedule/batch", json=body).status_code == 202
         scheduler.tick()
-        assert len(youtube.calls) == 1 and len(publishing.calls) == 2
+        assert len(youtube.calls) == 1 and len(publishing.calls) == 4
 
 
 @pytest.mark.parametrize("platform", ["tiktok", "youtube", "instagram", "x", "facebook"])

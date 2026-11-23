@@ -48,6 +48,7 @@ from .prompt_settings import highlight_prompt_identity
 from .storage import Store, now
 from .transcription_models import TranscriptionError
 from .transcription_store import TranscriptStore
+from .twitch_rights import processing_error
 
 logger = logging.getLogger(__name__)
 Response = TypeVar("Response")
@@ -104,6 +105,8 @@ class Highlights:
     def submit(
         self, recording_id: str, request: HighlightRequest, *, identifier: str | None = None
     ) -> HighlightJob:
+        if blocked := processing_error(self.store, recording_id, ai=True):
+            raise HighlightError(blocked, 403)
         recording = self.store.recording(recording_id)
         if recording is None:
             raise HighlightError("Recording not found.", 404)
@@ -668,6 +671,8 @@ class Highlights:
     ) -> None:
         started = time.monotonic()
         try:
+            if blocked := processing_error(self.store, job.recording_id, ai=True):
+                raise HighlightError(blocked, 403)
             with self.lock:
                 self._check(float("inf"))
                 self.results.update(job.id, status="analysing")

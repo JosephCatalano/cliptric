@@ -18,6 +18,7 @@ from .editing import FramingPoint, QualityOptions, Removal, SmartFraming, retain
 from .framing import SourceRegion
 from .media import MediaError, RenderCancelled
 from .transcription_models import TranscriptionError
+from .twitch_rights import processing_error
 
 
 class QualityAnalysisRequest(BaseModel):
@@ -273,6 +274,8 @@ class QualityAnalysis:
                 process.wait()
 
     def analyze(self, identifier, request):
+        if blocked := processing_error(self.store, identifier):
+            raise HTTPException(403, blocked)
         if self.stop.is_set() or not self.slot.acquire(blocking=False):
             raise HTTPException(409, "Quality analysis is busy. Wait before trying another clip.")
         try:
