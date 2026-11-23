@@ -184,6 +184,7 @@ def ground_candidates(
     job_id: str,
     *,
     rejection_reasons: Counter[str] | None = None,
+    derive_boundary_evidence: bool = False,
 ) -> tuple[list[Candidate], int]:
     if any(
         not (0 <= s.start < s.end <= duration + 0.05)
@@ -202,8 +203,16 @@ def ground_candidates(
         selected = window[first : last + 1]
         start, end = selected[0].start, max(s.end for s in selected)
         text = " ".join(s.text for s in selected)
+        quality = proposal.quality
         if request.quality_mode:
-            if reason := _quality_rejection(proposal.quality, selected[0], selected[-1]):
+            if derive_boundary_evidence and quality is not None:
+                quality = quality.model_copy(
+                    update={
+                        "opening_evidence": selected[0].text[:120].strip(),
+                        "ending_evidence": selected[-1].text[-120:].strip(),
+                    }
+                )
+            if reason := _quality_rejection(quality, selected[0], selected[-1]):
                 rejected[reason] += 1
                 continue
             # Bounded room around whole source segments, without adding adjacent speech.
@@ -245,10 +254,8 @@ def ground_candidates(
                 job_id=job_id,
                 start=start,
                 end=end,
-                score=proposal.quality.score
-                if request.quality_mode and proposal.quality
-                else proposal.score,
-                quality=proposal.quality,
+                score=quality.score if request.quality_mode and quality else proposal.score,
+                quality=quality,
                 title=proposal.title,
                 reason=proposal.reason,
                 evidence=proposal.evidence,

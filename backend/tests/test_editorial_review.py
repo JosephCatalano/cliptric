@@ -53,8 +53,8 @@ def test_review_meters_one_request_and_never_publishes_raw_leads(service, outcom
                 "context": 4,
                 "payoff": 5,
                 "standalone": 4,
-                "opening_evidence": "Evidence 0.",
-                "ending_evidence": "Evidence 6.",
+                "opening_evidence": "Evidence zero.",
+                "ending_evidence": "Evidence six.",
             },
         )
         return httpx2.Response(
@@ -102,6 +102,8 @@ def test_review_meters_one_request_and_never_publishes_raw_leads(service, outcom
         assert len(result.candidates) == 1
         assert result.candidates[0].end == pytest.approx(34.18)
         assert result.candidates[0].score == 85
+        assert result.candidates[0].quality.opening_evidence == "Evidence 0."
+        assert result.candidates[0].quality.ending_evidence == "Evidence 6."
         assert result.editorial_proposals == 1 and result.editorial_rejections == {}
         assert manager.submit(recording.id, payload).id == result.id
     else:

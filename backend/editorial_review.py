@@ -174,6 +174,7 @@ def ground_review(
             duration,
             job_id,
             rejection_reasons=rejected,
+            derive_boundary_evidence=True,
         )
         if invalid:
             continue
