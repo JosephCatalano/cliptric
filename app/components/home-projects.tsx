@@ -1,9 +1,8 @@
 "use client";
 
 import { useEffect, useState } from "react";
-import Image from "next/image";
 import Link from "next/link";
-import { ArrowUpRightIcon, FilmIcon, FolderOpenIcon } from "lucide-react";
+import { ArrowUpRightIcon, FolderOpenIcon } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import {
   Card,
@@ -12,9 +11,7 @@ import {
   CardDescription,
   CardContent,
 } from "@/components/ui/card";
-import { Badge } from "@/components/ui/badge";
 import { Alert, AlertDescription } from "@/components/ui/alert";
-import { Progress } from "@/components/ui/progress";
 import { Skeleton } from "@/components/ui/skeleton";
 import {
   Empty,
@@ -23,21 +20,11 @@ import {
   EmptyDescription,
   EmptyMedia,
 } from "@/components/ui/empty";
+import { cn } from "@/lib/utils";
 import { api, message } from "@/lib/client-api";
 import { active, type Project } from "@/lib/projects";
 
-const statusLabels: Record<string, string> = {
-  queued: "Queued",
-  downloading: "Downloading",
-  transcribing: "Transcribing",
-  analysing: "Finding moments",
-  rendering: "Rendering",
-  cancelling: "Stopping",
-  ready: "Ready",
-  partial: "Some clips need attention",
-  failed: "Needs attention",
-  cancelled: "Stopped",
-};
+import { ProjectMedia, ProjectStatus, projectDate } from "./project-media";
 
 export function HomeProjects({ disabled }: { disabled: boolean }) {
   const [projects, setProjects] = useState<Project[]>([]);
@@ -49,7 +36,7 @@ export function HomeProjects({ disabled }: { disabled: boolean }) {
     let timer: ReturnType<typeof setTimeout>;
     async function load() {
       try {
-        const values = await api<Project[]>("/api/projects?limit=3&offset=0", {
+        const values = await api<Project[]>("/api/projects?limit=4&offset=0", {
           signal: controller.signal,
         });
         if (controller.signal.aborted) return;
@@ -75,7 +62,7 @@ export function HomeProjects({ disabled }: { disabled: boolean }) {
       className="flex min-w-0 flex-col gap-5"
     >
       <div className="flex flex-wrap items-center justify-between gap-3">
-        <h2 id="recent-projects-title">Pick up where you left off</h2>
+        <h2 id="recent-projects-title">Recent projects</h2>
         <Button asChild variant="ghost" disabled={disabled}>
           <Link
             href="/projects"
@@ -126,7 +113,7 @@ export function HomeProjects({ disabled }: { disabled: boolean }) {
             <EmptyMedia variant="icon">
               <FolderOpenIcon />
             </EmptyMedia>
-            <EmptyTitle>Your next project belongs here</EmptyTitle>
+            <EmptyTitle>No projects yet</EmptyTitle>
             <EmptyDescription>
               Add a video above to create your first clips. Your saved projects
               will be ready to return to here.
@@ -136,7 +123,7 @@ export function HomeProjects({ disabled }: { disabled: boolean }) {
       ) : null}
       {projects.length ? (
         <div className="home-project-grid">
-          {projects.map((project) => (
+          {projects.map((project, index) => (
             <Link
               key={project.id}
               href={`/projects/${project.id}`}
@@ -146,72 +133,33 @@ export function HomeProjects({ disabled }: { disabled: boolean }) {
                 if (disabled) event.preventDefault();
               }}
             >
-              <Card className="home-project-card">
-                <div className="home-project-cover">
-                  {project.thumbnail || project.source_thumbnail_url ? (
-                    <Image
-                      unoptimized
-                      src={
-                        project.thumbnail
-                          ? `/api/projects/${project.id}/thumbnail`
-                          : project.source_thumbnail_url!
-                      }
-                      width={640}
-                      height={360}
-                      alt=""
-                      className="aspect-video w-full object-cover"
-                    />
-                  ) : (
-                    <div className="home-project-fallback">
-                      <FilmIcon aria-hidden="true" className="size-10" />
-                      <span>Source preview pending</span>
-                    </div>
-                  )}
-                  <div className="absolute bottom-3 left-3">
-                    <Badge
-                      variant={
-                        project.status === "partial"
-                          ? "warning"
-                          : project.error || project.status === "failed"
-                            ? "destructive"
-                            : project.status === "ready"
-                              ? "success"
-                              : "info"
-                      }
+              <Card
+                className={cn(
+                  "home-project-card gap-0 py-0",
+                  projects.length === 1 &&
+                    "sm:grid sm:grid-cols-[minmax(11rem,16rem)_minmax(0,1fr)]",
+                )}
+              >
+                <ProjectMedia project={project} eager={index === 0} />
+                <div className="flex min-w-0 flex-col justify-center gap-3 py-3">
+                  <CardHeader>
+                    <CardTitle
+                      role="heading"
+                      aria-level={3}
+                      className="home-project-title"
                     >
-                      {statusLabels[project.status] ??
-                        project.status.replaceAll("_", " ")}
-                    </Badge>
-                  </div>
-                </div>
-                <CardHeader>
-                  <CardTitle
-                    role="heading"
-                    aria-level={3}
-                    className="home-project-title"
-                  >
-                    {project.title}
-                  </CardTitle>
-                  <CardDescription>
-                    {new Date(project.created_at).toLocaleDateString(
-                      undefined,
-                      { month: "short", day: "numeric", year: "numeric" },
-                    )}{" "}
-                    · {project.items.length}{" "}
-                    {project.items.length === 1 ? "clip" : "clips"}
-                  </CardDescription>
-                </CardHeader>
-                {active(project.status) ? (
-                  <CardContent className="flex flex-col gap-2">
-                    <Progress
-                      value={project.progress * 100}
-                      aria-label={`Workflow progress for ${project.title}`}
-                    />
-                    <p className="text-xs">
-                      {project.stage} · {Math.round(project.progress * 100)}%
-                    </p>
+                      {project.title}
+                    </CardTitle>
+                    <CardDescription>
+                      {project.items.length}{" "}
+                      {project.items.length === 1 ? "clip" : "clips"} /{" "}
+                      {projectDate(project.created_at)}
+                    </CardDescription>
+                  </CardHeader>
+                  <CardContent>
+                    <ProjectStatus project={project} />
                   </CardContent>
-                ) : null}
+                </div>
               </Card>
             </Link>
           ))}

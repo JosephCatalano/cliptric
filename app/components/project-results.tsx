@@ -30,7 +30,8 @@ import { ClipReview } from "./clip-review";
 import { ClipVersions } from "./clip-versions";
 import { ClipBulkActions } from "./clip-bulk-actions";
 import { BatchPublish } from "./batch-publish";
-import { useUnsavedEdits } from "./use-unsaved-edits";
+import { confirmWorkspaceNavigation } from "./use-unsaved-edits";
+import dynamic from "next/dynamic";
 import { reviewNeeded } from "@/lib/project-edit";
 import { useRouter } from "next/navigation";
 import { DeleteAction } from "./delete-action";
@@ -58,54 +59,36 @@ import { Checkbox } from "@/components/ui/checkbox";
 import {
   FieldLabel,
   Field,
-  FieldSet,
   FieldGroup,
-  FieldLegend,
 } from "@/components/ui/field";
 import { Input } from "@/components/ui/input";
 import {
   NativeSelect,
   NativeSelectOption,
 } from "@/components/ui/native-select";
-import { PlayIcon } from "lucide-react";
+import { EllipsisIcon, PlayIcon } from "lucide-react";
 
-import { useCallback, useId, useRef, useEffect, useState, type FormEvent } from "react";
+import { useCallback, useId, useRef, useEffect, useState } from "react";
 import { flushSync } from "react-dom";
 import Image from "next/image";
 import Link from "next/link";
 import { api, ApiError, message } from "../../lib/client-api";
-import {
-  CaptionCustomizationFields,
-  captionCustomizationFromForm,
-} from "./caption-customization-fields";
 import {
   active,
   ready,
   deliverable,
   type Project,
   type ProjectItem,
-  type Preset,
 } from "../../lib/projects";
-import { CaptionStylePicker } from "./caption-style-picker";
-import { CaptionStyleLibrary } from "./caption-style-library";
 import { BatchCaptionStyle } from "./batch-caption-style";
-import { OutputQualityControls } from "./output-quality-controls";
-import { defaultQuality, type QualityOptions } from "../../lib/projects";
-import { type CaptionStyle } from "../../lib/projects";
-import { CaptionEmphasisField } from "./caption-emphasis-field";
-import { parseEmphasis } from "../../lib/projects";
 import { Progress } from "@/components/ui/progress";
-import { HookSuggestions } from "./hook-suggestions";
-import { FramingEditor } from "./framing-editor";
-import {
-  type FramingMode,
-  type SourceRegion,
-  type SplitLayout,
-} from "../../lib/projects";
-import { TextOverlayFields, readOverlays } from "./text-overlay-fields";
 import { WorkspaceLoading } from "./workspace-loading";
 
-export function ProjectResults({ id }: { id: string }) {
+const ProjectClipEditor = dynamic(() => import("./project-clip-editor"), {
+  loading: () => <WorkspaceLoading label="Loading clip editor…" />,
+});
+
+export function ProjectResults({ id, initialClip }: { id: string; initialClip?: string }) {
   const router = useRouter();
   const fieldId = useId();
   const [project, setProject] = useState<Project | null>(null);
@@ -121,6 +104,7 @@ export function ProjectResults({ id }: { id: string }) {
   const [clipSort, setClipSort] = useState("ai");
   const [reviewId, setReviewId] = useState<string | null>(null);
   const [reviewIds, setReviewIds] = useState<string[]>([]);
+  const [editingId, setEditingId] = useState(initialClip || "");
   const [previewId, setPreviewId] = useState<string | null>(null);
   useEffect(() => {
     const controller = new AbortController();
@@ -179,6 +163,55 @@ export function ProjectResults({ id }: { id: string }) {
       setBusy(false);
     }
   }
+  const allowEditorExit = useRef(false);
+  useEffect(() => {
+    const projectPath = `/projects/${id}`;
+    const editorUrl = new URL(location.href);
+    function handleBack(event: PopStateEvent) {
+      const current = new URL(location.href);
+      const next = current.pathname === projectPath ? current.searchParams.get("clip") ?? "" : "";
+      if (next === editingId) return;
+      const authorized = allowEditorExit.current;
+      allowEditorExit.current = false;
+      if (editingId && !authorized && !confirmWorkspaceNavigation()) {
+        event.stopImmediatePropagation();
+        window.history.pushState(
+          current.pathname === projectPath ? { cliptricEditorProject: id } : null,
+          "",
+          editorUrl,
+        );
+        return;
+      }
+      setEditingId(next);
+      if (editingId && !next && current.pathname === projectPath) {
+        requestAnimationFrame(() => document.getElementById(`clip-options-${editingId}`)?.focus({ preventScroll: true }));
+      }
+    }
+    window.addEventListener("popstate", handleBack, true);
+    return () => window.removeEventListener("popstate", handleBack, true);
+  }, [editingId, id]);
+
+  function changeEditor(clipId: string, check = true) {
+    if (check && !confirmWorkspaceNavigation()) return;
+    const url = new URL(location.href);
+    if (clipId) {
+      url.searchParams.set("clip", clipId);
+      window.history.pushState({ cliptricEditorProject: id }, "", url);
+      setPreviewId(null);
+      setReviewId(null);
+      window.scrollTo(0, 0);
+    } else if (window.history.state?.cliptricEditorProject === id) {
+      allowEditorExit.current = true;
+      window.history.back();
+      return;
+    } else {
+      url.searchParams.delete("clip");
+      window.history.replaceState(null, "", url);
+      requestAnimationFrame(() => document.getElementById(`clip-options-${editingId}`)?.focus({ preventScroll: true }));
+    }
+    setEditingId(clipId);
+  }
+
   const running = project ? active(project.status) : false;
   const readyItems = project?.items.filter(deliverable) ?? [];
   const selectedReady = readyItems.filter((i) => selected.has(i.id));
@@ -223,16 +256,13 @@ export function ProjectResults({ id }: { id: string }) {
         ?.scrollIntoView({ block: "start" }),
     );
   }
+  const editedClip = project?.items.find((item) => item.id === editingId);
   return (
-    <section className="project-workspace project-results-workspace">
-      <header className="project-heading">
-        <Button asChild variant="outline">
-          <Link href="/projects">All projects</Link>
-        </Button>
-        <Button asChild variant="outline">
-          <Link href="/studio">Clip editor</Link>
-        </Button>
-      </header>
+    <>
+    <section className="project-workspace project-results-workspace" hidden={Boolean(editingId && project)}>
+      <nav aria-label="Breadcrumb">
+        <Button asChild variant="ghost" size="sm"><Link href="/projects">← Projects</Link></Button>
+      </nav>
       {error ? (
         <Alert role="alert" variant="destructive">
           <AlertDescription>
@@ -263,7 +293,7 @@ export function ProjectResults({ id }: { id: string }) {
                         : "Cancelled"}
                 </Badge>
                 <span className="text-sm text-muted-foreground">
-                  {readyItems.length} of {project.items.length} clips ready
+                  {project.items.filter(ready).length} of {project.items.length} exports ready
                 </span>
                 {project.transcription_warning ? (
                   <Button variant="link" size="sm" onClick={showDetails}>
@@ -334,7 +364,7 @@ export function ProjectResults({ id }: { id: string }) {
               </AlertDescription>
             </Alert>
           ) : null}
-          <FieldGroup className="grid gap-4 sm:grid-cols-3">
+          <FieldGroup className="grid gap-3 rounded-xl border bg-card p-3 sm:grid-cols-3">
             <Field>
               <FieldLabel htmlFor={`${fieldId}-clip-search`}>
                 Search clips
@@ -400,7 +430,7 @@ export function ProjectResults({ id }: { id: string }) {
                 disabled={!visibleItems.length}
                 onClick={() => openReview(visibleItems[0].id)}
               >
-                Review clips
+                {visibleItems.length === project.items.length ? "Review all clips" : "Review shown clips"}
               </Button>
               {readyItems.length ? (
                 <Button asChild variant="outline">
@@ -548,6 +578,7 @@ export function ProjectResults({ id }: { id: string }) {
               currentId={reviewId}
               onCurrent={setReviewId}
               onClose={() => setReviewId(null)}
+              onEdit={(clipId) => changeEditor(clipId, false)}
               locked={running || busy}
               onSaved={(value) => {
                 setProject(value);
@@ -564,6 +595,7 @@ export function ProjectResults({ id }: { id: string }) {
                 previewOpen={previewId === item.id && visibleIds.has(item.id)}
                 onPreviewChange={(open) => setPreviewId(open ? item.id : null)}
                 onReview={() => openReview(item.id)}
+                onEdit={() => changeEditor(item.id)}
                 project={project}
                 item={item}
                 locked={running || busy}
@@ -812,6 +844,22 @@ export function ProjectResults({ id }: { id: string }) {
         </>
       )}
     </section>
+    {editingId && project && (editedClip ? (
+      <ProjectClipEditor key={editedClip.id} project={project} item={editedClip} locked={running || busy}
+        onBack={() => changeEditor("")}
+        onSaved={(value) => {
+          setProject(value);
+          setRefresh((v) => v + 1);
+          changeEditor("", false);
+        }}
+      />
+    ) : (
+      <section className="project-workspace">
+        <Alert variant="destructive"><AlertDescription>That clip is unavailable in this project.</AlertDescription></Alert>
+        <Button className="self-start" variant="outline" onClick={() => changeEditor("")}>Back to project</Button>
+      </section>
+    ))}
+    </>
   );
 }
 
@@ -821,6 +869,7 @@ function ClipCard({
   previewOpen,
   onPreviewChange,
   onReview,
+  onEdit,
   item,
   locked,
   selected,
@@ -834,6 +883,7 @@ function ClipCard({
   previewOpen: boolean;
   onPreviewChange(open: boolean): void;
   onReview(): void;
+  onEdit(): void;
   item: ProjectItem;
   locked: boolean;
   selected: boolean;
@@ -856,42 +906,6 @@ function ClipCard({
       }
     : savedProject;
   const fieldId = useId();
-  const [editing, setEditing] = useState<ProjectItem | null>(null);
-  const [captionStyle, setCaptionStyle] = useState<CaptionStyle>({
-    preset: item.caption_preset,
-    position: item.caption_position,
-    customization: item.caption_customization,
-  });
-  const [draftStart, setDraftStart] = useState(String(item.start));
-  const [quality, setQuality] = useState<QualityOptions>(
-    item.quality ?? defaultQuality,
-  );
-  const [draftEnd, setDraftEnd] = useState(String(item.end));
-  const [previewSlot, setPreviewSlot] = useState<HTMLDivElement | null>(null);
-  const [draftTitle, setDraftTitle] = useState(item.title);
-  const [draftHeadline, setDraftHeadline] = useState(item.headline_enabled);
-  const [draftHeadlinePosition, setDraftHeadlinePosition] = useState(item.headline_position);
-  const [openingText, setOpeningText] = useState(item.opening_text ?? "");
-  const [draftOverlays, setDraftOverlays] = useState(item.overlays ?? []);
-  const [draftEmphasis, setDraftEmphasis] = useState((item.emphasis_words ?? []).join(", "));
-  const [reassess, setReassess] = useState(false);
-  const [framing, setFraming] = useState<FramingMode>(
-    item.framing ?? project.settings.framing,
-  );
-  const [splitLayout, setSplitLayout] = useState<SplitLayout | null>(
-    item.framing
-      ? (item.split_layout ?? null)
-      : (project.settings.split_layout ?? null),
-  );
-  const [cropRegion, setCropRegion] = useState<SourceRegion | null>(
-    item.framing
-      ? (item.crop_region ?? null)
-      : (project.settings.crop_region ?? null),
-  );
-  const [error, setError] = useState("");
-  const [saving, setSaving] = useState(false);
-  const [dirty, setDirty] = useState(false);
-  useUnsavedEdits(dirty);
   const [playbackError, setPlaybackError] = useState("");
   const clipPlayer = useRef<HTMLVideoElement>(null);
   const attachClipPlayer = useCallback((player: HTMLVideoElement | null) => {
@@ -917,91 +931,12 @@ function ClipCard({
       );
     });
   }
-  async function save(event: FormEvent<HTMLFormElement>) {
-    event.preventDefault();
-    setSaving(true);
-    setError("");
-    const form = new FormData(event.currentTarget);
-    try {
-      const value = await api<Project>(
-        `/api/projects/${project.id}/clips/${item.id}`,
-        {
-          method: "PATCH",
-          headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({
-            revision: editing!.revision,
-            review: form.get("review"),
-            title: form.get("title"),
-            headline_enabled: form.get("headline_enabled") === "on",
-            headline_position: form.get("headline_position"),
-            opening_text: String(form.get("opening_text") ?? "").trim() || null,
-            overlays: readOverlays(form),
-            framing,
-            split_layout: splitLayout,
-            crop_region: cropRegion,
-            quality:
-              form.get("auto_presentation") === "on"
-                ? { ...quality, smart_framing: null, cover_at: null }
-                : quality,
-            auto_presentation: form.get("auto_presentation") === "on",
-            start: Number(form.get("start")),
-            end: Number(form.get("end")),
-            caption_preset: form.get("preset") as Preset,
-            caption_customization: captionCustomizationFromForm(form),
-            caption_position: form.get("position"),
-            emphasis_words: parseEmphasis(
-              String(form.get("emphasis_words") ?? ""),
-            ),
-          }),
-        },
-      );
-      setEditing(null);
-      setDirty(false);
-      onSaved(value);
-    } catch (error) {
-      setError(message(error));
-    } finally {
-      setSaving(false);
-    }
-  }
   const [versionsOpen, setVersionsOpen] = useState(false);
   const [deleteOpen, setDeleteOpen] = useState(false);
   const [infoOpen, setInfoOpen] = useState(false);
+  const [publishOpen, setPublishOpen] = useState(false);
+  const [copyOpen, setCopyOpen] = useState(false);
   const moreTrigger = useRef<HTMLButtonElement>(null);
-  const toggleEditor = () => {
-    if (editing && dirty && !window.confirm("Discard unsaved clip edits?"))
-      return;
-    if (!editing) onPreviewChange(false);
-    setDirty(false);
-    setEditing((v) => (v ? null : item));
-    setQuality(item.quality ?? defaultQuality);
-    setCaptionStyle({
-      preset: item.caption_preset,
-      position: item.caption_position,
-      customization: item.caption_customization,
-    });
-    setDraftStart(String(item.start));
-    setDraftEnd(String(item.end));
-    setDraftTitle(item.title);
-    setDraftHeadline(item.headline_enabled);
-    setDraftHeadlinePosition(item.headline_position);
-    setOpeningText(item.opening_text ?? "");
-    setDraftOverlays(item.overlays ?? []);
-    setDraftEmphasis((item.emphasis_words ?? []).join(", "));
-    setReassess(false);
-    setFraming(item.framing ?? project.settings.framing);
-    setCropRegion(
-      item.framing
-        ? (item.crop_region ?? null)
-        : (project.settings.crop_region ?? null),
-    );
-    setSplitLayout(
-      item.framing
-        ? (item.split_layout ?? null)
-        : (project.settings.split_layout ?? null),
-    );
-    setError("");
-  };
   return (
     <Card
       className="project-card"
@@ -1094,12 +1029,6 @@ function ClipCard({
         </CardDescription>
       </CardHeader>
       <CardContent className="project-card-body">
-        <PostCopyEditor
-          projectId={project.id}
-          item={item}
-          disabled={locked || saving || dirty}
-          onSaved={onSaved}
-        />
         <div className="flex flex-wrap items-center gap-2">
           <Badge
             variant={
@@ -1118,7 +1047,7 @@ function ClipCard({
                     ? "Queued"
                     : "Waiting"}
           </Badge>
-          <Badge variant="outline">{item.review}</Badge>
+          <Badge variant={item.review === "accepted" ? "success" : "outline"}>{item.review === "accepted" ? "Approved" : item.review === "rejected" ? "Rejected" : "Needs review"}</Badge>
           {reviewNeeded(item) &&
           (item.transcription_warning ||
             item.title_error ||
@@ -1133,7 +1062,7 @@ function ClipCard({
             </Button>
           ) : null}
         </div>
-        <div className="flex flex-wrap items-start justify-between gap-3">
+        <div className="flex flex-wrap items-center justify-between gap-2">
           <Field className="project-check" orientation="horizontal">
             <Checkbox
               id={`${fieldId}-2`}
@@ -1145,7 +1074,7 @@ function ClipCard({
           <PostedCheckbox
             path={`/api/projects/${project.id}/clips/${item.id}/posted`}
             checked={item.posted}
-            disabled={locked || saving}
+            disabled={locked}
             title={item.title}
             onSaved={onPosted}
           />
@@ -1158,8 +1087,8 @@ function ClipCard({
           </Alert>
         ) : null}
         <div className="flex flex-wrap gap-2">
-          <Button type="button" disabled={dirty || saving} onClick={onReview}>
-            Review
+          <Button type="button" onClick={onReview}>
+            Review clip
           </Button>
           {available ? (
             <Button asChild variant="outline">
@@ -1167,26 +1096,18 @@ function ClipCard({
                 Download
               </a>
             </Button>
-          ) : (
-            <Button variant="outline" disabled>
-              Download
-            </Button>
-          )}
-          <PublishChooser
-            exportId={item.export?.id ?? ""}
-            title={item.title}
-            disabled={!available || dirty}
-          />
+          ) : null}
           <DropdownMenu>
             <DropdownMenuTrigger asChild>
               <Button
                 type="button"
                 ref={moreTrigger}
-                variant="outline"
-                disabled={saving}
+                id={`clip-options-${item.id}`}
+                variant="ghost"
+                size="icon"
                 aria-label={`More options for ${item.title}`}
               >
-                More
+                <EllipsisIcon />
               </Button>
             </DropdownMenuTrigger>
             <DropdownMenuContent align="end">
@@ -1195,13 +1116,17 @@ function ClipCard({
                   Clip details
                 </DropdownMenuItem>
                 <DropdownMenuItem
-                  disabled={locked || saving}
-                  onSelect={() => toggleEditor()}
+                  disabled={locked}
+                  onSelect={onEdit}
                 >
-                  Edit details
+                  Edit clip
                 </DropdownMenuItem>
+                <DropdownMenuItem disabled={!available} onSelect={() => setPublishOpen(true)}>
+                  Publish or schedule
+                </DropdownMenuItem>
+                <DropdownMenuItem onSelect={() => setCopyOpen(true)}>Caption &amp; hashtags</DropdownMenuItem>
                 <DropdownMenuItem
-                  disabled={locked || dirty}
+                  disabled={locked}
                   onSelect={() => setVersionsOpen(true)}
                 >
                   Versions / undo
@@ -1223,7 +1148,7 @@ function ClipCard({
               <DropdownMenuGroup>
                 <DropdownMenuItem
                   variant="destructive"
-                  disabled={locked || saving || dirty}
+                  disabled={locked}
                   onSelect={() => setDeleteOpen(true)}
                 >
                   Delete clip
@@ -1232,10 +1157,14 @@ function ClipCard({
             </DropdownMenuContent>
           </DropdownMenu>
         </div>
+        <PublishChooser exportId={item.export?.id ?? ""} title={item.title} disabled={!available}
+          open={publishOpen} onOpenChange={setPublishOpen} returnFocus={moreTrigger} />
+        <PostCopyEditor projectId={project.id} item={item} disabled={locked} onSaved={onSaved}
+          open={copyOpen} onOpenChange={setCopyOpen} returnFocus={moreTrigger} />
         <ClipVersions
           project={savedProject}
           item={item}
-          locked={locked || dirty}
+          locked={locked}
           onSaved={onSaved}
           hideTrigger
           open={versionsOpen}
@@ -1250,7 +1179,7 @@ function ClipCard({
           path={`/api/projects/${project.id}/clips/${item.id}?revision=${item.revision}`}
           label="Delete clip"
           name={item.title}
-          disabled={locked || saving}
+          disabled={locked}
           description="Removes this clip entry and its current local exported video. Source videos, transcripts, older export versions, downloaded copies and published posts remain."
           onDeleted={onDeleted}
         />
@@ -1355,388 +1284,6 @@ function ClipCard({
                 </Alert>
               ) : null}
             </div>
-          </DialogContent>
-        </Dialog>
-        <Dialog
-          open={Boolean(editing)}
-          onOpenChange={(value) => {
-            if (!value && !saving) toggleEditor();
-          }}
-        >
-          <DialogContent
-            className="max-h-[94dvh] overflow-y-auto sm:max-w-6xl"
-            onCloseAutoFocus={(event) => {
-              event.preventDefault();
-              moreTrigger.current?.focus();
-            }}
-          >
-            <DialogHeader>
-              <DialogTitle>Edit clip details</DialogTitle>
-              <DialogDescription>
-                {item.title}. Save to update this clip; earlier exports remain
-                available.
-              </DialogDescription>
-            </DialogHeader>
-            {editing ? (
-              <form
-                className="grid min-w-0 items-start gap-6 lg:grid-cols-[minmax(16rem,0.85fr)_minmax(0,1.15fr)]"
-                key={editing.revision}
-                onSubmit={save}
-                onChangeCapture={(event) => {
-                  if (!(event.target instanceof Element && event.target.closest(".live-clip-preview"))) setDirty(true);
-                }}
-              >
-                <div ref={setPreviewSlot} className="clip-preview-column" />
-                <div className="flex min-w-0 flex-col gap-3">
-                <p role="status" className="text-sm text-muted-foreground">
-                  {saving ? "Saving..." : dirty ? "Unsaved changes" : "Saved"}
-                </p>
-                <FieldSet disabled={locked || saving}>
-                  <Field orientation="horizontal">
-                    <Checkbox
-                      id={`${fieldId}-presentation`}
-                      name="auto_presentation"
-                      checked={reassess}
-                      onCheckedChange={(value) => {
-                        setReassess(value === true);
-                        setDirty(true);
-                      }}
-                    />
-                    <FieldLabel htmlFor={`${fieldId}-presentation`}>
-                      Re-analyze automatic presentation on save (local, no AI
-                      charge)
-                    </FieldLabel>
-                  </Field>
-                  <Field>
-                    <FieldLabel htmlFor={`${fieldId}-3-${editing.revision}`}>
-                      Clip title
-                    </FieldLabel>
-                    <Input
-                      id={`${fieldId}-3-${editing.revision}`}
-                      type="text"
-                      name="title"
-                      value={draftTitle}
-                      onChange={(event) => setDraftTitle(event.target.value)}
-                      required
-                      maxLength={120}
-                    />
-                  </Field>
-                  <Field>
-                    <FieldLabel htmlFor={`${fieldId}-4-${editing.revision}`}>
-                      Review
-                    </FieldLabel>
-                    <NativeSelect
-                      id={`${fieldId}-4-${editing.revision}`}
-                      name="review"
-                      defaultValue={editing.review}
-                      className="w-full"
-                    >
-                      <NativeSelectOption value="unreviewed">
-                        Unreviewed
-                      </NativeSelectOption>
-                      <NativeSelectOption value="accepted">
-                        Accepted
-                      </NativeSelectOption>
-                      <NativeSelectOption value="rejected">
-                        Rejected, exclude from batch
-                      </NativeSelectOption>
-                    </NativeSelect>
-                  </Field>
-                  <FieldGroup className="project-fields grid gap-4 sm:grid-cols-2">
-                    <Field>
-                      <FieldLabel htmlFor={`${fieldId}-5-${editing.revision}`}>
-                        Start (source seconds)
-                      </FieldLabel>
-                      <Input
-                        id={`${fieldId}-5-${editing.revision}`}
-                        name="start"
-                        type="number"
-                        min={project.settings.analysis_start}
-                        max={project.settings.analysis_end}
-                        step="any"
-                        required
-                        value={draftStart}
-                        onChange={(event) => setDraftStart(event.target.value)}
-                      />
-                    </Field>
-                    <Field>
-                      <FieldLabel htmlFor={`${fieldId}-6-${editing.revision}`}>
-                        End (source seconds)
-                      </FieldLabel>
-                      <Input
-                        id={`${fieldId}-6-${editing.revision}`}
-                        name="end"
-                        type="number"
-                        min={project.settings.analysis_start}
-                        max={project.settings.analysis_end}
-                        step="any"
-                        required
-                        value={draftEnd}
-                        onChange={(event) => setDraftEnd(event.target.value)}
-                      />
-                    </Field>
-                  </FieldGroup>
-                  <HookSuggestions
-                    key={item.id}
-                    projectId={project.id}
-                    itemId={item.id}
-                    recordingId={project.recording_id}
-                    onChoose={(hook) => {
-                      setDraftStart(String(hook.start));
-                      setOpeningText(hook.opening_text);
-                      setDirty(true);
-                    }}
-                  />
-                  <FramingEditor
-                    mode={framing}
-                    layout={splitLayout}
-                    cropRegion={cropRegion}
-                    followPlan={reassess ? null : item.export?.follow_plan}
-                    autoLayout={reassess ? null : item.export?.auto_layout}
-                    previewSlot={previewSlot}
-                    previewOptions={{
-                      savedExportId: item.export?.status === "succeeded" ? item.export.id : null,
-                      transcriptionId: project.transcription_id,
-                      transcriptRevision: project.transcript_revision,
-                      captions: captionStyle,
-                      headline: draftHeadline ? { text: openingText.trim() || draftTitle, position: draftHeadlinePosition, seconds: 8 } : null,
-                      emphasis: parseEmphasis(draftEmphasis),
-                      overlays: draftOverlays,
-                    }}
-                    quality={reassess ? { ...quality, smart_framing: null } : quality}
-                    end={draftStart.trim() && draftEnd.trim() ? Number(draftEnd) : undefined}
-                    sourceUrl={
-                      project.recording_id
-                        ? `/api/recordings/${project.recording_id}/media`
-                        : undefined
-                    }
-                    timestamp={Number(draftStart)}
-                    disabled={locked || saving}
-                    onChange={(mode, layout, crop) => {
-                      setDirty(true);
-                      setFraming(mode);
-                      setSplitLayout(layout);
-                      setCropRegion(crop);
-                      setQuality((value) => ({
-                        ...value,
-                        smart_framing: null,
-                      }));
-                    }}
-                  />
-                  <FieldSet>
-                    <FieldLegend>Opening headline</FieldLegend>
-                    <Field orientation="horizontal">
-                      <Checkbox
-                        id={fieldId + "-headline-enabled"}
-                        name="headline_enabled"
-                        checked={draftHeadline}
-                        onCheckedChange={(value) => {
-                          setDraftHeadline(value === true);
-                          setDirty(true);
-                        }}
-                      />
-                      <FieldLabel htmlFor={fieldId + "-headline-enabled"}>
-                        Show headline for the first eight seconds
-                      </FieldLabel>
-                    </Field>
-                    <Field>
-                      <FieldLabel htmlFor={fieldId + "-headline-position"}>
-                        Headline placement
-                      </FieldLabel>
-                      <NativeSelect
-                        id={fieldId + "-headline-position"}
-                        name="headline_position"
-                        value={draftHeadlinePosition}
-                        onChange={(event) => setDraftHeadlinePosition(event.target.value as typeof draftHeadlinePosition)}
-                        className="w-full"
-                      >
-                        <NativeSelectOption value="auto">
-                          Auto: avoid the caption area
-                        </NativeSelectOption>
-                        <NativeSelectOption value="upper">
-                          Top
-                        </NativeSelectOption>
-                        <NativeSelectOption value="centre">
-                          Middle
-                        </NativeSelectOption>
-                      </NativeSelect>
-                    </Field>
-                    <Field>
-                      <FieldLabel htmlFor={fieldId + "-opening-text"}>
-                        Opening text (blank uses clip title)
-                      </FieldLabel>
-                      <Input
-                        id={fieldId + "-opening-text"}
-                        name="opening_text"
-                        maxLength={120}
-                        value={openingText}
-                        onChange={(event) => setOpeningText(event.target.value)}
-                      />
-                    </Field>
-                    <p>
-                      Bold black text on a white card. Saving changes creates a
-                      new export and preserves the previous video.
-                    </p>
-                  </FieldSet>
-                  <TextOverlayFields
-                    initial={editing.overlays ?? []}
-                    onChange={(overlays) => {
-                      setDraftOverlays(overlays);
-                      setDirty(true);
-                    }}
-                    duration={Math.max(
-                      0,
-                      Number(draftEnd) - Number(draftStart),
-                    )}
-                  />
-                  <OutputQualityControls
-                    value={quality}
-                    onChange={(value) => {
-                      setQuality(value);
-                      setDirty(true);
-                    }}
-                    recordingId={project.recording_id!}
-                    start={Number(draftStart)}
-                    end={Number(draftEnd)}
-                    disabled={locked || saving}
-                    allowSmart={
-                      (framing ?? project.settings.framing) !== "split" &&
-                      framing !== "follow" &&
-                      framing !== "auto" &&
-                      cropRegion === null
-                    }
-                    allowedStart={project.settings.analysis_start}
-                    allowedEnd={project.settings.analysis_end}
-                    onBounds={(start, end) => {
-                      setDraftStart(String(start));
-                      setDraftEnd(String(end));
-                      setDirty(true);
-                    }}
-                    source={
-                      project.transcription_id && project.transcript_revision
-                        ? {
-                            transcriptionId: project.transcription_id,
-                            revision: project.transcript_revision,
-                            start: Number(draftStart),
-                            end: Number(draftEnd),
-                          }
-                        : undefined
-                    }
-                  />
-                  {item.editorial_quality && (
-                    <p>
-                      AI editorial assessment (review required): hook{" "}
-                      {item.editorial_quality.hook}/5; context{" "}
-                      {item.editorial_quality.context}/5; payoff{" "}
-                      {item.editorial_quality.payoff}/5; standalone{" "}
-                      {item.editorial_quality.standalone}/5.
-                    </p>
-                  )}
-                  <CaptionStylePicker
-                    disabled={locked || saving}
-                    name="preset"
-                    value={captionStyle.preset}
-                    onChange={(preset) =>
-                      setCaptionStyle((current) => ({ ...current, preset }))
-                    }
-                  />
-                  <CaptionStyleLibrary
-                    value={captionStyle}
-                    onApply={(style) => {
-                      setCaptionStyle(style);
-                      setDirty(true);
-                    }}
-                    disabled={locked || saving}
-                  />
-                  <CaptionCustomizationFields
-                    preset={captionStyle.preset}
-                    value={captionStyle.customization}
-                    onChange={(customization) =>
-                      setCaptionStyle((current) => ({
-                        ...current,
-                        customization,
-                      }))
-                    }
-                    disabled={locked || saving}
-                    source={
-                      project.transcription_id && project.transcript_revision
-                        ? {
-                            transcriptionId: project.transcription_id,
-                            revision: project.transcript_revision,
-                            start: Number(draftStart),
-                            end: Number(draftEnd),
-                          }
-                        : undefined
-                    }
-                  />
-                  <CaptionEmphasisField
-                    name="emphasis_words"
-                    value={draftEmphasis}
-                    onChange={(value) => {
-                      setDraftEmphasis(value);
-                      setDirty(true);
-                    }}
-                    disabled={locked || saving}
-                    source={
-                      project.transcription_id && project.transcript_revision
-                        ? {
-                            transcriptionId: project.transcription_id,
-                            revision: project.transcript_revision,
-                            start: Number(draftStart),
-                            end: Number(draftEnd),
-                          }
-                        : undefined
-                    }
-                  />
-                  <Field>
-                    <FieldLabel htmlFor={`${fieldId}-7-${editing.revision}`}>
-                      Position
-                    </FieldLabel>
-                    <NativeSelect
-                      id={`${fieldId}-7-${editing.revision}`}
-                      name="position"
-                      value={captionStyle.position}
-                      onChange={(event) =>
-                        setCaptionStyle((current) => ({
-                          ...current,
-                          position: event.target
-                            .value as CaptionStyle["position"],
-                        }))
-                      }
-                      className="w-full"
-                    >
-                      <NativeSelectOption value="auto">
-                        Auto · avoid text and webcam
-                      </NativeSelectOption>
-                      <NativeSelectOption value="lower">
-                        Lower
-                      </NativeSelectOption>
-                      <NativeSelectOption value="centre">
-                        Centre
-                      </NativeSelectOption>
-                      <NativeSelectOption value="upper">
-                        Upper
-                      </NativeSelectOption>
-                    </NativeSelect>
-                  </Field>
-                  <p>
-                    Timing, caption, and headline changes rerender this clip and
-                    preserve other outputs. Changing the title also rerenders
-                    when the headline is enabled. Trim stays within this source,
-                    up to six hours.
-                  </p>
-                  <Button type="submit" variant="default">
-                    {saving ? "Saving…" : "Save changes"}
-                  </Button>
-                </FieldSet>
-                {error ? (
-                  <Alert role="alert" variant="destructive">
-                    <AlertDescription>{error}</AlertDescription>
-                  </Alert>
-                ) : null}
-                </div>
-              </form>
-            ) : null}
           </DialogContent>
         </Dialog>
       </CardContent>

@@ -25,7 +25,6 @@ import {
   SidebarFooter,
   SidebarGroup,
   SidebarGroupContent,
-  SidebarGroupLabel,
   SidebarHeader,
   SidebarMenu,
   SidebarMenuButton,
@@ -42,8 +41,8 @@ import { toggleTheme } from "../lib/theme";
 const destinations = [
   { href: "/workspace", label: "Home", icon: HouseIcon },
   { href: "/projects", label: "Projects", icon: FolderOpenIcon },
-  { href: "/studio", label: "Clip editor", icon: ScissorsIcon },
-  { href: "/calendar", label: "Schedule", icon: CalendarDaysIcon },
+  { href: "/studio", label: "Editor", icon: ScissorsIcon },
+  { href: "/calendar", label: "Publishing", icon: CalendarDaysIcon },
   { href: "/connections", label: "Accounts", icon: LinkIcon },
   { href: "/settings", label: "Settings", icon: SettingsIcon },
 ];
@@ -51,7 +50,7 @@ const destinations = [
 function currentDestination(pathname: string) {
   if (pathname === "/" || pathname.startsWith("/projects/new/")) return "/workspace";
   if (pathname.startsWith("/projects/")) return "/projects";
-  if (pathname.startsWith("/publish/")) return "/connections";
+  if (pathname.startsWith("/publish/")) return "/calendar";
   return pathname;
 }
 
@@ -72,7 +71,7 @@ export function AppSidebar() {
       mobileBehaviour="rail"
       aria-label="Cliptric navigation"
     >
-      <SidebarHeader>
+      <SidebarHeader className="h-16 justify-center border-b border-sidebar-border px-3 max-md:px-1">
         <SidebarMenu>
           <SidebarMenuItem>
             <SidebarMenuButton asChild size="lg" tooltip="Cliptric">
@@ -88,19 +87,22 @@ export function AppSidebar() {
                   width={32}
                   height={32}
                   unoptimized
-                  className="hidden size-8 shrink-0 max-md:block group-data-[collapsible=icon]:block"
+                  loading="eager"
+                  className="hidden h-auto w-8 shrink-0 max-md:block group-data-[collapsible=icon]:block"
                 />
                 <span className="block w-40 max-w-full max-md:hidden group-data-[collapsible=icon]:hidden">
                   <Image
                     src={cliptricLogoLight}
                     alt=""
                     unoptimized
+                    loading="eager"
                     className="h-auto w-full dark:hidden"
                   />
                   <Image
                     src={cliptricLogoDark}
                     alt=""
                     unoptimized
+                    loading="eager"
                     className="hidden h-auto w-full dark:block"
                   />
                 </span>
@@ -111,7 +113,6 @@ export function AppSidebar() {
       </SidebarHeader>
       <SidebarContent>
         <SidebarGroup>
-          <SidebarGroupLabel>Workspace</SidebarGroupLabel>
           <SidebarGroupContent>
             <SidebarMenu>
               {destinations.map((destination) => {
@@ -119,6 +120,7 @@ export function AppSidebar() {
                 return (
                   <SidebarMenuItem key={destination.href}>
                     <SidebarMenuButton
+                      className="h-10 gap-3 text-sm"
                       asChild
                       isActive={current === destination.href}
                       tooltip={destination.label}
@@ -176,7 +178,7 @@ export function AppHeader() {
                   (destination) => destination.href === current,
                 )?.label ?? "Workspace");
   return (
-    <header className="flex h-14 shrink-0 items-center gap-3 border-b border-divider px-4 md:px-6">
+    <header className="flex min-h-16 shrink-0 items-center gap-3 border-b border-divider bg-sidebar px-3 sm:px-6">
       <SidebarTrigger className="hidden md:inline-flex" />
       <Separator orientation="vertical" className="hidden h-4 md:block" />
       <span className="min-w-0 flex-1 truncate text-sm font-medium">

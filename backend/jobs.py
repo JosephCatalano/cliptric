@@ -316,6 +316,8 @@ class Jobs:
                         "backend": info.render_backend,
                         "warning": info.render_warning,
                         "seconds": info.render_seconds,
+                        "split_cover": effective_mode == "split"
+                        and clip.quality.cover_at is not None,
                     }
                     if info.render_backend
                     else None,

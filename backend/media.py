@@ -20,6 +20,8 @@ from .follow_render import follow_commands, follow_position
 from .framing import SourceRegion, SplitLayout, split_filter, validate_framing
 from .layout_models import AutoLayoutPlan
 
+OPENING_COVER_SECONDS = 0.25
+
 
 class MediaError(Exception):
     pass
@@ -323,7 +325,11 @@ class Media:
         elif mode == "split":
             try:
                 framing = split_filter(
-                    original.video_index, original.width, original.height, split_layout
+                    f"[0:{original.video_index}]",
+                    original.width,
+                    original.height,
+                    split_layout,
+                    prefix="clip",
                 )
             except ValueError as exc:
                 raise MediaError(str(exc)) from exc
@@ -367,11 +373,28 @@ class Media:
                 cover_crop = f"crop=iw*{follow_plan.width:.8f}:ih*{follow_plan.height:.8f}:iw*{x:.8f}:ih*{y:.8f},"
             if crop_region is not None:
                 cover_crop = f"scale={original.width // 2 * 2}:{original.height // 2 * 2},setsar=1,crop={region},"
-            framing += f"[main_picture];[1:v]{cover_crop}scale=iw:ih:in_range=pc:out_range=tv,format=yuv420p,setparams=range=limited,split=2[cover_back][cover_front];"
-            framing += "[cover_back]scale=270:480:force_original_aspect_ratio=increase:force_divisible_by=2,crop=270:480,boxblur=12:2,scale=1080:1920[cover_blur];"
-            framing += "[cover_front]scale=1080:1920:force_original_aspect_ratio=decrease:force_divisible_by=2[cover_fit];"
-            framing += "[cover_blur][cover_fit]overlay=(W-w)/2:(H-h)/2[cover_picture];"
-            framing += "[main_picture][cover_picture]overlay=eof_action=repeat:enable='lt(t,0.25)'"
+            framing += f"[main_picture];[1:v]{cover_crop}scale=iw:ih:in_range=pc:out_range=tv,format=yuv420p,setparams=range=limited"
+            if mode == "split":
+                framing += (
+                    "[cover_source];"
+                    + split_filter(
+                        "[cover_source]",
+                        original.width,
+                        original.height,
+                        split_layout,
+                        prefix="cover",
+                    )
+                    + "[cover_picture];"
+                )
+            else:
+                framing += ",split=2[cover_back][cover_front];"
+                framing += "[cover_back]scale=270:480:force_original_aspect_ratio=increase:force_divisible_by=2,crop=270:480,boxblur=12:2,scale=1080:1920[cover_blur];"
+                framing += "[cover_front]scale=1080:1920:force_original_aspect_ratio=decrease:force_divisible_by=2[cover_fit];"
+                framing += "[cover_blur][cover_fit]overlay=(W-w)/2:(H-h)/2[cover_picture];"
+            framing += (
+                "[main_picture][cover_picture]"
+                f"overlay=eof_action=repeat:enable='lt(t,{OPENING_COVER_SECONDS})'"
+            )
         framing += (
             ",setsar=1"
             + (",ass=captions.ass" if caption_path is not None else "")

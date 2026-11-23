@@ -104,7 +104,7 @@ def integration(tmp_path):
         elif path == "/v2/post/publish/video/init/":
             data = {
                 "publish_id": "unit-publish",
-                "upload_url": "https://open-upload.tiktokapis.com/video/?upload_token=unit-signed",
+                "upload_url": "https://open-upload-sg.tiktokapis.com/video/?upload_token=unit-signed",
             }
         elif path == "/video/":
             state["uploads"].append((dict(request.headers), body))
@@ -123,8 +123,12 @@ def integration(tmp_path):
     )
     store = Store(tmp_path / "data")
     service = TikTok(
-        store, FixtureMedia(), settings, "http://127.0.0.1:3000",
-        public_origin="https://cliptric.com", api=api,
+        store,
+        FixtureMedia(),
+        settings,
+        "http://127.0.0.1:3000",
+        public_origin="https://cliptric.com",
+        api=api,
     )
     service.initialize()
     recording_id, export_id = str(uuid4()), str(uuid4())
@@ -150,7 +154,9 @@ def integration(tmp_path):
     app.add_middleware(
         RequestBoundary,
         settings=SimpleNamespace(
-            web_origin=service.web_origin, public_origin=service.public_origin, gateway_token="a" * 64
+            web_origin=service.web_origin,
+            public_origin=service.public_origin,
+            gateway_token="a" * 64,
         ),
     )
     app.include_router(create_tiktok_router(service))
@@ -230,12 +236,17 @@ def test_hosted_oauth_uses_web_redirect_and_binds_callback(integration):
     assert "code_challenge" not in query and "code_challenge_method" not in query
     nonce = query["state"][0]
     args = {"state": nonce, "code": "unit-code"}
-    assert client.get(
-        "/api/tiktok/callback", params=args, headers={"Cookie": f"tiktok_oauth_state={nonce}"}
-    ).status_code == 400
+    assert (
+        client.get(
+            "/api/tiktok/callback", params=args, headers={"Cookie": f"tiktok_oauth_state={nonce}"}
+        ).status_code
+        == 400
+    )
     assert not state["calls"]
     response = client.get(
-        callback, params=args, headers={**gateway, "Sec-Fetch-Site": "cross-site"},
+        callback,
+        params=args,
+        headers={**gateway, "Sec-Fetch-Site": "cross-site"},
         follow_redirects=False,
     )
     assert response.status_code == 303
@@ -387,11 +398,13 @@ def test_approval_disclosure_and_utf16_limits(integration, change):
         PostRequest.model_validate(payload)
 
 
-@pytest.mark.parametrize("size", [1, 4_194_304, 16_777_216, 50_000_123, 512 * 1024**2])
+@pytest.mark.parametrize("size", [1, 4_194_304, 16_777_216, 26_956_910, 50_000_123, 512 * 1024**2])
 def test_chunk_plan_accounts_for_every_byte_and_trailing_remainder(size):
     chunk, ranges = chunk_plan(size)
     assert ranges[0][0] == 0 and ranges[-1][1] == size
     assert len(ranges) == max(1, size // chunk)
+    if len(ranges) == 1:
+        assert chunk == size
     assert sum(end - start for start, end in ranges) == size
     assert all(left[1] == right[0] for left, right in zip(ranges, ranges[1:]))
     assert ranges[-1][1] - ranges[-1][0] <= 128 * 1024**2
@@ -402,6 +415,7 @@ def test_chunk_plan_accounts_for_every_byte_and_trailing_remainder(size):
     [
         "http://open-upload.tiktokapis.com/video/",
         "https://open-upload.tiktokapis.com.attacker.example/video/",
+        "https://open-upload-sg.tiktokapis.com.attacker.example/video/",
         "https://127.0.0.1/video/",
         "https://user:pass@open-upload.tiktokapis.com/video/",
         "https://open-upload.tiktokapis.com:444/video/",
@@ -411,6 +425,12 @@ def test_upload_destination_rejected_before_network(integration, url):
     service, _, _, _ = integration
     with pytest.raises(TikTokError, match="destination"):
         service.api.validate_upload_url(url)
+
+
+@pytest.mark.parametrize("path", ["/video/", "/upload/"])
+def test_documented_upload_destination_paths(integration, path):
+    service, _, _, _ = integration
+    service.api.validate_upload_url(f"https://open-upload.tiktokapis.com{path}?upload_token=fixture")
 
 
 def test_private_upload_dns_and_oversized_responses_fail_safely(integration):

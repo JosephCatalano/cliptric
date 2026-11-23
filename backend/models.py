@@ -83,6 +83,7 @@ class RenderPerformance(BaseModel):
     backend: Literal["cpu", "nvenc"]
     seconds: float = Field(ge=0)
     warning: str | None = Field(default=None, max_length=500)
+    split_cover: bool = False
 
 
 class Clip(BaseModel):

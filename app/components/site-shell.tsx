@@ -1,5 +1,6 @@
 "use client";
 
+import type { CSSProperties } from "react";
 import Link from "next/link";
 import { usePathname } from "next/navigation";
 import { SidebarInset, SidebarProvider } from "@/components/ui/sidebar";
@@ -26,7 +27,7 @@ export function SiteShell({ children }: { children: React.ReactNode }) {
   return (
     <TooltipProvider>
       <WorkspaceNavigationProvider>
-        <SidebarProvider>
+        <SidebarProvider style={{ "--sidebar-width": "14.5rem" } as CSSProperties}>
           {publicPages.has(pathname) ? (
             <div className="flex min-h-svh w-full flex-col">
               <main id="main-content" tabIndex={-1} className="flex-1">{children}</main>
@@ -38,7 +39,6 @@ export function SiteShell({ children }: { children: React.ReactNode }) {
               <SidebarInset id="main-content" tabIndex={-1} className="min-w-0">
                 <AppHeader />
                 {children}
-                {legalFooter}
               </SidebarInset>
             </>
           )}

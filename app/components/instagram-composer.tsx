@@ -1,6 +1,7 @@
 "use client";
 import { SavedPostCopy } from "./saved-post-copy";
 
+import type { ReactNode } from "react";
 import { useEffect, useRef, useState, type FormEvent } from "react";
 import Link from "next/link";
 import { Alert, AlertDescription } from "@/components/ui/alert";
@@ -16,6 +17,7 @@ import {
 } from "@/components/ui/field";
 import { Textarea } from "@/components/ui/textarea";
 import { Progress } from "@/components/ui/progress";
+import { PublishWorkspace } from "./publish-workspace";
 import { ScheduleFields } from "./schedule-fields";
 import { api, message } from "@/lib/client-api";
 import type {
@@ -31,10 +33,12 @@ const terminal = new Set(["published", "failed", "unknown"]);
 export function InstagramComposer({
   exportId,
   accountId,
+  destination,
   scheduledAt = "",
 }: {
   exportId: string;
   accountId: string;
+  destination: ReactNode;
   scheduledAt?: string;
 }) {
   const [scheduleTime, setScheduleTime] = useState(scheduledAt);
@@ -187,46 +191,44 @@ export function InstagramComposer({
       job.status !== "failed" &&
       (!creator || job.account_id === creator.account_id));
   return (
-    <section className="project-workspace tiktok-workspace">
-      <header className="project-heading">
-        <h1>Upload Instagram Reel</h1>
-        <div className="project-actions">
-          <Button asChild variant="outline">
-            <Link href="/projects">Your projects</Link>
-          </Button>
-          <Button asChild variant="outline">
-            <Link href="/connections">Connected accounts</Link>
-          </Button>
-        </div>
-      </header>
+    <PublishWorkspace
+      title="Upload Instagram Reel"
+      preview={
+        <>
+          {media ? (
+            <>
+              <video
+                className="tiktok-preview"
+                controls
+                playsInline
+                aria-label="Saved clip preview"
+                preload="metadata"
+                src={`/api/clips/${exportId}/media`}
+              />
+              <p>
+                {media.duration.toFixed(1)} seconds · {media.width} ×{" "}
+                {media.height} · {(media.size_bytes / 1_000_000).toFixed(1)} MB
+              </p>
+              {media.caption_warning ? (
+                <Alert>
+                  <AlertDescription>{media.caption_warning}</AlertDescription>
+                </Alert>
+              ) : null}
+            </>
+          ) : (
+            <p role="status">
+              {error ? "Export review is unavailable." : "Loading export..."}
+            </p>
+          )}
+        </>
+      }
+    >
+      {destination}
       {error ? (
         <Alert role="alert" variant="destructive">
           <AlertDescription>{error}</AlertDescription>
         </Alert>
       ) : null}
-      {media ? (
-        <>
-          <video
-            className="tiktok-preview"
-            controls
-            preload="metadata"
-            src={`/api/clips/${exportId}/media`}
-          />
-          <p>
-            {media.duration.toFixed(1)} seconds · {media.width} × {media.height}{" "}
-            · {(media.size_bytes / 1_000_000).toFixed(1)} MB
-          </p>
-          {media.caption_warning ? (
-            <Alert>
-              <AlertDescription>{media.caption_warning}</AlertDescription>
-            </Alert>
-          ) : null}
-        </>
-      ) : (
-        <p role="status">
-          {error ? "Export review is unavailable." : "Loading export..."}
-        </p>
-      )}
       {connection && !connection.connected ? (
         <p>
           <Link href="/connections">Connect Instagram</Link> before publishing.
@@ -355,6 +357,6 @@ export function InstagramComposer({
       <Button variant="outline" disabled={busy} onClick={() => void refresh()}>
         Refresh saved status
       </Button>
-    </section>
+    </PublishWorkspace>
   );
 }

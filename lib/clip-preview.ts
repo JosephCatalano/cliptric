@@ -1,5 +1,7 @@
 import type { CaptionStyle, Removal, TextOverlay } from "./projects";
 
+export const OPENING_HEADLINE_SECONDS = 4;
+
 export type PreviewHeadline = {
   text: string;
   position: "auto" | "upper" | "centre";

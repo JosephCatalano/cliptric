@@ -442,6 +442,14 @@ class Scheduler:
 def create_scheduling_router(service):
     router = APIRouter(prefix="/api/schedule")
 
+    @router.get("/health")
+    def health():
+        return {
+            "running": service.thread is not None
+            and service.thread.is_alive()
+            and not service.stop.is_set()
+        }
+
     @router.get("")
     def listing(start: AwareDatetime, end: AwareDatetime):
         return service.list(start, end)

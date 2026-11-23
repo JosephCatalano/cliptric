@@ -1,6 +1,7 @@
 "use client";
 import { SavedPostCopy } from "./saved-post-copy";
 
+import type { ReactNode } from "react";
 import { useEffect, useRef, useState, type FormEvent } from "react";
 import Link from "next/link";
 import { Alert, AlertDescription } from "@/components/ui/alert";
@@ -18,6 +19,7 @@ import { Textarea } from "@/components/ui/textarea";
 import { Progress } from "@/components/ui/progress";
 import { api, message } from "@/lib/client-api";
 import { platformNames, platformRoot, type SocialPost } from "@/lib/social";
+import { PublishWorkspace } from "./publish-workspace";
 import { ScheduleFields } from "./schedule-fields";
 
 type Creator = { account_id: string; label: string };
@@ -32,11 +34,13 @@ export function SocialComposer({
   platform,
   exportId,
   accountId,
+  destination,
   scheduledAt = "",
 }: {
   platform: "x" | "facebook";
   exportId: string;
   accountId: string;
+  destination: ReactNode;
   scheduledAt?: string;
 }) {
   const root = platformRoot(platform),
@@ -168,39 +172,44 @@ export function SocialComposer({
         : `https://www.facebook.com/reel/${job.post_id}`
       : null;
   return (
-    <section className="project-workspace tiktok-workspace">
-      <header className="project-heading">
-        <h1>Post to {name}</h1>
-        <Button asChild variant="outline">
-          <Link href="/projects">Your projects</Link>
-        </Button>
-      </header>
+    <PublishWorkspace
+      title={`Post to ${name}`}
+      preview={
+        <>
+          <video
+            className="tiktok-preview"
+            controls
+            playsInline
+            aria-label="Saved clip preview"
+            preload="metadata"
+            src={`/api/clips/${exportId}/media`}
+          />
+          <p>
+            {platform === "facebook"
+              ? "Facebook Page Reels are public. Supported exports: 3-90 seconds, portrait 9:16, at least 540x960, 24-60 fps, up to 1 GiB in Cliptric. Facebook sharing and remix settings apply."
+              : "X videos: up to 20 minutes and 8 GiB in Cliptric, subject to account access. X validates weighted text length, including URLs and emoji. Account visibility settings apply."}
+          </p>
+          {media ? (
+            <p>
+              {media.duration.toFixed(1)} seconds · {media.width} ×{" "}
+              {media.height} · {(media.size_bytes / 1_000_000).toFixed(1)} MB
+            </p>
+          ) : (
+            <p role="status">
+              {error
+                ? "Export review unavailable."
+                : "Loading export review..."}
+            </p>
+          )}
+        </>
+      }
+    >
+      {destination}
       {error ? (
         <Alert variant="destructive">
           <AlertDescription>{error}</AlertDescription>
         </Alert>
       ) : null}
-      <video
-        className="tiktok-preview"
-        controls
-        preload="metadata"
-        src={`/api/clips/${exportId}/media`}
-      />
-      <p>
-        {platform === "facebook"
-          ? "Facebook Page Reels are public. Supported exports: 3-90 seconds, portrait 9:16, at least 540x960, 24-60 fps, up to 1 GiB in Cliptric. Facebook sharing and remix settings apply."
-          : "X videos: up to 20 minutes and 8 GiB in Cliptric, subject to account access. X validates weighted text length, including URLs and emoji. Account visibility settings apply."}
-      </p>
-      {media ? (
-        <p>
-          {media.duration.toFixed(1)} seconds · {media.width} × {media.height} ·{" "}
-          {(media.size_bytes / 1_000_000).toFixed(1)} MB
-        </p>
-      ) : (
-        <p role="status">
-          {error ? "Export review unavailable." : "Loading export review..."}
-        </p>
-      )}
       {creator && media ? (
         <form onSubmit={publish}>
           <FieldSet disabled={busy || blocked}>
@@ -322,6 +331,6 @@ export function SocialComposer({
           </Button>
         </section>
       ) : null}
-    </section>
+    </PublishWorkspace>
   );
 }

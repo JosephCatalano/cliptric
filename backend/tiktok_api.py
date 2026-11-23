@@ -73,7 +73,9 @@ def protect_tokens(payload: bytes, *, decrypt: bool = False) -> bytes:
 def chunk_plan(size: int) -> tuple[int, list[tuple[int, int]]]:
     if not 0 < size <= 512 * 1024**2:
         raise TikTokError("Choose a ready export of at most 512 MiB.", 422)
-    chunk = min(size, 16 * 1024**2)
+    preferred = 16 * 1024**2
+    # A one-chunk upload declares the length of the whole file.
+    chunk = size if size < 2 * preferred else preferred
     count = max(1, size // chunk)
     return chunk, [(i * chunk, size if i == count - 1 else (i + 1) * chunk) for i in range(count)]
 
@@ -118,6 +120,7 @@ class TikTokAPI:
                 "rate_limit_exceeded": "TikTok's request limit was reached. Try again later.",
                 "spam_risk_too_many_posts": "TikTok's posting limit was reached. Try again later.",
                 "unaudited_client_can_only_post_to_private_accounts": "This test app requires a private TikTok account and Only me visibility.",
+                "privacy_level_option_mismatch": "TikTok no longer offers the selected visibility for this account. Refresh the account and choose an available option.",
             }
             if isinstance(code, str) and code in messages:
                 raise TikTokError(messages[code], 429 if status == 429 else 502)
@@ -159,27 +162,48 @@ class TikTokAPI:
     def validate_upload_url(self, url: str):
         try:
             parts = urlsplit(url)
-            valid = (
+            secure = (
                 parts.scheme == "https"
                 and not parts.username
                 and not parts.password
                 and parts.port in {None, 443}
                 and not parts.fragment
-                and re.fullmatch(
-                    r"(?:open-upload|upload\.[a-z0-9-]+)\.tiktokapis\.com", parts.hostname or ""
-                )
-                and parts.path == "/video/"
                 and len(url) <= 2048
             )
-            if not valid:
-                raise ValueError("Invalid destination")
+            if not secure:
+                raise TikTokError(
+                    "TikTok returned an unsupported upload destination (invalid HTTPS URL)."
+                )
+            host = parts.hostname or ""
+            if not re.fullmatch(
+                r"(?:open-upload(?:-sg)?|upload\.[a-z0-9-]+)\.tiktokapis\.com", host
+            ):
+                suffix = f" ({host})" if re.fullmatch(r"[a-z0-9.-]+\.tiktokapis\.com", host) else ""
+                raise TikTokError(
+                    f"TikTok returned an unsupported upload destination (unrecognized host){suffix}."
+                )
+            # TikTok documents /video/ as well as /upload/.
+            if parts.path not in {"/video/", "/upload/", "/video", "/upload"}:
+                raise TikTokError(
+                    "TikTok returned an unsupported upload destination (unrecognized upload path)."
+                )
             addresses = self.resolver(parts.hostname, 443, type=socket.SOCK_STREAM)
             if not addresses or any(
                 not ipaddress.ip_address(item[4][0]).is_global for item in addresses
             ):
-                raise ValueError("Non-public destination")
-        except (ValueError, OSError) as exc:
-            raise TikTokError("TikTok returned an unsupported upload destination.") from exc
+                raise TikTokError(
+                    "TikTok returned an unsupported upload destination (DNS did not return only public addresses)."
+                )
+        except TikTokError:
+            raise
+        except OSError as exc:
+            raise TikTokError(
+                "TikTok upload destination could not be resolved. Check DNS on the Cliptric host."
+            ) from exc
+        except ValueError as exc:
+            raise TikTokError(
+                "TikTok returned an unsupported upload destination (malformed URL or DNS response)."
+            ) from exc
 
     def upload_chunk(self, url, stream, start, end, total, *, final, stop):
         self.validate_upload_url(url)

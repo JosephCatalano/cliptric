@@ -8,6 +8,7 @@ import {
   CardDescription,
   CardContent,
 } from "@/components/ui/card";
+import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Alert, AlertDescription } from "@/components/ui/alert";
 import {
@@ -134,7 +135,12 @@ export function SocialConnection({ platform }: { platform: Platform }) {
   return (
     <Card>
       <CardHeader>
-        <CardTitle>{name}</CardTitle>
+        <div className="flex flex-wrap items-center justify-between gap-2">
+          <CardTitle>{name}</CardTitle>
+          {connection && <Badge variant={connection.accounts.length > 0 ? "success" : "secondary"}>
+            {connection.accounts.length ? `${connection.accounts.length} connected` : connection.configured ? "Available" : "Setup required"}
+          </Badge>}
+        </div>
         <CardDescription>
           {platform === "facebook"
             ? "Connect Facebook Pages you manage. Page Reels are public."
@@ -155,10 +161,10 @@ export function SocialConnection({ platform }: { platform: Platform }) {
         ) : (
           <>
             {!connection.configured ? (
-              <p>
-                Configure the {name} developer app using the README, then
-                restart the API.
-              </p>
+              <details className="rounded-lg border p-3 text-sm">
+                <summary className="cursor-pointer font-medium">Administrator setup</summary>
+                <p className="mt-2 text-muted-foreground">Set up the {name} integration using the Cliptric README, then restart the API.</p>
+              </details>
             ) : null}
             {platform === "tiktok" && !connection.audited ? (
               <p>
@@ -200,7 +206,7 @@ export function SocialConnection({ platform }: { platform: Platform }) {
               </ul>
             )}
             <FieldGroup>
-              {needsPage ? (
+              {needsPage && connection.configured ? (
                 <Field>
                   <FieldLabel htmlFor={`${platform}-page-id`}>
                     Facebook Page ID
@@ -238,7 +244,8 @@ export function SocialConnection({ platform }: { platform: Platform }) {
                     : `Connect ${name}`}
                 </Button>
                 <Button
-                  variant="outline"
+                  variant="ghost"
+                  size="sm"
                   disabled={busy}
                   onClick={() => setReload((value) => value + 1)}
                 >
@@ -246,11 +253,7 @@ export function SocialConnection({ platform }: { platform: Platform }) {
                 </Button>
               </div>
             </FieldGroup>
-            <p className="text-muted-foreground">
-              Review each clip and destination before posting or scheduling.
-              Disconnecting keeps previously published posts and saved
-              publishing history.
-            </p>
+
           </>
         )}
       </CardContent>

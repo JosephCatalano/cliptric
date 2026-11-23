@@ -2,11 +2,13 @@
 
 import { useId, type CSSProperties, type ReactNode } from "react";
 import {
+  Field,
   FieldDescription,
   FieldLabel,
   FieldLegend,
   FieldSet,
 } from "@/components/ui/field";
+import { NativeSelect, NativeSelectOption } from "@/components/ui/native-select";
 import { RadioGroup, RadioGroupItem } from "@/components/ui/radio-group";
 import { type CaptionCustomization, type Preset } from "@/lib/projects";
 
@@ -135,6 +137,7 @@ export function CaptionVisualChoices<T extends string>({
   onChange,
   disabled,
   description,
+  compact = false,
 }: {
   label: string;
   name?: string;
@@ -143,8 +146,26 @@ export function CaptionVisualChoices<T extends string>({
   onChange: (value: T) => void;
   disabled?: boolean;
   description?: string;
+  compact?: boolean;
 }) {
   const id = useId();
+  function select(next: string) {
+    const option = options.find((item) => item.value === next);
+    if (option) onChange(option.value);
+  }
+  if (compact) {
+    return (
+      <Field>
+        <FieldLabel htmlFor={id}>{label}</FieldLabel>
+        <NativeSelect id={id} name={name} value={value} disabled={disabled} className="w-full"
+          aria-describedby={description ? `${id}-help` : undefined}
+          onChange={(event) => select(event.target.value)}>
+          {options.map((option) => <NativeSelectOption key={option.value} value={option.value}>{option.label}</NativeSelectOption>)}
+        </NativeSelect>
+        {description && <FieldDescription id={`${id}-help`}>{description}</FieldDescription>}
+      </Field>
+    );
+  }
   return (
     <FieldSet disabled={disabled}>
       <FieldLegend id={`${id}-label`} variant="label">
@@ -157,10 +178,7 @@ export function CaptionVisualChoices<T extends string>({
         aria-labelledby={`${id}-label`}
         aria-describedby={description ? `${id}-help` : undefined}
         className="caption-visual-choices"
-        onValueChange={(next) => {
-          const option = options.find((item) => item.value === next);
-          if (option) onChange(option.value);
-        }}
+        onValueChange={select}
       >
         {options.map((option, index) => (
           <FieldLabel

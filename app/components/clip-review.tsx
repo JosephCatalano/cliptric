@@ -3,6 +3,7 @@ import { FramingEditor } from "./framing-editor";
 
 import { useCallback, useEffect, useRef, useState } from "react";
 import { api, message } from "@/lib/client-api";
+import { OPENING_HEADLINE_SECONDS } from "@/lib/clip-preview";
 import { itemEdit } from "@/lib/project-edit";
 import { useUnsavedEdits } from "./use-unsaved-edits";
 import type { Project, ProjectItem } from "@/lib/projects";
@@ -30,6 +31,7 @@ export function ClipReview({
   currentId,
   onCurrent,
   onClose,
+  onEdit,
   onSaved,
   locked,
 }: {
@@ -39,6 +41,7 @@ export function ClipReview({
   locked: boolean;
   onCurrent: (id: string) => void;
   onClose: () => void;
+  onEdit: (id: string) => void;
   onSaved: (value: Project) => void;
 }) {
   const index = Math.max(
@@ -110,6 +113,7 @@ export function ClipReview({
           >
             Previous
           </Button>
+          {item && <Button type="button" variant="outline" disabled={locked || busy} onClick={() => leave(() => onEdit(item.id))}>Open editor</Button>}
           <Button
             type="button"
             variant="outline"
@@ -286,7 +290,11 @@ function ReviewItem({
               customization: item.caption_customization,
             },
             headline: headline
-              ? { text: text.trim() || title, position, seconds: 8 }
+              ? {
+                  text: text.trim() || title,
+                  position,
+                  seconds: OPENING_HEADLINE_SECONDS,
+                }
               : null,
             emphasis: item.emphasis_words,
             overlays: item.overlays,

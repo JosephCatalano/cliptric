@@ -2,12 +2,7 @@
 
 import { useEffect, useState } from "react";
 import Link from "next/link";
-import {
-  CalendarDaysIcon,
-  ChevronLeftIcon,
-  ChevronRightIcon,
-  PlusIcon,
-} from "lucide-react";
+import { ChevronLeftIcon, ChevronRightIcon, PlusIcon } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Alert, AlertDescription } from "@/components/ui/alert";
 import { Badge } from "@/components/ui/badge";
@@ -70,6 +65,10 @@ export function PostCalendar() {
     const now = new Date();
     return new Date(now.getFullYear(), now.getMonth(), 1);
   });
+  const [view, setView] = useState("queue");
+  const [schedulerRunning, setSchedulerRunning] = useState<boolean | null>(
+    null,
+  );
   const [posts, setPosts] = useState<ScheduledPost[]>([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState("");
@@ -92,6 +91,7 @@ export function PostCalendar() {
     if (!month) return;
     const controller = new AbortController();
     let timer: ReturnType<typeof setTimeout>;
+    let healthTimer: ReturnType<typeof setTimeout>;
     const start = new Date(month.getFullYear(), month.getMonth(), 1);
     start.setDate(start.getDate() - start.getDay());
     const end = new Date(start);
@@ -115,10 +115,25 @@ export function PostCalendar() {
         }
       }
     }
+    async function checkScheduler() {
+      try {
+        const health = await api<{ running: boolean }>("/api/schedule/health", {
+          signal: controller.signal,
+        });
+        if (!controller.signal.aborted) setSchedulerRunning(health.running);
+      } catch {
+        if (!controller.signal.aborted) setSchedulerRunning(false);
+      } finally {
+        if (!controller.signal.aborted)
+          healthTimer = setTimeout(checkScheduler, 15000);
+      }
+    }
+    void checkScheduler();
     void load();
     return () => {
       controller.abort();
       clearTimeout(timer);
+      clearTimeout(healthTimer);
     };
   }, [month, reload]);
 
@@ -200,13 +215,24 @@ export function PostCalendar() {
     byDate.set(key, items);
   }
   const today = dateKey(new Date(clock));
-  const visiblePosts = posts;
+  const visiblePosts = posts
+    .filter((post) => {
+      if (view === "queue")
+        return ["scheduled", "dispatching"].includes(post.status);
+      if (view === "sent") return post.status === "submitted";
+      if (view === "attention")
+        return ["failed", "unknown", "missed", "cancelled"].includes(
+          post.status,
+        );
+      return true;
+    })
+    .sort((a, b) => Date.parse(a.scheduled_at) - Date.parse(b.scheduled_at));
 
   return (
-    <section className="flex min-w-0 flex-col gap-6 p-4 md:p-6">
-      <header className="flex flex-wrap items-center justify-between gap-4">
+    <section className="project-workspace">
+      <header className="workspace-heading">
         <div>
-          <h1 className="text-2xl font-semibold tracking-tight">Calendar</h1>
+          <h1>Publishing</h1>
           <p className="mt-1 text-sm text-muted-foreground">
             Plan and schedule posts for your connected accounts.
           </p>
@@ -216,14 +242,50 @@ export function PostCalendar() {
           Schedule post
         </Button>
       </header>
-      <Alert>
-        <CalendarDaysIcon />
-        <AlertDescription>
-          Keep your computer awake and the local API running for automatic
-          uploads. Times use your device’s time zone. Platform processing can
-          delay publication.
-        </AlertDescription>
-      </Alert>
+      <div className="flex flex-wrap items-center gap-x-4 gap-y-2 rounded-lg border bg-card px-4 py-3">
+        <Badge
+          variant={
+            schedulerRunning === null
+              ? "secondary"
+              : schedulerRunning
+                ? "success"
+                : "warning"
+          }
+        >
+          {schedulerRunning === null
+            ? "Checking scheduler"
+            : schedulerRunning
+              ? "Local scheduler connected"
+              : "Scheduler unavailable"}
+        </Badge>
+        <p className="text-sm text-muted-foreground">
+          Keep the local API running and your computer awake for automatic
+          uploads. Times use your device’s time zone.
+        </p>
+      </div>
+      <div
+        role="group"
+        aria-label="Publishing views"
+        className="flex w-fit flex-wrap gap-1 rounded-lg border bg-card p-1"
+      >
+        {[
+          ["queue", "Queue"],
+          ["calendar", "Calendar"],
+          ["sent", "Sent"],
+          ["attention", "History & issues"],
+        ].map(([value, label]) => (
+          <Button
+            key={value}
+            type="button"
+            size="sm"
+            variant={view === value ? "secondary" : "ghost"}
+            aria-pressed={view === value}
+            onClick={() => setView(value)}
+          >
+            {label}
+          </Button>
+        ))}
+      </div>
       {error ? (
         <Alert variant="destructive">
           <AlertDescription>
@@ -280,7 +342,7 @@ export function PostCalendar() {
       </div>
       {loading ? (
         <Skeleton className="h-96 w-full" />
-      ) : (
+      ) : view === "calendar" ? (
         <div
           className="overflow-x-auto rounded-lg border"
           tabIndex={0}
@@ -309,7 +371,7 @@ export function PostCalendar() {
                       <td
                         key={key}
                         className={cn(
-                          "h-28 border-b border-r p-2 align-top last:border-r-0",
+                          "h-14 border-b border-r p-2 align-top last:border-r-0",
                           day.getMonth() !== month?.getMonth() &&
                             "bg-muted/20 text-muted-foreground",
                         )}
@@ -347,18 +409,26 @@ export function PostCalendar() {
             </tbody>
           </table>
         </div>
-      )}
+      ) : null}
       {!loading && !error && visiblePosts.length === 0 ? (
         <Empty>
           <EmptyHeader>
-            <EmptyTitle>No posts scheduled this month</EmptyTitle>
+            <EmptyTitle>
+              {view === "sent"
+                ? "No uploads sent"
+                : view === "attention"
+                  ? "No posts in this view"
+                  : "Nothing scheduled"}
+            </EmptyTitle>
             <EmptyDescription>
-              Choose a day or use Schedule post to select a finished clip.
+              {view === "sent"
+                ? "Submitted uploads appear here for this date range."
+                : "Schedule a finished clip or change the visible month."}
             </EmptyDescription>
           </EmptyHeader>
         </Empty>
       ) : null}
-      <div className="flex flex-col gap-3" aria-label="Posts in calendar">
+      <div className="flex flex-col gap-3" aria-label="Posts in this view">
         {visiblePosts.map((post) => (
           <article
             id={`post-${post.id}`}
@@ -370,6 +440,7 @@ export function PostCalendar() {
               <p className="text-sm text-muted-foreground">
                 {platformNames[post.platform]} ·{" "}
                 {new Date(post.scheduled_at).toLocaleString()}
+                {" · "}Account {post.account_id.slice(0, 8)}
               </p>
               <Badge
                 variant={

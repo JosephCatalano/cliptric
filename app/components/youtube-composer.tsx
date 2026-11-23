@@ -1,6 +1,8 @@
 "use client";
+import type { ReactNode } from "react";
 import { useEffect, useRef, useState, type FormEvent } from "react";
 import Link from "next/link";
+import { PublishWorkspace } from "./publish-workspace";
 import { ScheduleFields } from "./schedule-fields";
 import { Alert, AlertDescription } from "@/components/ui/alert";
 import { Button } from "@/components/ui/button";
@@ -35,9 +37,11 @@ export function YouTubeComposer({
   exportId,
   scheduledAt = "",
   accountId,
+  destination,
 }: {
   exportId: string;
   accountId: string;
+  destination: ReactNode;
   scheduledAt?: string;
 }) {
   const [scheduleTime, setScheduleTime] = useState(scheduledAt);
@@ -223,18 +227,40 @@ export function YouTubeComposer({
     (!!job && job.status !== "failed" && (!creator || belongsToAccount));
   const descriptionBytes = new TextEncoder().encode(description).length;
   return (
-    <section className="project-workspace tiktok-workspace">
-      <header className="project-heading">
-        <h1>Upload YouTube Short</h1>
-        <div className="project-actions">
-          <Button asChild variant="outline">
-            <Link href="/projects">Your projects</Link>
-          </Button>
-          <Button asChild variant="outline">
-            <Link href="/connections">Connected accounts</Link>
-          </Button>
-        </div>
-      </header>
+    <PublishWorkspace
+      title="Upload YouTube Short"
+      preview={
+        <>
+          {media ? (
+            <>
+              <video
+                className="tiktok-preview"
+                controls
+                playsInline
+                aria-label="Saved clip preview"
+                preload="metadata"
+                src={`/api/clips/${exportId}/media`}
+              />
+              <p>
+                {media.duration.toFixed(1)} seconds · {media.width} ×{" "}
+                {media.height} · {(media.size_bytes / 1024 ** 2).toFixed(1)} MiB
+              </p>
+              {media.caption_warning ? (
+                <Alert>
+                  <AlertDescription>
+                    {media.caption_warning} Review the rendered captions before
+                    uploading.
+                  </AlertDescription>
+                </Alert>
+              ) : null}
+            </>
+          ) : (
+            <p role="status">Loading saved export...</p>
+          )}
+        </>
+      }
+    >
+      {destination}
       {error ? (
         <Alert variant="destructive">
           <AlertDescription>{error}</AlertDescription>
@@ -248,30 +274,6 @@ export function YouTubeComposer({
           </AlertDescription>
         </Alert>
       ) : null}
-      {media ? (
-        <>
-          <video
-            className="tiktok-preview"
-            controls
-            preload="metadata"
-            src={`/api/clips/${exportId}/media`}
-          />
-          <p>
-            {media.duration.toFixed(1)} seconds · {media.width} × {media.height}{" "}
-            · {(media.size_bytes / 1024 ** 2).toFixed(1)} MiB
-          </p>
-          {media.caption_warning ? (
-            <Alert>
-              <AlertDescription>
-                {media.caption_warning} Review the rendered captions before
-                uploading.
-              </AlertDescription>
-            </Alert>
-          ) : null}
-        </>
-      ) : (
-        <p role="status">Loading saved export...</p>
-      )}
       {job ? (
         <section
           aria-label="Saved YouTube upload"
@@ -367,111 +369,118 @@ export function YouTubeComposer({
                   {descriptionBytes}/5000 UTF-8 bytes
                 </FieldDescription>
               </Field>
-              <Field>
-                <FieldLabel htmlFor="short-category">Category</FieldLabel>
-                <NativeSelect
-                  id="short-category"
-                  required
-                  value={category}
-                  onChange={(event) => setCategory(event.target.value)}
-                >
-                  <NativeSelectOption value="" disabled>
-                    Choose category
-                  </NativeSelectOption>
-                  {creator.categories.map((item) => (
-                    <NativeSelectOption key={item.id} value={item.id}>
-                      {item.title}
-                    </NativeSelectOption>
-                  ))}
-                </NativeSelect>
-              </Field>
-              <Field>
-                <FieldLabel htmlFor="short-privacy">Visibility</FieldLabel>
-                <NativeSelect
-                  id="short-privacy"
-                  required
-                  value={privacy}
-                  onChange={(event) => setPrivacy(event.target.value)}
-                >
-                  <NativeSelectOption value="" disabled>
-                    Choose visibility
-                  </NativeSelectOption>
-                  <NativeSelectOption value="private">
-                    Private
-                  </NativeSelectOption>
-                  <NativeSelectOption value="unlisted">
-                    Unlisted
-                  </NativeSelectOption>
-                  <NativeSelectOption value="public">Public</NativeSelectOption>
-                </NativeSelect>
-              </Field>
-              <Field>
-                <FieldLabel htmlFor="short-kids">
-                  Is this video made for kids?
-                </FieldLabel>
-                <NativeSelect
-                  id="short-kids"
-                  required
-                  value={kids}
-                  onChange={(event) => setKids(event.target.value)}
-                >
-                  <NativeSelectOption value="" disabled>
-                    Choose audience
-                  </NativeSelectOption>
-                  <NativeSelectOption value="yes">
-                    Yes, made for kids
-                  </NativeSelectOption>
-                  <NativeSelectOption value="no">
-                    No, not made for kids
-                  </NativeSelectOption>
-                </NativeSelect>
-              </Field>
-              <Field>
-                <FieldLabel htmlFor="short-synthetic">
-                  Realistic altered or synthetic content?
-                </FieldLabel>
-                <NativeSelect
-                  id="short-synthetic"
-                  required
-                  value={synthetic}
-                  onChange={(event) => setSynthetic(event.target.value)}
-                >
-                  <NativeSelectOption value="" disabled>
-                    Choose disclosure
-                  </NativeSelectOption>
-                  <NativeSelectOption value="yes">Yes</NativeSelectOption>
-                  <NativeSelectOption value="no">No</NativeSelectOption>
-                </NativeSelect>
-                <FieldDescription>
-                  Disclose realistic altered/generated scenes or speech, and
-                  AI-generated music. Automatic captions alone do not require
-                  this label. See YouTube&apos;s{" "}
-                  <a
-                    href="https://support.google.com/youtube/answer/14328491"
-                    target="_blank"
-                    rel="noreferrer"
-                  >
-                    disclosure guidance
-                  </a>
-                  .
-                </FieldDescription>
-              </Field>
-              <Field orientation="horizontal">
-                <Checkbox
-                  id="short-notify"
-                  checked={notify}
-                  onCheckedChange={(value) => {
-                    setNotify(value === true);
-                    setConsent(false);
-                  }}
-                />
-                <FieldLabel htmlFor="short-notify">
-                  Notify channel subscribers
-                </FieldLabel>
-              </Field>
+              <FieldSet className="rounded-lg border p-3">
+                <FieldLegend>Platform settings</FieldLegend>
+                <FieldGroup className="grid items-start gap-4 sm:grid-cols-2">
+                  <Field>
+                    <FieldLabel htmlFor="short-category">Category</FieldLabel>
+                    <NativeSelect
+                      id="short-category"
+                      required
+                      value={category}
+                      onChange={(event) => setCategory(event.target.value)}
+                    >
+                      <NativeSelectOption value="" disabled>
+                        Choose category
+                      </NativeSelectOption>
+                      {creator.categories.map((item) => (
+                        <NativeSelectOption key={item.id} value={item.id}>
+                          {item.title}
+                        </NativeSelectOption>
+                      ))}
+                    </NativeSelect>
+                  </Field>
+                  <Field>
+                    <FieldLabel htmlFor="short-privacy">Visibility</FieldLabel>
+                    <NativeSelect
+                      id="short-privacy"
+                      required
+                      value={privacy}
+                      onChange={(event) => setPrivacy(event.target.value)}
+                    >
+                      <NativeSelectOption value="" disabled>
+                        Choose visibility
+                      </NativeSelectOption>
+                      <NativeSelectOption value="private">
+                        Private
+                      </NativeSelectOption>
+                      <NativeSelectOption value="unlisted">
+                        Unlisted
+                      </NativeSelectOption>
+                      <NativeSelectOption value="public">
+                        Public
+                      </NativeSelectOption>
+                    </NativeSelect>
+                  </Field>
+                  <Field>
+                    <FieldLabel htmlFor="short-kids">
+                      Is this video made for kids?
+                    </FieldLabel>
+                    <NativeSelect
+                      id="short-kids"
+                      required
+                      value={kids}
+                      onChange={(event) => setKids(event.target.value)}
+                    >
+                      <NativeSelectOption value="" disabled>
+                        Choose audience
+                      </NativeSelectOption>
+                      <NativeSelectOption value="yes">
+                        Yes, made for kids
+                      </NativeSelectOption>
+                      <NativeSelectOption value="no">
+                        No, not made for kids
+                      </NativeSelectOption>
+                    </NativeSelect>
+                  </Field>
+                  <Field>
+                    <FieldLabel htmlFor="short-synthetic">
+                      Realistic altered or synthetic content?
+                    </FieldLabel>
+                    <NativeSelect
+                      id="short-synthetic"
+                      required
+                      value={synthetic}
+                      onChange={(event) => setSynthetic(event.target.value)}
+                    >
+                      <NativeSelectOption value="" disabled>
+                        Choose disclosure
+                      </NativeSelectOption>
+                      <NativeSelectOption value="yes">Yes</NativeSelectOption>
+                      <NativeSelectOption value="no">No</NativeSelectOption>
+                    </NativeSelect>
+                    <FieldDescription>
+                      Disclose realistic altered/generated scenes or speech, and
+                      AI-generated music. Automatic captions alone do not
+                      require this label. See YouTube&apos;s{" "}
+                      <a
+                        href="https://support.google.com/youtube/answer/14328491"
+                        target="_blank"
+                        rel="noreferrer"
+                      >
+                        disclosure guidance
+                      </a>
+                      .
+                    </FieldDescription>
+                  </Field>
+                  <Field orientation="horizontal" className="sm:col-span-2">
+                    <Checkbox
+                      id="short-notify"
+                      checked={notify}
+                      onCheckedChange={(value) => {
+                        setNotify(value === true);
+                        setConsent(false);
+                      }}
+                    />
+                    <FieldLabel htmlFor="short-notify">
+                      Notify channel subscribers
+                    </FieldLabel>
+                  </Field>
+                </FieldGroup>
+              </FieldSet>
             </FieldGroup>
           </FieldSet>
-          <FieldSet disabled={busy}>
+          <FieldSet disabled={busy} className="mt-5 rounded-lg border p-4">
             <FieldLegend>Review and approve</FieldLegend>
             <ScheduleFields
               value={scheduleTime}
@@ -513,19 +522,21 @@ export function YouTubeComposer({
           </FieldSet>
         </form>
       ) : null}
-      <p>
+      <p className="text-sm text-muted-foreground">
         YouTube classifies square or vertical videos up to three minutes as
         Shorts. Upload completion does not guarantee public availability or
         Shorts classification. Processing can continue while the local API is
         running.
       </p>
       <Button
-        variant="outline"
+        variant="ghost"
+        size="sm"
+        className="self-start"
         disabled={busy}
         onClick={() => setReload((value) => value + 1)}
       >
         Refresh account and saved uploads
       </Button>
-    </section>
+    </PublishWorkspace>
   );
 }

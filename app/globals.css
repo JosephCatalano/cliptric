@@ -251,108 +251,101 @@
   .new-project-workspace form > [data-slot="field-set"] {
     @apply gap-7;
   }
+  .workspace-heading {
+    @apply flex flex-wrap items-end justify-between gap-4;
+  }
+  .workspace-heading h1 {
+    @apply text-3xl font-semibold tracking-tight text-balance;
+  }
+  .workspace-heading p {
+    @apply mt-1 text-sm text-muted-foreground;
+  }
   .home-workspace {
-    @apply max-w-[90rem] gap-10 py-8 md:gap-12 md:py-12;
-  }
-  .home-heading {
-    @apply flex max-w-4xl flex-col gap-4;
-  }
-  .home-heading h1 {
-    @apply text-4xl leading-[1.1] font-semibold tracking-tight text-balance sm:text-5xl;
-  }
-  .home-heading > p {
-    @apply text-base leading-relaxed md:text-lg;
+    @apply max-w-[88rem] gap-7 md:gap-8;
   }
   .home-start-grid {
-    @apply grid min-w-0 items-start gap-8 xl:grid-cols-[minmax(0,1.8fr)_minmax(0,1fr)] xl:gap-10;
+    @apply grid min-w-0 items-stretch gap-4 lg:grid-cols-[minmax(0,1.6fr)_minmax(0,1fr)];
   }
   .home-import {
     @apply min-w-0;
-    background-image: var(--ribbon-gradient);
-    background-size: 100% 2px;
-    background-repeat: no-repeat;
   }
   .home-import [data-slot="card-title"] {
-    @apply text-2xl tracking-tight;
-  }
-  .home-import [data-slot="card-header"],
-  .home-import [data-slot="card-content"] {
-    @apply px-5 md:px-7;
-  }
-  .home-import [data-slot="tabs-content"] {
-    @apply min-h-28;
-  }
-  .home-workflow {
-    @apply flex flex-col gap-6 xl:py-2;
-  }
-  .home-workflow h2 {
     @apply text-lg;
   }
-  .home-workflow ul {
-    @apply m-0 grid list-none gap-6 p-0 md:grid-cols-3 xl:grid-cols-1;
+  .home-sources {
+    @apply flex min-w-0 flex-col gap-3 rounded-xl border bg-card p-4 md:p-5;
   }
-  .home-workflow li {
-    @apply flex min-w-0 items-start gap-4;
+  .home-sources h2 {
+    @apply text-base;
   }
-  .home-workflow li > svg {
-    @apply mt-1 size-5;
-    color: var(--link);
+  .home-source-list {
+    @apply m-0 flex list-none flex-col p-0;
   }
-  .home-workflow h3 {
-    @apply mb-1 text-sm font-medium;
+  .home-source-list li {
+    @apply flex min-w-0 items-center gap-3 border-b border-divider py-2.5 text-sm last:border-0;
   }
-  .home-workflow p {
-    @apply text-sm leading-relaxed;
+  .home-source-list li > span:last-child {
+    @apply shrink-0 text-xs text-muted-foreground;
+  }
+  .source-dropzone {
+    @apply rounded-lg border border-dashed border-border-strong bg-background p-4;
+  }
+  .source-dropzone[data-dragging="true"] {
+    @apply border-ring bg-accent;
   }
   .home-project-grid {
-    @apply grid min-w-0 gap-5 md:grid-cols-2 xl:grid-cols-3;
+    @apply grid gap-4 sm:grid-cols-2 xl:grid-cols-3 2xl:grid-cols-4;
+  }
+  .home-project-grid:has(> :only-child) {
+    @apply sm:grid-cols-1;
   }
   .home-project-link {
-    @apply block min-w-0 rounded-xl text-foreground;
-    text-decoration: none;
+    @apply block min-w-0 rounded-xl focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-ring;
   }
-  .home-project-card {
-    @apply h-full pt-0 transition-shadow;
-  }
-  .home-project-link:hover .home-project-card {
-    @apply ring-1 ring-ring/50;
-  }
-  .home-project-cover {
-    @apply relative aspect-video overflow-hidden bg-muted;
-  }
-  .home-project-fallback {
-    @apply flex aspect-video flex-col items-center justify-center gap-3 text-xs text-muted-foreground;
+  .home-project-card, .project-library-card {
+    @apply overflow-hidden rounded-xl border bg-card text-card-foreground;
   }
   .home-project-title {
     @apply line-clamp-2 wrap-anywhere;
   }
-  .home-imported {
-    @apply flex min-w-0 flex-col gap-4;
+  .library-toolbar {
+    @apply flex flex-wrap items-center gap-2 rounded-xl border bg-card p-3;
   }
-  .home-imported h2 {
-    @apply text-base;
+  .clip-editor-workspace {
+    @apply max-w-[90rem] gap-4;
   }
-  .home-imported ul {
-    @apply m-0 grid list-none gap-x-8 p-0 md:grid-cols-2 xl:grid-cols-3;
+  .clip-editor-form, .publish-layout {
+    @apply grid min-w-0 items-start gap-4 lg:grid-cols-[minmax(0,1fr)_minmax(0,1.15fr)];
   }
-  .home-imported li {
-    @apply flex min-w-0 items-center justify-between gap-3 border-b py-3;
+  .clip-editor-preview, .publish-preview {
+    @apply min-w-0 rounded-xl border bg-editor-preview lg:sticky lg:top-4;
   }
-  .home-imported li > a,
-  .home-imported li > span:first-child {
-    @apply min-w-0 truncate text-sm;
+  .clip-editor-preview {
+    @apply flex min-h-64 flex-col gap-2 p-3;
   }
-  .home-imported li > span:last-child {
-    @apply shrink-0 text-xs text-muted-foreground;
+  .clip-editor-preview .live-clip-preview {
+    @apply max-w-none border-0 bg-transparent;
   }
-  .home-imported > a {
-    @apply self-start text-sm;
+  .clip-editor-preview .live-clip-frame {
+    max-width: min(100%, 27dvh);
   }
-  .home-shortcuts {
-    @apply flex flex-wrap items-center gap-3;
+  @media (width >= 64rem) {
+    .clip-editor-preview .live-clip-frame { max-width: min(100%, max(13rem, 27dvh)); }
   }
-  .home-shortcuts h2 {
-    @apply mr-auto text-base;
+  .clip-editor-inspector, .publish-details {
+    @apply flex min-w-0 flex-col gap-4 rounded-xl border bg-card p-4;
+  }
+  .clip-editor-footer {
+    @apply sticky bottom-0 z-10 flex flex-wrap items-center justify-between gap-3 border-t bg-background py-3 lg:col-span-2;
+  }
+  .publish-preview {
+    @apply flex flex-col items-center gap-4 bg-card p-4 text-sm text-muted-foreground;
+  }
+  .publish-review-workspace {
+    @apply max-w-[80rem];
+  }
+  .publish-details form {
+    @apply min-w-0;
   }
   .tiktok-workspace {
     @apply max-w-3xl;
@@ -414,13 +407,16 @@
     @apply aspect-video max-h-96 w-full rounded-lg bg-background object-contain;
   }
   .project-grid {
-    @apply grid gap-6 sm:grid-cols-2 xl:grid-cols-3;
+    @apply grid gap-4 sm:grid-cols-2 xl:grid-cols-3 2xl:grid-cols-4;
   }
   .project-results-workspace {
-    @apply max-w-none;
+    @apply max-w-[92rem];
   }
   .clip-gallery {
-    @apply grid items-start gap-4 sm:grid-cols-2 md:grid-cols-3 lg:grid-cols-5;
+    @apply mx-auto grid w-full max-w-[86rem] items-start gap-4 sm:grid-cols-2 lg:grid-cols-3 2xl:grid-cols-4;
+  }
+  .clip-gallery .project-card {
+    @apply max-w-[24rem] gap-3 pt-0;
   }
   .project-card {
     @apply min-w-0;
@@ -452,7 +448,7 @@
     @apply items-start;
   }
   .tiktok-preview {
-    @apply max-h-128 w-full max-w-xs rounded-lg bg-background;
+    @apply aspect-[9/16] max-h-[58dvh] w-full max-w-xs rounded-lg bg-editor-preview object-contain;
   }
   .tiktok-post-status {
     @apply flex flex-col gap-4;
@@ -800,7 +796,7 @@
   .workspace-shell > section {
     @apply flex min-w-0 flex-col gap-6 p-4 md:p-6;
   }
-  .workspace-heading {
+  .workspace-shell .workspace-heading {
     @apply flex flex-col justify-between gap-4 xl:flex-row xl:items-center;
   }
   .intro {
@@ -1100,9 +1096,6 @@
   }
   .invalid {
     @apply text-destructive;
-  }
-  .visually-hidden {
-    @apply sr-only;
   }
   .skip-link {
     @apply sr-only focus:not-sr-only focus:fixed focus:top-4 focus:left-4 focus:z-50 focus:rounded-md focus:bg-background focus:px-4 focus:py-2;

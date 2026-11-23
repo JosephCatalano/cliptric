@@ -296,7 +296,7 @@ def test_opening_headlines_default_and_disable_preserves_original(context):
     item, other = result["items"]
     original = manager.store.clip(item["export_id"])
     assert original.headline.text == item["title"]
-    assert original.headline.seconds == 8
+    assert original.headline.seconds == 4
     edit = {
         k: item[k]
         for k in ("title", "start", "end", "revision", "caption_preset", "caption_position")

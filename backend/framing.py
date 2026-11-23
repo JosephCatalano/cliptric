@@ -56,28 +56,34 @@ def validate_framing(
         raise ValueError("A manual crop region requires Fill frame layout.")
 
 
-def split_filter(video_index: int, width: int, height: int, options: SplitLayout) -> str:
+def split_filter(source: str, width: int, height: int, options: SplitLayout, *, prefix: str) -> str:
     # Coordinates refer to the full display-oriented picture, before border detection.
     width, height = width // 2 * 2, height // 2 * 2
     camera = options.webcam.pixels(width, height, (1080, 640))
     gameplay = options.gameplay.pixels(width, height)
     gameplay_cover = options.gameplay.pixels(width, height, (1080, 1280))
+
+    def label(name):
+        return f"[{prefix}_{name}]"
+
+    cam_source, game_source = label("cam_source"), label("game_source")
+    cam, game = label("cam"), label("game")
+    back_source, game_blur, game_fit = (label("back_source"), label("game_blur"), label("game_fit"))
     branches = (
-        "split=3[cam_source][game_source][back_source]"
+        f"split=3{cam_source}{game_source}{back_source}"
         if options.gameplay_fit == "fit"
-        else "split=2[cam_source][game_source]"
+        else f"split=2{cam_source}{game_source}"
     )
     graph = (
-        f"[0:{video_index}]scale={width}:{height},setsar=1,{branches};"
-        f"[cam_source]crop={camera},"
-        "scale=1080:640,setsar=1[cam];"
+        f"{source}scale={width}:{height},setsar=1,{branches};"
+        f"{cam_source}crop={camera},scale=1080:640,setsar=1{cam};"
     )
     if options.gameplay_fit == "fill":
-        graph += f"[game_source]crop={gameplay_cover},scale=1080:1280,setsar=1[game];"
+        graph += f"{game_source}crop={gameplay_cover},scale=1080:1280,setsar=1{game};"
     else:
         graph += (
-            f"[back_source]crop={gameplay_cover},scale=270:320,setsar=1,boxblur=12:2,scale=1080:1280[game_blur];"
-            f"[game_source]crop={gameplay},scale=1080:1280:force_original_aspect_ratio=decrease:force_divisible_by=2:reset_sar=1[game_fit];"
-            "[game_blur][game_fit]overlay=(W-w)/2:(H-h)/2:shortest=1[game];"
+            f"{back_source}crop={gameplay_cover},scale=270:320,setsar=1,boxblur=12:2,scale=1080:1280{game_blur};"
+            f"{game_source}crop={gameplay},scale=1080:1280:force_original_aspect_ratio=decrease:force_divisible_by=2:reset_sar=1{game_fit};"
+            f"{game_blur}{game_fit}overlay=(W-w)/2:(H-h)/2:shortest=1{game};"
         )
-    return graph + "[cam][game]vstack=inputs=2:shortest=1"
+    return graph + f"{cam}{game}vstack=inputs=2:shortest=1"

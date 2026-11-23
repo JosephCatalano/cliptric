@@ -1,5 +1,5 @@
 "use client";
-import { useEffect, useId, useState } from "react";
+import { useEffect, useId, useState, type RefObject } from "react";
 import Link from "next/link";
 import { api, message } from "@/lib/client-api";
 import {
@@ -37,13 +37,21 @@ export function PublishChooser({
   exportId,
   title,
   disabled = false,
+  open: controlledOpen,
+  onOpenChange,
+  returnFocus,
 }: {
   exportId: string;
   title: string;
   disabled?: boolean;
+  open?: boolean;
+  onOpenChange?(value: boolean): void;
+  returnFocus?: RefObject<HTMLButtonElement | null>;
 }) {
   const id = useId();
-  const [open, setOpen] = useState(false);
+  const [internalOpen, setInternalOpen] = useState(false);
+  const open = controlledOpen ?? internalOpen;
+  const setOpen = onOpenChange ?? setInternalOpen;
   const [platform, setPlatform] = useState<Platform>("youtube");
   const [connection, setConnection] = useState<SocialConnection | null>(null);
   const [account, setAccount] = useState("");
@@ -76,19 +84,24 @@ export function PublishChooser({
       open={open}
       onOpenChange={(value) => {
         setOpen(value);
-        if (value) {
+        if (!value) {
           setConnection(null);
           setAccount("");
           setError("");
         }
       }}
     >
-      <DialogTrigger asChild>
+      {controlledOpen === undefined && <DialogTrigger asChild>
         <Button type="button" variant="outline" disabled={disabled}>
           Publish
         </Button>
-      </DialogTrigger>
-      <DialogContent>
+      </DialogTrigger>}
+      <DialogContent onCloseAutoFocus={(event) => {
+        if (returnFocus?.current) {
+          event.preventDefault();
+          returnFocus.current.focus();
+        }
+      }}>
         <DialogHeader>
           <DialogTitle>Choose a destination</DialogTitle>
           <DialogDescription>

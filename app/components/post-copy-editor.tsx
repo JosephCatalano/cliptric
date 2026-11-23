@@ -1,5 +1,5 @@
 "use client";
-import { useRef, useState } from "react";
+import { useRef, useState, type RefObject } from "react";
 import { api, message } from "@/lib/client-api";
 import type { Project, ProjectItem } from "@/lib/projects";
 import { formatPostCopy, splitPostCopy } from "@/lib/post-copy";
@@ -31,13 +31,21 @@ export function PostCopyEditor({
   item,
   disabled,
   onSaved,
+  open: controlledOpen,
+  onOpenChange,
+  returnFocus,
 }: {
   projectId: string;
   item: ProjectItem;
   disabled: boolean;
   onSaved: (project: Project) => void;
+  open?: boolean;
+  onOpenChange?(value: boolean): void;
+  returnFocus?: RefObject<HTMLButtonElement | null>;
 }) {
-  const [open, setOpen] = useState(false);
+  const [internalOpen, setInternalOpen] = useState(false);
+  const open = controlledOpen ?? internalOpen;
+  const setOpen = onOpenChange ?? setInternalOpen;
   const [dirty, setDirty] = useState(false);
   return (
     <Dialog
@@ -49,16 +57,17 @@ export function PostCopyEditor({
         if (!next) setDirty(false);
       }}
     >
-      <DialogTrigger asChild>
+      {controlledOpen === undefined && <DialogTrigger asChild>
         <Button type="button" variant="outline" size="sm">
-          {item.post_copy_error || item.post_copy_stale
-            ? "Review post copy"
-            : item.post_copy || item.post_copy_selected
-              ? "Post copy"
-              : "Description & tags"}
+          {item.post_copy_error || item.post_copy_stale ? "Review caption & hashtags" : "Caption & hashtags"}
         </Button>
-      </DialogTrigger>
-      <DialogContent className="max-h-[90dvh] overflow-y-auto sm:max-w-xl">
+      </DialogTrigger>}
+      <DialogContent className="max-h-[90dvh] overflow-y-auto sm:max-w-xl" onCloseAutoFocus={(event) => {
+        if (returnFocus?.current) {
+          event.preventDefault();
+          returnFocus.current.focus();
+        }
+      }}>
         <DialogHeader>
           <DialogTitle>Description and hashtags</DialogTitle>
           <DialogDescription>

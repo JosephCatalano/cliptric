@@ -11,8 +11,10 @@ import {
 } from "@/components/ui/native-select";
 import { Checkbox } from "@/components/ui/checkbox";
 
+import type { ReactNode } from "react";
 import { useId, useEffect, useRef, useState, type FormEvent } from "react";
 import Link from "next/link";
+import { PublishWorkspace } from "./publish-workspace";
 import { ScheduleFields } from "./schedule-fields";
 import { api, message } from "../../lib/client-api";
 import {
@@ -26,9 +28,11 @@ export function TikTokComposer({
   exportId,
   scheduledAt = "",
   accountId,
+  destination,
 }: {
   exportId: string;
   accountId: string;
+  destination: ReactNode;
   scheduledAt?: string;
 }) {
   const [scheduleTime, setScheduleTime] = useState(scheduledAt);
@@ -210,39 +214,37 @@ export function TikTokComposer({
     !creator.audited &&
     creator.privacy_level_options.includes("PUBLIC_TO_EVERYONE");
   return (
-    <section className="project-workspace tiktok-workspace">
-      <header className="project-heading">
-        <h1>Post to TikTok</h1>
-        <div className="project-actions">
-          <Button asChild variant="outline">
-            <Link href="/projects">Your projects</Link>
-          </Button>
-          <Button asChild variant="outline">
-            <Link href="/connections">Connected accounts</Link>
-          </Button>
-        </div>
-      </header>
+    <PublishWorkspace
+      title="Post to TikTok"
+      preview={
+        <>
+          {media ? (
+            <>
+              <video
+                className="tiktok-preview"
+                controls
+                playsInline
+                aria-label="Saved clip preview"
+                preload="metadata"
+                src={`/api/clips/${exportId}/media`}
+              />
+              <p>
+                {media.duration.toFixed(1)} seconds ·{" "}
+                {(media.size_bytes / 1024 ** 2).toFixed(1)} MiB
+              </p>
+            </>
+          ) : (
+            <p role="status">Loading saved export…</p>
+          )}
+        </>
+      }
+    >
+      {destination}
       {error ? (
         <Alert role="alert" variant="destructive">
           <AlertDescription>{error}</AlertDescription>
         </Alert>
       ) : null}
-      {media ? (
-        <>
-          <video
-            className="tiktok-preview"
-            controls
-            preload="metadata"
-            src={`/api/clips/${exportId}/media`}
-          />
-          <p>
-            {media.duration.toFixed(1)} seconds ·{" "}
-            {(media.size_bytes / 1024 ** 2).toFixed(1)} MiB
-          </p>
-        </>
-      ) : (
-        <p role="status">Loading saved export…</p>
-      )}
       {job ? (
         <>
           {creator && job.account_id !== creator.account_id ? (
@@ -559,6 +561,6 @@ export function TikTokComposer({
       >
         Refresh account and saved status
       </Button>
-    </section>
+    </PublishWorkspace>
   );
 }

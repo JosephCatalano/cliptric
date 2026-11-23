@@ -19,7 +19,7 @@ class HeadlineOptions(BaseModel):
     text: str = Field(min_length=1, max_length=120, strict=True)
     position: Literal["auto", "upper", "centre"] = "auto"
     appearance: Literal["classic", "cover", "profile", "pop"] = "pop"
-    seconds: float = Field(default=8, ge=1, le=10, strict=True)
+    seconds: float = Field(default=4, ge=1, le=10, strict=True)
     fade_ms: int = Field(default=250, ge=0, le=1000, strict=True)
 
     @field_validator("text")

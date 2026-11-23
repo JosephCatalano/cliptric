@@ -2,6 +2,7 @@
 
 import io
 import json
+import subprocess
 import time
 import zipfile
 from dataclasses import replace
@@ -120,16 +121,82 @@ def test_actual_caption_presets_thumbnails_trim_zip_and_reopen(
             k: item[k]
             for k in ("title", "start", "end", "caption_preset", "caption_position", "revision")
         }
-        edit.update(start=1.0, end=7.0, caption_preset="boxed")
+        edit.update(
+            start=1.0,
+            end=7.0,
+            caption_preset="boxed",
+            framing="split",
+            split_layout={
+                "webcam": {"x": 0.75, "y": 0.0, "width": 0.25, "height": 0.25},
+                "gameplay": {"x": 0.0, "y": 0.0, "width": 1.0, "height": 1.0},
+            },
+            quality={"cover_at": 2.0},
+        )
         assert (
             client.patch(f"/api/projects/{project['id']}/clips/{item['id']}", json=edit).status_code
             == 202
         )
         changed = completed(client, project["id"])
-        clip = changed["items"][0]["export"]
+        changed_item = changed["items"][0]
+        clip = changed_item["export"]
         assert abs(clip["duration"] - 6) <= 0.1 and clip["captions"]["preset"] == "boxed"
-        assert clip["headline"]["seconds"] == 8
-        assert [preset for preset, _ in subtitles] == ["bold", "boxed"]
+        assert clip["headline"]["seconds"] == 4
+        assert changed_item["thumbnail_export_id"] == clip["id"] != original_id
+        assert clip["performance"]["split_cover"]
+        source = manager.store.export_path(clip["id"])
+        cover_thumbnail = tmp_path / "cover-thumbnail.jpg"
+        manager.media.thumbnail(source, cover_thumbnail, 0, manager.stop)
+        clip_thumbnail_url = f"/api/projects/{project['id']}/thumbnail?item_id={item['id']}"
+        thumbnail = client.get(clip_thumbnail_url)
+        assert thumbnail.status_code == 200
+        assert thumbnail.content == cover_thumbnail.read_bytes()
+        assert thumbnail.content != preview.content
+
+        def pixel(path, time_at, x, y):
+            return subprocess.run(
+                [
+                    settings.ffmpeg,
+                    "-v",
+                    "error",
+                    "-ss",
+                    str(time_at),
+                    "-i",
+                    str(path),
+                    "-vf",
+                    f"format=rgb24,crop=1:1:{x}:{y}",
+                    "-frames:v",
+                    "1",
+                    "-threads",
+                    "1",
+                    "-f",
+                    "rawvideo",
+                    "-",
+                ],
+                check=True,
+                capture_output=True,
+                timeout=10,
+            ).stdout
+
+        # The centre of the opening frame's top panel shows the saved webcam crop.
+        webcam = pixel(recordings[True], 2, 280, 22)
+        top_panel = pixel(source, 0, 540, 320)
+        assert len(webcam) == len(top_panel) == 3
+        assert sum(abs(a - b) for a, b in zip(webcam, top_panel, strict=True)) < 50
+
+        # An explicit update replaces a legacy split cover without modifying its MP4.
+        with manager.store.connection() as db:
+            db.execute(
+                "UPDATE clip_performance SET payload=json_remove(payload,'$.split_cover') WHERE clip_id=?",
+                (clip["id"],),
+            )
+        assert client.post(f"/api/projects/{project['id']}/resume", json={}).status_code == 202
+        refreshed = completed(client, project["id"])["items"][0]
+        assert refreshed["export_id"] != clip["id"]
+        assert source.is_file()
+        assert refreshed["thumbnail_export_id"] == refreshed["export_id"]
+        clip = refreshed["export"]
+        assert clip["performance"]["split_cover"]
+        assert [preset for preset, _ in subtitles] == ["bold", "boxed", "boxed"]
         assert "&H0000EFFF" in subtitles[0][1] and ",3,10,0," in subtitles[1][1]
         bundle = client.get(f"/api/projects/{project['id']}/bundle")
         with zipfile.ZipFile(io.BytesIO(bundle.content)) as archive:

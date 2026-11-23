@@ -75,6 +75,7 @@ export function CaptionCustomizationFields({
   disabled = false,
   source,
   preset = "classic",
+  compact = false,
 }: {
   value?: CaptionCustomization;
   defaultValue?: CaptionCustomization;
@@ -82,6 +83,7 @@ export function CaptionCustomizationFields({
   disabled?: boolean;
   source?: CaptionSource;
   preset?: Preset;
+  compact?: boolean;
 }) {
   const id = useId();
   const [local, setLocal] = useState(defaultValue);
@@ -115,6 +117,7 @@ export function CaptionCustomizationFields({
         </FieldDescription>
       </Field>
       <CaptionVisualChoices
+        compact={compact}
         label="Words per caption"
         name="caption_grouping"
         value={current.grouping}
@@ -136,6 +139,7 @@ export function CaptionCustomizationFields({
         description="Pauses, punctuation, and available space can shorten each group."
       />
       <CaptionVisualChoices
+        compact={compact}
         label="Capitalization"
         name="caption_capitalization"
         value={current.capitalization}
@@ -154,6 +158,7 @@ export function CaptionCustomizationFields({
         onChange={(capitalization) => change({ ...current, capitalization })}
       />
       <CaptionVisualChoices
+        compact={compact}
         label="Font family"
         name="caption_font_family"
         value={current.font_family ?? "Arial"}
@@ -168,6 +173,7 @@ export function CaptionCustomizationFields({
         onChange={(font_family) => change({ ...current, font_family })}
       />
       <CaptionVisualChoices
+        compact={compact}
         label="Font weight"
         name="caption_font_weight"
         value={current.font_weight ?? "preset"}
@@ -185,7 +191,9 @@ export function CaptionCustomizationFields({
         }))}
         onChange={(font_weight) => change({ ...current, font_weight })}
       />
+      {!compact && (
       <CaptionVisualChoices
+        compact={compact}
         label="Caption size"
         value={String(current.font_size)}
         disabled={disabled}
@@ -199,6 +207,7 @@ export function CaptionCustomizationFields({
         }
         description="Choose a size or enter an exact value below."
       />
+      )}
       <Field>
         <FieldLabel htmlFor={`${id}-size`}>Exact font size</FieldLabel>
         <Input
@@ -221,6 +230,7 @@ export function CaptionCustomizationFields({
         </FieldDescription>
       </Field>
       <CaptionVisualChoices
+        compact={compact}
         label="Animation"
         name="caption_animation"
         value={current.animation ?? "preset"}
@@ -238,9 +248,10 @@ export function CaptionCustomizationFields({
           sample: sample({ animation, grouping: "auto" }),
         }))}
         onChange={(animation) => change({ ...current, animation })}
-        description="Hover or focus to see motion. Pop and fade animate phrases; None disables preset timed word effects. Reduced-motion preferences are respected."
+        description={compact ? "Pop and fade animate each phrase." : "Hover or focus to see motion. Pop and fade animate phrases; None disables preset timed word effects. Reduced-motion preferences are respected."}
       />
       <CaptionVisualChoices
+        compact={compact}
         label="Caption background"
         name="caption_background"
         value={current.background ?? "preset"}

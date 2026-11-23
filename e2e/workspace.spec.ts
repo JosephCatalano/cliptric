@@ -43,7 +43,7 @@ test("import, preview, validate, export, download, and reopen", async ({
   await page.goto("/studio");
   await expect(page).toHaveTitle("Cliptric | Video workspace");
   await expect(
-    page.getByRole("heading", { name: "Clip studio", exact: true }),
+    page.getByRole("heading", { name: "Clip editor", exact: true }),
   ).toBeVisible();
   await expect(
     page.getByRole("button", { name: "Import recording", exact: true }),
@@ -115,11 +115,14 @@ test("import, preview, validate, export, download, and reopen", async ({
   await expect(
     page.getByRole("link", { name: "Download", exact: true }).first(),
   ).toBeVisible();
-  expect(
-    await page.evaluate(
-      () => document.documentElement.scrollWidth <= innerWidth,
-    ),
-  ).toBe(true);
+  const overflow = await page.evaluate(() => ({
+    width: document.documentElement.scrollWidth - innerWidth,
+    elements: [...document.querySelectorAll<HTMLElement>("body *")]
+      .filter((element) => element.getBoundingClientRect().right > innerWidth + 1)
+      .slice(0, 12)
+      .map((element) => ({ tag: element.tagName, class: element.getAttribute("class")?.slice(0, 100), right: Math.round(element.getBoundingClientRect().right) })),
+  }));
+  expect(overflow.width, JSON.stringify(overflow)).toBeLessThanOrEqual(0);
   expect(errors).toEqual([]);
 });
 

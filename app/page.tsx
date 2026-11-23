@@ -1,7 +1,6 @@
 "use client";
 
 import { Button } from "@/components/ui/button";
-import { Separator } from "@/components/ui/separator";
 import { Alert, AlertDescription } from "@/components/ui/alert";
 import { FieldLabel, Field } from "@/components/ui/field";
 import { Input } from "@/components/ui/input";
@@ -9,11 +8,9 @@ import { Progress } from "@/components/ui/progress";
 import { Skeleton } from "@/components/ui/skeleton";
 import {
   ArrowRightIcon,
-  CalendarDaysIcon,
-  CaptionsIcon,
   LoaderCircleIcon,
-  ScissorsIcon,
-  SparklesIcon,
+  ClapperboardIcon,
+  FilmIcon,
   UploadIcon,
   LinkIcon,
 } from "lucide-react";
@@ -122,21 +119,21 @@ export default function HomePage() {
       setLoadingDetails(false);
     }
   }
+  const [dragging, setDragging] = useState(false);
   const working = busy;
   return (
     <section className="project-workspace home-workspace">
-      <header className="home-heading">
-        <h1>Your next great clip starts here.</h1>
-        <p>Find moments in a long video or finish clips you already have.</p>
+      <header className="workspace-heading">
+        <div>
+          <h1>Create something worth sharing.</h1>
+          <p>Turn long videos into clips ready to edit, publish, and share.</p>
+        </div>
         <Button asChild variant="outline" disabled={working}>
-          <Link
-            href="/projects/batch"
-            aria-disabled={working}
-            onClick={(event) => {
-              if (working) event.preventDefault();
-            }}
-          >
-            Batch edit supplied clips
+          <Link href="/projects/batch" aria-disabled={working} onClick={(event) => {
+            if (working) event.preventDefault();
+          }}>
+            <ClapperboardIcon data-icon="inline-start" />
+            Batch editor
           </Link>
         </Button>
       </header>
@@ -144,11 +141,10 @@ export default function HomePage() {
         <Card className="home-import" aria-labelledby="source-title">
           <CardHeader>
             <CardTitle role="heading" aria-level={2} id="source-title">
-              Create clips
+              Start a new project
             </CardTitle>
             <CardDescription>
-              Add a YouTube or Twitch VOD link, or upload a video to get
-              started.
+              Paste a YouTube or Twitch link or choose a recording from your device.
             </CardDescription>
           </CardHeader>
           <CardContent className="flex flex-col gap-5">
@@ -221,16 +217,39 @@ export default function HomePage() {
                     </div>
                   </Field>
                   <p className="text-xs">
-                    Choose your moments, captions, and framing next.
+                    Public YouTube videos and completed Twitch VODs.
                   </p>
                 </form>
               </TabsContent>
               <TabsContent value="upload">
-                <div className="source-upload">
+                <div
+                  className="source-dropzone"
+                  data-dragging={dragging}
+                  onDragOver={(event) => {
+                    if (!event.dataTransfer.types.includes("Files")) return;
+                    event.preventDefault();
+                    if (!working && limits.maxBytes !== null) setDragging(true);
+                  }}
+                  onDragLeave={(event) => {
+                    if (!(event.relatedTarget instanceof Node) || !event.currentTarget.contains(event.relatedTarget))
+                      setDragging(false);
+                  }}
+                  onDrop={(event) => {
+                    if (!event.dataTransfer.types.includes("Files")) return;
+                    event.preventDefault();
+                    setDragging(false);
+                    if (working || limits.maxBytes === null) return;
+                    if (event.dataTransfer.files.length !== 1) {
+                      setError("Choose one video for this project.");
+                      return;
+                    }
+                    void importFile(event.dataTransfer.files[0]);
+                  }}
+                >
                   <Field>
                     <FieldLabel htmlFor="source-upload-file">
                       <UploadIcon data-icon="inline-start" />
-                      <span>Upload a video</span>
+                      <span>Drop a video here or browse files</span>
                     </FieldLabel>
                     <Input
                       id="source-upload-file"
@@ -247,7 +266,7 @@ export default function HomePage() {
                 </div>
                 <p className="mt-3 text-xs">
                   MP4, MOV, MKV or WebM, up to {limits.label} and six hours.
-                  Import videos you own or have permission to repurpose.
+
                 </p>
               </TabsContent>
             </Tabs>
@@ -293,34 +312,15 @@ export default function HomePage() {
             ) : null}
           </CardContent>
         </Card>
-        <aside className="home-workflow" aria-labelledby="workflow-title">
-          <h2 id="workflow-title">Made for your workflow</h2>
-          <ul>
-            <li>
-              <SparklesIcon aria-hidden="true" />
-              <div>
-                <h3>Find the moments</h3>
-                <p>AI suggestions grounded in your transcript.</p>
-              </div>
-            </li>
-            <li>
-              <CaptionsIcon aria-hidden="true" />
-              <div>
-                <h3>Make them yours</h3>
-                <p>Refine captions, titles, and vertical framing.</p>
-              </div>
-            </li>
-            <li>
-              <CalendarDaysIcon aria-hidden="true" />
-              <div>
-                <h3>Share with intention</h3>
-                <p>Review each clip before publishing.</p>
-              </div>
-            </li>
-          </ul>
-        </aside>
-      </div>
-      <HomeProjects disabled={working} />
+        <aside className="home-sources" aria-labelledby="imported-videos-title">
+          <div className="flex items-center justify-between gap-3">
+            <h2 id="imported-videos-title">Imported videos</h2>
+            {!working && recent.length > 0 && (
+              <Button asChild variant="ghost" size="sm">
+                <Link href="/studio">View library <ArrowRightIcon data-icon="inline-end" /></Link>
+              </Button>
+            )}
+          </div>
       {recentLoading ? (
         <div role="status" className="flex flex-col gap-3">
           <span className="sr-only">Loading imported videos…</span>
@@ -347,18 +347,14 @@ export default function HomePage() {
         </Alert>
       ) : null}
       {recent.length ? (
-        <section
-          className="home-imported"
-          aria-labelledby="imported-videos-title"
-        >
-          <h2 id="imported-videos-title">Or reuse an imported video</h2>
-          <ul>
+          <ul className="home-source-list">
             {recent.map((source) => (
               <li key={source.id}>
+                <FilmIcon aria-hidden="true" className="size-4 shrink-0 text-muted-foreground" />
                 {working ? (
-                  <span>{source.name}</span>
+                  <span className="min-w-0 flex-1 truncate">{source.name}</span>
                 ) : (
-                  <Link href={`/projects/new/${source.id}`}>{source.name}</Link>
+                  <Link className="min-w-0 flex-1 truncate font-medium" href={`/projects/new/${source.id}`}>{source.name}</Link>
                 )}
                 <span>
                   {source.duration < 60
@@ -368,37 +364,12 @@ export default function HomePage() {
               </li>
             ))}
           </ul>
-          {!working ? <Link href="/studio">Browse imported videos</Link> : null}
-        </section>
+      ) : !recentLoading && !recentError ? (
+        <p className="text-sm text-muted-foreground">Imported recordings will appear here for reuse.</p>
       ) : null}
-      <Separator />
-      <div className="home-shortcuts">
-        <h2>Looking for hands-on control?</h2>
-        <Button asChild variant="outline" disabled={working}>
-          <Link
-            href="/studio"
-            aria-disabled={working}
-            onClick={(event) => {
-              if (working) event.preventDefault();
-            }}
-          >
-            <ScissorsIcon data-icon="inline-start" />
-            Open clip editor
-          </Link>
-        </Button>
-        <Button asChild variant="ghost" disabled={working}>
-          <Link
-            href="/calendar"
-            aria-disabled={working}
-            onClick={(event) => {
-              if (working) event.preventDefault();
-            }}
-          >
-            Plan your posts
-            <ArrowRightIcon data-icon="inline-end" />
-          </Link>
-        </Button>
+        </aside>
       </div>
+      <HomeProjects disabled={working} />
     </section>
   );
 }

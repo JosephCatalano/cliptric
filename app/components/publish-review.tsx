@@ -2,6 +2,7 @@
 
 import { useEffect, useState } from "react";
 import Link from "next/link";
+import { RefreshCwIcon } from "lucide-react";
 import { Field, FieldDescription, FieldLabel } from "@/components/ui/field";
 import {
   NativeSelect,
@@ -59,65 +60,86 @@ export function PublishReview({
   )
     ? selected
     : "";
+  const destination = (
+    <section
+      className="flex min-w-0 flex-col gap-3 border-b pb-4"
+      aria-label="Destination"
+    >
+      {error ? (
+        <Alert variant="destructive">
+          <AlertDescription>{error}</AlertDescription>
+        </Alert>
+      ) : null}
+      {!connection ? (
+        <p role="status">
+          {error
+            ? "Account review unavailable."
+            : `Loading ${platformNames[platform]} accounts...`}
+        </p>
+      ) : (
+        <Field>
+          <FieldLabel htmlFor="publishing-account">
+            {platformNames[platform]} destination account
+          </FieldLabel>
+          <NativeSelect
+            id="publishing-account"
+            value={accountId}
+            onChange={(event) => setSelected(event.target.value)}
+          >
+            <NativeSelectOption value="">Choose an account</NativeSelectOption>
+            {connection.accounts.map((account) => (
+              <NativeSelectOption
+                key={account.account_id}
+                value={account.account_id}
+              >
+                {account.label || `Account ${account.account_id.slice(0, 10)}`}
+              </NativeSelectOption>
+            ))}
+          </NativeSelect>
+          <FieldDescription>
+            Changing accounts clears the previous review and approval.{" "}
+            <Link href="/connections">Manage connected accounts</Link>.
+          </FieldDescription>
+        </Field>
+      )}
+      <Button
+        variant="ghost"
+        size="sm"
+        className="self-start"
+        onClick={() => setReload((value) => value + 1)}
+      >
+        <RefreshCwIcon data-icon="inline-start" /> Refresh accounts
+      </Button>
+      {connection && selected && !accountId ? (
+        <p role="status">
+          The previous destination is disconnected. Reconnect it to check its
+          saved post, or choose another account for a new review.
+        </p>
+      ) : null}
+      {connection && !connection.accounts.length ? (
+        <p>Connect an account to review and publish this clip.</p>
+      ) : null}
+    </section>
+  );
   return (
     <>
-      <section className="project-workspace">
-        {error ? (
-          <Alert variant="destructive">
-            <AlertDescription>{error}</AlertDescription>
-          </Alert>
-        ) : null}
-        {!connection ? (
-          <p role="status">
-            {error
-              ? "Account review unavailable."
-              : `Loading ${platformNames[platform]} accounts...`}
-          </p>
-        ) : (
-          <Field>
-            <FieldLabel htmlFor="publishing-account">
-              {platformNames[platform]} destination account
-            </FieldLabel>
-            <NativeSelect
-              id="publishing-account"
-              value={accountId}
-              onChange={(event) => setSelected(event.target.value)}
-            >
-              <NativeSelectOption value="">
-                Choose an account
-              </NativeSelectOption>
-              {connection.accounts.map((account) => (
-                <NativeSelectOption
-                  key={account.account_id}
-                  value={account.account_id}
-                >
-                  {account.label ||
-                    `Account ${account.account_id.slice(0, 10)}`}
-                </NativeSelectOption>
-              ))}
-            </NativeSelect>
-            <FieldDescription>
-              Changing accounts clears the previous review and approval.{" "}
-              <Link href="/connections">Manage connected accounts</Link>.
-            </FieldDescription>
-          </Field>
-        )}
-        <Button
-          variant="outline"
-          onClick={() => setReload((value) => value + 1)}
-        >
-          Refresh accounts
-        </Button>
-        {connection && selected && !accountId ? (
-          <p role="status">
-            The previous destination is disconnected. Reconnect it to check its
-            saved post, or choose another account for a new review.
-          </p>
-        ) : null}
-        {connection && !connection.accounts.length ? (
-          <p>Connect an account to review and publish this clip.</p>
-        ) : null}
-      </section>
+      {!accountId && (
+        <section className="project-workspace publish-review-workspace">
+          <header className="workspace-heading">
+            <div>
+              <h1>Choose a destination</h1>
+              <p>
+                Connect or select a {platformNames[platform]} account to review
+                this export.
+              </p>
+            </div>
+          </header>
+          {destination}
+          <Button asChild variant="outline" className="self-start">
+            <Link href="/connections">Manage accounts</Link>
+          </Button>
+        </section>
+      )}
       {accountId ? (
         platform === "youtube" ? (
           <YouTubeComposer
@@ -125,6 +147,7 @@ export function PublishReview({
             exportId={exportId}
             scheduledAt={scheduledAt}
             accountId={accountId}
+            destination={destination}
           />
         ) : platform === "tiktok" ? (
           <TikTokComposer
@@ -132,6 +155,7 @@ export function PublishReview({
             exportId={exportId}
             scheduledAt={scheduledAt}
             accountId={accountId}
+            destination={destination}
           />
         ) : platform === "instagram" ? (
           <InstagramComposer
@@ -139,6 +163,7 @@ export function PublishReview({
             exportId={exportId}
             scheduledAt={scheduledAt}
             accountId={accountId}
+            destination={destination}
           />
         ) : (
           <SocialComposer
@@ -147,6 +172,7 @@ export function PublishReview({
             exportId={exportId}
             scheduledAt={scheduledAt}
             accountId={accountId}
+            destination={destination}
           />
         )
       ) : null}

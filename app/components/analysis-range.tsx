@@ -16,6 +16,9 @@ export function clock(value: number) {
 export function AnalysisRange({
   recordingId,
   duration,
+  minimumStart = 0,
+  maximumEnd = duration,
+  purpose = "analysis",
   start,
   end,
   disabled,
@@ -24,6 +27,9 @@ export function AnalysisRange({
 }: {
   recordingId?: string;
   duration: number;
+  minimumStart?: number;
+  maximumEnd?: number;
+  purpose?: "analysis" | "trim";
   start: number;
   end: number;
   disabled: boolean;
@@ -32,12 +38,12 @@ export function AnalysisRange({
 }) {
   const fieldId = useId();
   const track = useRef<HTMLDivElement>(null);
-  const minimum = Math.min(0.1, duration);
+  const minimum = Math.min(0.1, maximumEnd - minimumStart);
   function change(edge: "start" | "end", value: number) {
     const next =
       edge === "start"
-        ? Math.max(0, Math.min(value, end - minimum))
-        : Math.min(duration, Math.max(value, start + minimum));
+        ? Math.max(minimumStart, Math.min(value, end - minimum))
+        : Math.min(maximumEnd, Math.max(value, start + minimum));
     if (edge === "start") onChange(next, end);
     else onChange(start, next);
     return next;
@@ -67,15 +73,15 @@ export function AnalysisRange({
     if (["ArrowLeft", "ArrowDown"].includes(event.key)) value -= step;
     else if (["ArrowRight", "ArrowUp"].includes(event.key)) value += step;
     else if (event.key === "Home")
-      value = edge === "start" ? 0 : start + minimum;
+      value = edge === "start" ? minimumStart : start + minimum;
     else if (event.key === "End")
-      value = edge === "start" ? end - minimum : duration;
+      value = edge === "start" ? end - minimum : maximumEnd;
     else return;
     event.preventDefault();
     onPreview(change(edge, value));
   }
   return (
-    <section className="analysis-range" aria-label="Source analysis range">
+    <section className="analysis-range" aria-label={purpose === "trim" ? "Source trim timeline" : "Source analysis range"}>
       <div className="range-readout">
         <span>
           Start <strong>{clock(start)}</strong>
@@ -124,10 +130,10 @@ export function AnalysisRange({
             key={edge}
             type="button"
             role="slider"
-            aria-label={`Analysis ${edge}`}
+            aria-label={`${purpose === "trim" ? "Trim" : "Analysis"} ${edge}`}
             aria-orientation="horizontal"
-            aria-valuemin={edge === "start" ? 0 : start + minimum}
-            aria-valuemax={edge === "start" ? end - minimum : duration}
+            aria-valuemin={edge === "start" ? minimumStart : start + minimum}
+            aria-valuemax={edge === "start" ? end - minimum : maximumEnd}
             aria-valuenow={edge === "start" ? start : end}
             aria-valuetext={clock(edge === "start" ? start : end)}
             aria-describedby={`${fieldId}-help`}
@@ -154,16 +160,16 @@ export function AnalysisRange({
         ))}
       </div>
       <p id={`${fieldId}-help`}>
-        Drag either edge to choose where AI looks for clips. Arrow keys move one
-        second; hold Shift for ten seconds or Alt for finer control.
+        {purpose === "trim" ? "Drag the handles to trim this clip." : "Drag the handles to choose where AI looks for clips."}
+        {" "}Arrow keys move one second. Hold Shift for ten seconds or Alt for finer control.
       </p>
       <Button
         type="button"
         disabled={disabled}
-        onClick={() => onChange(0, duration)}
+        onClick={() => onChange(minimumStart, maximumEnd)}
         variant="outline"
       >
-        Use full video
+        {purpose === "trim" ? "Use allowed range" : "Use full video"}
       </Button>
     </section>
   );

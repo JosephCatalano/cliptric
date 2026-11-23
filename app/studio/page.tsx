@@ -74,6 +74,7 @@ import {
   type SourceRegion,
 } from "../../lib/projects";
 import { FramingEditor } from "../components/framing-editor";
+import { OPENING_HEADLINE_SECONDS } from "@/lib/clip-preview";
 import { EditorTools } from "../components/editor-tools";
 import { useWorkspaceNavigation } from "../components/workspace-navigation";
 
@@ -261,7 +262,13 @@ export default function Workspace() {
     })
       .then((result) => {
         if (controller.signal.aborted) return;
-        setSavedDraft({ recordingId: selectedId, value: result });
+        const savedHeadline = result.headline
+          ? { ...result.headline, seconds: OPENING_HEADLINE_SECONDS }
+          : null;
+        setSavedDraft({
+          recordingId: selectedId,
+          value: { ...result, headline: savedHeadline },
+        });
         setStart(String(result.start));
         setEnd(String(result.end));
         setMode(result.mode);
@@ -275,7 +282,7 @@ export default function Workspace() {
         setCaptionCustomization(
           result.caption_customization ?? defaultCaptionCustomization,
         );
-        setHeadline(result.headline ?? null);
+        setHeadline(savedHeadline);
         setDraftError("");
       })
       .catch((reason) => {
@@ -683,7 +690,7 @@ export default function Workspace() {
                 ref={fileInput}
                 type="file"
                 accept=".mp4,.m4v,.mov,.mkv,.webm"
-                className="visually-hidden"
+                hidden
                 aria-label="Choose recording"
                 disabled={limits.maxBytes === null || importing}
                 onChange={(event) => {
@@ -1065,14 +1072,14 @@ export default function Workspace() {
                                             .replace(/\.[^.]+$/, "")
                                             .slice(0, 120) || "Your moment",
                                         position: "auto",
-                                        seconds: 8,
+                                        seconds: OPENING_HEADLINE_SECONDS,
                                       }
                                     : null,
                                 )
                               }
                             />
                             <FieldLabel htmlFor="studio-headline-enabled">
-                              Show a headline for the first eight seconds
+                              Show a headline for the first {OPENING_HEADLINE_SECONDS} seconds
                             </FieldLabel>
                           </Field>
                           {headline ? (

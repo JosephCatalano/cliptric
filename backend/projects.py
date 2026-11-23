@@ -658,6 +658,7 @@ class Projects:
         if changed:
             item.pending_export_id, item.export_id, item.error = None, None, None
             item.thumbnail, item.thumbnail_error = False, None
+            item.thumbnail_export_id = None
         return changed
 
     def apply_caption_style(self, identifier: str, request: BatchStyle) -> Project:
@@ -1077,6 +1078,14 @@ class Projects:
                 item.crop_region if item.framing is not None else project.settings.crop_region
             )
             clip = self.store.clip(existing_id) if existing_id else None
+            legacy_split_cover = (
+                clip
+                and clip.quality.cover_at is not None
+                and (
+                    clip.mode == "split" or (clip.auto_layout and clip.auto_layout.mode == "split")
+                )
+                and not (clip.performance and clip.performance.split_cover)
+            )
             captions = (
                 CaptionOptions(
                     transcription_id=transcription_id,
@@ -1092,6 +1101,7 @@ class Projects:
             if (
                 clip
                 and clip.status == "succeeded"
+                and not legacy_split_cover
                 and clip.quality == item.quality
                 and clip.headline == headline
                 and clip.captions == captions

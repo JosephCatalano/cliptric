@@ -182,126 +182,135 @@ export function ProcessingNotices() {
   }
   if (legal) return null;
   return (
-    <Sheet>
-      <SheetTrigger asChild>
-        <Button
-          variant="ghost"
-          size="icon"
-          aria-label={`Notifications: ${notices.length} new updates${count ? `, ${count} projects processing` : ""}${error ? ", status unavailable" : ""}`}
-          className="relative"
-        >
-          <BellIcon />
-          {notices.length || error ? (
-            <Badge
-              variant={error ? "destructive" : "secondary"}
-              className="absolute -top-1 -right-1"
-            >
-              {error ? "!" : notices.length}
-            </Badge>
-          ) : null}
-        </Button>
-      </SheetTrigger>
-      <span className="sr-only" role="status">
-        {notices[0]
-          ? `${notices[0].title}: ${completionText(notices[0])}`
-          : count
-            ? `${count} projects processing`
-            : ""}
-      </span>
-      <SheetContent className="overflow-y-auto">
-        <SheetHeader>
-          <SheetTitle>Notifications</SheetTitle>
-          <SheetDescription>
-            Recent processing updates while Cliptric is open.
-          </SheetDescription>
-        </SheetHeader>
-        <div className="flex flex-col gap-4 px-4 pb-6">
-          {count ? (
-            <Button asChild variant="outline">
-              <Link
-                href="/projects"
-                aria-disabled={locked}
-                onClick={(event) => {
-                  if (locked) event.preventDefault();
-                }}
-              >
-                {count} projects processing
-              </Link>
-            </Button>
-          ) : null}
-          {!connected && !error ? (
-            <p role="status">Checking processing...</p>
-          ) : null}
-          {error ? (
-            <Alert>
-              <AlertDescription>
-                Cannot refresh processing status. {error} Reconnecting
-                automatically.
-              </AlertDescription>
-            </Alert>
-          ) : null}
-          {notices.map((project) => (
-            <Alert key={project.id}>
-              <AlertDescription>
-                <p>
-                  {project.title}: {completionText(project)}.
-                </p>
-                <div className="flex flex-wrap gap-2">
-                  <Button asChild variant="link">
-                    <Link
-                      href={`/projects/${project.id}`}
-                      aria-disabled={locked}
-                      onClick={(event) => {
-                        if (locked) event.preventDefault();
-                      }}
-                    >
-                      Open project
-                    </Link>
-                  </Button>
-                  <Button
-                    variant="ghost"
-                    onClick={() =>
-                      setNotices((values) =>
-                        values.filter((value) => value.id !== project.id),
-                      )
-                    }
-                  >
-                    Dismiss
-                  </Button>
-                </div>
-              </AlertDescription>
-            </Alert>
-          ))}
-          {connected && !notices.length && !error ? (
-            <Empty>
-              <EmptyHeader>
-                <EmptyTitle>No new updates</EmptyTitle>
-                <EmptyDescription>
-                  Completed jobs will appear here.
-                </EmptyDescription>
-              </EmptyHeader>
-            </Empty>
-          ) : null}
-          {locked ? (
-            <p>Save or discard studio edits before opening another project.</p>
-          ) : null}
+    <>
+      {count > 0 && !error && (
+        <Badge variant="info" className="hidden sm:inline-flex">
+          {count} processing
+        </Badge>
+      )}
+      <Sheet>
+        <SheetTrigger asChild>
           <Button
-            variant="outline"
-            disabled={checkingPermission}
-            onClick={() => void toggleDesktop()}
+            variant="ghost"
+            size="icon"
+            aria-label={`Notifications: ${notices.length} new updates${count ? `, ${count} projects processing` : ""}${error ? ", status unavailable" : ""}`}
+            className="relative"
           >
-            {checkingPermission
-              ? "Checking permission..."
-              : desktop
-                ? "Turn desktop alerts off"
-                : "Enable desktop alerts"}
+            <BellIcon />
+            {notices.length || error ? (
+              <Badge
+                variant={error ? "destructive" : "secondary"}
+                className="absolute -top-1 -right-1"
+              >
+                {error ? "!" : notices.length}
+              </Badge>
+            ) : null}
           </Button>
-          <p className="text-sm text-muted-foreground">
-            Alerts require the browser and backend to stay available.
-          </p>
-          {permissionNote ? <p role="status">{permissionNote}</p> : null}
-        </div>
-      </SheetContent>
-    </Sheet>
+        </SheetTrigger>
+        <span className="sr-only" role="status">
+          {notices[0]
+            ? `${notices[0].title}: ${completionText(notices[0])}`
+            : count
+              ? `${count} projects processing`
+              : ""}
+        </span>
+        <SheetContent className="overflow-y-auto">
+          <SheetHeader>
+            <SheetTitle>Notifications</SheetTitle>
+            <SheetDescription>
+              Recent processing updates while Cliptric is open.
+            </SheetDescription>
+          </SheetHeader>
+          <div className="flex flex-col gap-4 px-4 pb-6">
+            {count ? (
+              <Button asChild variant="outline">
+                <Link
+                  href="/projects"
+                  aria-disabled={locked}
+                  onClick={(event) => {
+                    if (locked) event.preventDefault();
+                  }}
+                >
+                  {count} projects processing
+                </Link>
+              </Button>
+            ) : null}
+            {!connected && !error ? (
+              <p role="status">Checking processing...</p>
+            ) : null}
+            {error ? (
+              <Alert>
+                <AlertDescription>
+                  Cannot refresh processing status. {error} Reconnecting
+                  automatically.
+                </AlertDescription>
+              </Alert>
+            ) : null}
+            {notices.map((project) => (
+              <Alert key={project.id}>
+                <AlertDescription>
+                  <p>
+                    {project.title}: {completionText(project)}.
+                  </p>
+                  <div className="flex flex-wrap gap-2">
+                    <Button asChild variant="link">
+                      <Link
+                        href={`/projects/${project.id}`}
+                        aria-disabled={locked}
+                        onClick={(event) => {
+                          if (locked) event.preventDefault();
+                        }}
+                      >
+                        Open project
+                      </Link>
+                    </Button>
+                    <Button
+                      variant="ghost"
+                      onClick={() =>
+                        setNotices((values) =>
+                          values.filter((value) => value.id !== project.id),
+                        )
+                      }
+                    >
+                      Dismiss
+                    </Button>
+                  </div>
+                </AlertDescription>
+              </Alert>
+            ))}
+            {connected && !notices.length && !error ? (
+              <Empty>
+                <EmptyHeader>
+                  <EmptyTitle>No new updates</EmptyTitle>
+                  <EmptyDescription>
+                    Completed jobs will appear here.
+                  </EmptyDescription>
+                </EmptyHeader>
+              </Empty>
+            ) : null}
+            {locked ? (
+              <p>
+                Save or discard studio edits before opening another project.
+              </p>
+            ) : null}
+            <Button
+              variant="outline"
+              disabled={checkingPermission}
+              onClick={() => void toggleDesktop()}
+            >
+              {checkingPermission
+                ? "Checking permission..."
+                : desktop
+                  ? "Turn desktop alerts off"
+                  : "Enable desktop alerts"}
+            </Button>
+            <p className="text-sm text-muted-foreground">
+              Alerts require the browser and backend to stay available.
+            </p>
+            {permissionNote ? <p role="status">{permissionNote}</p> : null}
+          </div>
+        </SheetContent>
+      </Sheet>
+    </>
   );
 }

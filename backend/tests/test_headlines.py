@@ -176,7 +176,7 @@ def test_profile_title_is_centered_and_fits_a_square_preview(text):
     assert r"\pos(540,960)" in first[-1]
     assert all(r"\move(" not in line for line in first)
     assert all(
-        ",0:00:00.25,0:00:08.00," in line for line in events.splitlines() if ",Headline," in line
+        ",0:00:00.25,0:00:04.00," in line for line in events.splitlines() if ",Headline," in line
     )
     assert 0 < len(first[-1].split(r"\N")) * (size + 10) + 64 <= 760
 
