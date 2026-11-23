@@ -5,6 +5,7 @@
   "scripts": {
     "dev": "next dev --hostname 127.0.0.1 --port 3000",
     "api": ".venv\\Scripts\\python.exe -m uvicorn backend.main:create_app --factory --host 127.0.0.1 --port 8765",
+    "api:private": ".venv\\Scripts\\python.exe -m uvicorn backend.main:create_app --factory --host 127.0.0.1 --port 8765 --no-proxy-headers --no-access-log",
     "api:ai": "npm run api",
     "build": "next build",
     "start": "next start --hostname 127.0.0.1 --port 3000",

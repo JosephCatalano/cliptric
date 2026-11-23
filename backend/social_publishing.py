@@ -64,7 +64,9 @@ class SocialJob(BaseModel):
 
 
 class SocialPublisher:
-    def __init__(self, store, media, api, web_origin, *, protector=protect_secret):
+    def __init__(
+        self, store, media, api, web_origin, *, public_origin="", protector=protect_secret
+    ):
         if api.platform not in {"x", "facebook"}:
             raise ValueError("Unsupported publisher")
         self.store, self.media, self.api, self.web_origin, self.protector = (
@@ -75,6 +77,7 @@ class SocialPublisher:
             protector,
         )
         self.platform, self.name, self.settings = api.platform, api.name, api.settings
+        self.public_origin = public_origin
         self.table = f"{self.platform}_posts"
         self.accounts = Accounts(store, f"{self.platform}_account", "config", SocialError)
         self.lock, self.stop, self.pending = threading.RLock(), threading.Event(), {}
@@ -130,13 +133,18 @@ class SocialPublisher:
 
     def begin(self, origin, page_id=None):
         self._configured()
-        if origin not in {self.web_origin, self.web_origin.replace("127.0.0.1", "localhost")}:
+        hosted = bool(self.public_origin and origin == self.public_origin)
+        if not hosted and origin not in {
+            self.web_origin,
+            self.web_origin.replace("127.0.0.1", "localhost"),
+        }:
             raise SocialError("Start account connection from the local app.", 403)
         if self.platform == "facebook":
             if not page_id:
                 raise SocialError("Enter the Facebook Page ID to connect.", 422)
             identifier(page_id)
-        redirect = f"http://{urlsplit(origin).hostname}:8765/api/{self.platform}/callback"
+        callback_origin = origin if hosted else f"http://{urlsplit(origin).hostname}:8765"
+        redirect = f"{callback_origin}/api/{self.platform}/callback"
         with self.lock:
             self.pending = {
                 key: item for key, item in self.pending.items() if item[0] > time.monotonic()

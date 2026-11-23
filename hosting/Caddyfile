@@ -1,0 +1,43 @@
+{
+	admin off
+	auto_https disable_redirects
+}
+
+https://cliptric.com {
+	tls {
+		issuer acme {
+			disable_http_challenge
+		}
+	}
+
+	basic_auth {
+		cliptric {$CLIPPING_PASSWORD_HASH}
+	}
+
+	header {
+		Cache-Control "private, no-store"
+		X-Content-Type-Options nosniff
+		Referrer-Policy no-referrer
+	}
+
+	handle /api/import {
+		reverse_proxy 127.0.0.1:3000 {
+			header_up -Authorization
+			header_up X-Cliptric-Gateway {$CLIPPING_GATEWAY_TOKEN}
+		}
+	}
+
+	handle /api/* {
+		reverse_proxy 127.0.0.1:8765 {
+			header_up -Authorization
+			header_up X-Cliptric-Gateway {$CLIPPING_GATEWAY_TOKEN}
+		}
+	}
+
+	handle {
+		reverse_proxy 127.0.0.1:3000 {
+			header_up -Authorization
+			header_up -X-Cliptric-Gateway
+		}
+	}
+}

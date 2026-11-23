@@ -1,4 +1,5 @@
 import os
+import re
 import shutil
 from dataclasses import dataclass, field
 from pathlib import Path
@@ -53,6 +54,8 @@ class Settings:
     min_free_bytes: int = 256 * 1024**2
     max_export_bytes: int = 512 * 1024**2
     web_origin: str = "http://127.0.0.1:3000"
+    public_origin: str = ""
+    gateway_token: str = field(default="", repr=False)
     transcription_model_dir: Path = ROOT / ".tools" / "models" / "small.en"
     transcription_model_revision: str = TRANSCRIPTION_REVISION
     transcription_timeout_seconds: float = 7200
@@ -104,6 +107,16 @@ class Settings:
             raise ValueError("CLIPPING_WEB_ORIGIN must be a local HTTP origin without a path.")
         if not origin.port:
             raise ValueError("CLIPPING_WEB_ORIGIN must specify a port.")
+        if self.public_origin:
+            if not re.fullmatch(
+                r"https://(?:[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?\.)+[a-z]{2,63}",
+                self.public_origin,
+            ):
+                raise ValueError("CLIPPING_PUBLIC_ORIGIN must be a bare HTTPS domain.")
+            if not re.fullmatch(r"[0-9a-f]{64}", self.gateway_token):
+                raise ValueError("Private hosting requires a 64-character hex gateway token.")
+        elif self.gateway_token:
+            raise ValueError("Set CLIPPING_PUBLIC_ORIGIN when setting a gateway token.")
         if not self.highlight_model or len(self.highlight_model) > 120:
             raise ValueError("CLIPPING_HIGHLIGHT_MODEL must be a model ID.")
         if not 1 <= self.highlight_max_windows <= 192:
@@ -112,6 +125,7 @@ class Settings:
     @classmethod
     def load(cls) -> "Settings":
         values = dotenv_values(ROOT / "backend" / ".env", interpolate=False)
+        hosting = dotenv_values(ROOT / "hosting" / ".env.private", interpolate=False)
         raw_limit = os.environ.get(
             "CLIPPING_MAX_UPLOAD_GIB", values.get("CLIPPING_MAX_UPLOAD_GIB", "20")
         )
@@ -179,6 +193,12 @@ class Settings:
             ffmpeg=find_tool("ffmpeg"),
             ffprobe=find_tool("ffprobe"),
             web_origin=os.environ.get("CLIPPING_WEB_ORIGIN", "http://127.0.0.1:3000"),
+            public_origin=os.environ.get(
+                "CLIPPING_PUBLIC_ORIGIN", hosting.get("CLIPPING_PUBLIC_ORIGIN") or ""
+            ),
+            gateway_token=os.environ.get(
+                "CLIPPING_GATEWAY_TOKEN", hosting.get("CLIPPING_GATEWAY_TOKEN") or ""
+            ),
             transcription_model_dir=Path(
                 os.environ.get("CLIPPING_MODEL_DIR", str(ROOT / ".tools" / "models" / "small.en"))
             ).resolve(),

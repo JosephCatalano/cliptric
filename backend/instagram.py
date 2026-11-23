@@ -74,9 +74,20 @@ class ReelJob(BaseModel):
 
 
 class Instagram:
-    def __init__(self, store, media, settings, web_origin, *, api=None, protector=protect_secret):
+    def __init__(
+        self,
+        store,
+        media,
+        settings,
+        web_origin,
+        *,
+        public_origin="",
+        api=None,
+        protector=protect_secret,
+    ):
         self.store, self.media, self.settings, self.web_origin = store, media, settings, web_origin
         self.api, self.protector = api or InstagramAPI(settings), protector
+        self.public_origin = public_origin
         self.accounts = Accounts(store, "instagram_account", "config", InstagramError)
         self.lock, self.stop = threading.RLock(), threading.Event()
         self.pool = ThreadPoolExecutor(max_workers=1, thread_name_prefix="instagram")
@@ -138,7 +149,11 @@ class Instagram:
 
     def begin(self, origin, page_id=None):
         self._configured()
-        if origin not in {self.web_origin, self.web_origin.replace("127.0.0.1", "localhost")}:
+        hosted = bool(self.public_origin and origin == self.public_origin)
+        if not hosted and origin not in {
+            self.web_origin,
+            self.web_origin.replace("127.0.0.1", "localhost"),
+        }:
             raise InstagramError("Start the connection from the local app.", 403)
         page_id = page_id or self.settings.page_id
         if not page_id:
@@ -146,7 +161,8 @@ class Instagram:
                 "Enter the Facebook Page ID linked to this Instagram account.", 422
             )
         meta_id(page_id)
-        redirect = f"http://{urlsplit(origin).hostname}:8765{CALLBACK_PATH}"
+        callback_origin = origin if hosted else f"http://{urlsplit(origin).hostname}:8765"
+        redirect = callback_origin + CALLBACK_PATH
         with self.lock:
             self.pending = {
                 key: value for key, value in self.pending.items() if value[0] > time.monotonic()

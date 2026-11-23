@@ -1,4 +1,5 @@
 import asyncio
+import secrets
 from urllib.parse import urlsplit
 
 from starlette.requests import Request
@@ -7,6 +8,28 @@ from starlette.types import ASGIApp, Receive, Scope, Send
 
 from .config import Settings
 
+LOOPBACK_HOSTS = {"localhost", "127.0.0.1"}
+OAUTH_CALLBACKS = {
+    "/api/tiktok/callback",
+    "/api/youtube-publishing/callback",
+    "/api/instagram/callback",
+    "/api/x/callback",
+    "/api/facebook/callback",
+}
+
+
+def hostname(authority: str) -> str | None:
+    try:
+        if not authority or any(char.isspace() for char in authority):
+            return None
+        address = urlsplit("//" + authority)
+        _ = address.port
+        if address.path or address.query or address.fragment or address.username is not None:
+            return None
+        return address.hostname
+    except ValueError:
+        return None
+
 
 class RequestBoundary:
     """Reject foreign browser origins and bound small control requests before parsing."""
@@ -14,6 +37,7 @@ class RequestBoundary:
     def __init__(self, app: ASGIApp, settings: Settings):
         self.app = app
         self.settings = settings
+        self.public_host = urlsplit(settings.public_origin).hostname
 
     async def __call__(self, scope: Scope, receive: Receive, send: Send) -> None:
         if scope["type"] != "http":
@@ -27,37 +51,43 @@ class RequestBoundary:
             "http://localhost:8765",
             "http://127.0.0.1:8765",
         }
-        if request.url.hostname not in {"localhost", "127.0.0.1"}:
-            await JSONResponse({"detail": "Only local requests are allowed."}, status_code=400)(
+        forwarded_host = request.headers.get("x-forwarded-host")
+        hosts = {hostname(request.headers.get("host", ""))}
+        if forwarded_host is not None:
+            hosts.add(hostname(forwarded_host))
+        accepted_hosts = LOOPBACK_HOSTS | ({self.public_host} if self.public_host else set())
+        if not hosts <= accepted_hosts:
+            await JSONResponse({"detail": "Request host is not allowed."}, status_code=400)(
                 scope, receive, send
             )
             return
-        forwarded_host = request.headers.get("x-forwarded-host")
-        if forwarded_host:
-            try:
-                forwarded = urlsplit("//" + forwarded_host)
-                valid_host = forwarded.hostname in {"localhost", "127.0.0.1"} and not (
-                    forwarded.path or forwarded.query or forwarded.fragment or forwarded.username
-                )
-            except ValueError:
-                valid_host = False
-            if not valid_host:
+        hosted = bool(self.public_host and self.public_host in hosts)
+        request.state.hosted = hosted
+        if hosted:
+            peer = scope.get("client")
+            token = request.headers.get("x-cliptric-gateway", "")
+            if (
+                not peer
+                or peer[0] not in {"127.0.0.1", "::1"}
+                or not token.isascii()
+                or not secrets.compare_digest(token, self.settings.gateway_token)
+            ):
                 await JSONResponse(
-                    {"detail": "Only local forwarded hosts are allowed."}, status_code=400
+                    {"detail": "The private Cliptric gateway is required."}, status_code=403
                 )(scope, receive, send)
                 return
+            allowed = {self.settings.public_origin}
         # OAuth's top-level redirect is cross-site by design. Only this GET is
         # exempt; its handler requires a browser-bound, expiring, single-use state.
-        oauth_callback = request.method == "GET" and request.url.path in {
-            "/api/tiktok/callback",
-            "/api/youtube-publishing/callback",
-            "/api/instagram/callback",
-            "/api/x/callback",
-            "/api/facebook/callback",
-        }
+        oauth_callback = request.method == "GET" and request.url.path in OAUTH_CALLBACKS
         if not oauth_callback and (
             (origin and origin not in allowed)
             or request.headers.get("sec-fetch-site") == "cross-site"
+            or (
+                hosted
+                and request.method not in {"GET", "HEAD", "OPTIONS"}
+                and origin not in allowed
+            )
         ):
             await JSONResponse(
                 {"detail": "Cross-origin requests are not allowed."}, status_code=403

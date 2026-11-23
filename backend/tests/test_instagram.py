@@ -107,7 +107,9 @@ def fixture(tmp_path):
         export_id, "succeeded", duration=8, size_bytes=store.export_path(export_id).stat().st_size
     )
     app = FastAPI()
-    app.add_middleware(RequestBoundary, settings=SimpleNamespace(web_origin=service.web_origin))
+    app.add_middleware(
+        RequestBoundary, settings=SimpleNamespace(web_origin=service.web_origin, public_origin="")
+    )
     app.include_router(create_instagram_router(service))
     with TestClient(app, base_url="http://127.0.0.1:8765") as client:
         try:

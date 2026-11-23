@@ -79,13 +79,27 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         store, media, YouTubeSettings.load(), settings.web_origin
     )
     secure_youtube_logs()
-    instagram = Instagram(store, media, InstagramSettings.load(), settings.web_origin)
+    instagram = Instagram(
+        store,
+        media,
+        InstagramSettings.load(),
+        settings.web_origin,
+        public_origin=settings.public_origin,
+    )
     secure_instagram_logs()
     x_publishing = SocialPublisher(
-        store, media, XAPI(SocialSettings.load("x")), settings.web_origin
+        store,
+        media,
+        XAPI(SocialSettings.load("x")),
+        settings.web_origin,
+        public_origin=settings.public_origin,
     )
     facebook = SocialPublisher(
-        store, media, FacebookAPI(SocialSettings.load("facebook")), settings.web_origin
+        store,
+        media,
+        FacebookAPI(SocialSettings.load("facebook")),
+        settings.web_origin,
+        public_origin=settings.public_origin,
     )
     secure_social_logs()
     scheduler = Scheduler(

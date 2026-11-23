@@ -82,6 +82,8 @@ Upload -> Probe -> Transcribe -> Detect Highlights -> Validate and Score -> Alig
 
 ## Publishing
 
+- The optional private HTTPS deployment uses the authenticated Caddy gateway in `hosting/`. Keep Next.js and FastAPI on loopback. Hosted API requests require the trusted gateway token and exact write Origin. Keep streaming imports on the Next.js route and preserve secure, browser-bound OAuth callbacks. README owns owner setup and provider callback details.
+
 - Posting descriptions/hashtags are separate editable clip metadata. Generate only from the selected saved speech interval and project instructions with explicit sharing/billing consent, bounded structured output and durable attempt identities. Resume must not repeat uncertain paid copy requests. Preserve source identity/staleness and earlier video exports; apply saved copy only to the exact current export on user action and reset publishing consent. README owns generation, editing and handoff contracts.
 
 - Publishing supports multiple destinations per platform. Every reviewed post, schedule, token refresh, background upload and reconciliation must resolve its persisted `account_id`. Never substitute a current/default account for a disconnected destination.

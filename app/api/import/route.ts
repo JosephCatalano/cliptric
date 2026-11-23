@@ -9,6 +9,7 @@ export async function POST(request: Request) {
     "content-length",
     "origin",
     "sec-fetch-site",
+    "x-cliptric-gateway",
   ]) {
     const value = request.headers.get(name);
     if (value !== null) headers.set(name, value);

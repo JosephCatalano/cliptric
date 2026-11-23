@@ -30,6 +30,7 @@ def create_instagram_router(service):
                 state,
                 max_age=600,
                 httponly=True,
+                secure=getattr(request.state, "hosted", False),
                 samesite="lax",
                 path=CALLBACK_PATH,
             )
@@ -51,7 +52,12 @@ def create_instagram_router(service):
             response = RedirectResponse(destination, status_code=303)
         except InstagramError as exc:
             response = JSONResponse({"detail": str(exc)}, status_code=exc.status_code)
-        response.delete_cookie("instagram_oauth_state", path=CALLBACK_PATH)
+        response.delete_cookie(
+            "instagram_oauth_state",
+            path=CALLBACK_PATH,
+            secure=getattr(request.state, "hosted", False),
+            httponly=True,
+        )
         response.headers["Referrer-Policy"] = "no-referrer"
         return response
 

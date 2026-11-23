@@ -30,7 +30,13 @@ def create_social_router(service):
             state, url = service.begin(request.headers.get("origin", service.web_origin), page_id)
             response = JSONResponse({"url": url})
             response.set_cookie(
-                cookie_name, state, max_age=600, httponly=True, samesite="lax", path=callback_path
+                cookie_name,
+                state,
+                max_age=600,
+                httponly=True,
+                samesite="lax",
+                path=callback_path,
+                secure=getattr(request.state, "hosted", False),
             )
             return response
         except SocialError as exc:
@@ -48,7 +54,12 @@ def create_social_router(service):
             response = RedirectResponse(destination, status_code=303)
         except SocialError as exc:
             response = JSONResponse({"detail": str(exc)}, status_code=exc.status_code)
-        response.delete_cookie(cookie_name, path=callback_path)
+        response.delete_cookie(
+            cookie_name,
+            path=callback_path,
+            secure=getattr(request.state, "hosted", False),
+            httponly=True,
+        )
         response.headers["Referrer-Policy"] = "no-referrer"
         return response
 
