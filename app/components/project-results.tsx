@@ -364,6 +364,11 @@ export function ProjectResults({ id, initialClip }: { id: string; initialClip?: 
               </AlertDescription>
             </Alert>
           ) : null}
+          {project.media_analysis_warning && (
+            <Alert role="status">
+              <AlertDescription>{project.media_analysis_warning}</AlertDescription>
+            </Alert>
+          )}
           <FieldGroup className="grid gap-3 rounded-xl border bg-card p-3 sm:grid-cols-3">
             <Field>
               <FieldLabel htmlFor={`${fieldId}-clip-search`}>
@@ -649,6 +654,7 @@ export function ProjectResults({ id, initialClip }: { id: string; initialClip?: 
               key={project.id}
               projectId={project.id}
               disabled={running || busy}
+              includeFrames={project.settings.multimodal ?? false}
             />
           ) : null}
           <Accordion
@@ -826,7 +832,9 @@ export function ProjectResults({ id, initialClip }: { id: string; initialClip?: 
                       />
                       <FieldLabel htmlFor={`${fieldId}-1`}>
                         Allow another billed AI attempt if the previous attempt
-                        did not finish. Check API usage first.
+                        did not finish.
+                        {project.settings.multimodal && " This can send new sampled frames to OpenAI."}
+                        {" "}Check API usage first.
                       </FieldLabel>
                     </Field>
                   ) : null}
@@ -1222,6 +1230,24 @@ function ClipCard({
                 <p className="text-sm text-muted-foreground">
                   Source: {item.source_name}
                 </p>
+              )}
+              {item.selection_reason && (
+                <FieldGroup className="gap-2">
+                  <p>{item.selection_reason}</p>
+                  {item.selection_score != null && (
+                    <p className="text-sm text-muted-foreground">
+                      Editorial score {item.selection_score}/100
+                    </p>
+                  )}
+                  {item.selection_visual ? (
+                    <p className="text-sm text-muted-foreground">
+                      Sampled frames at {item.selection_visual.frame_times.map((time) => time.toFixed(1)).join(" and ")} seconds.
+                      {" "}{item.selection_visual.description}
+                    </p>
+                  ) : item.selection_evidence && (
+                    <blockquote className="text-sm text-muted-foreground">{item.selection_evidence}</blockquote>
+                  )}
+                </FieldGroup>
               )}
               {item.analysis_reason && (
                 <Alert role="status">

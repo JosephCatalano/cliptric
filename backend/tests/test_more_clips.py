@@ -14,7 +14,7 @@ from backend.tests.test_projects import create, finished, payload
 
 
 def install_provider(provider, monkeypatch):
-    async def suggest(window, request):
+    async def suggest(window, request, *, context=None):
         provider.calls.append((window, request))
         provider.entered.set()
         while provider.hold:

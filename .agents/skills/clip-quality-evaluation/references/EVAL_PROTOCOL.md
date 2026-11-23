@@ -24,8 +24,22 @@ These represent independent human annotations. If two reviewers disagree, keep b
   "videos": [
     {
       "id": "stream-001",
+      "source_seconds": 1800,
+      "processing_seconds": 47,
+      "estimated_cost_usd": 0.06,
       "clips": [
-        {"start": 122.0, "end": 155.0, "score": 88}
+        {
+          "start": 122.0,
+          "end": 155.0,
+          "score": 88,
+          "review": {
+            "duplicate": false,
+            "missing_setup": false,
+            "missing_payoff": false,
+            "standalone": true,
+            "approved": true
+          }
+        }
       ]
     }
   ]
@@ -45,7 +59,13 @@ Each prediction matches at most one reference and each reference matches at most
 - `caption_error_rate`: human-verified wrong words or timing problems / reviewed caption words or events. Report the chosen denominator.
 - `render_success_rate`: verified playable exports / attempted renders.
 
-Not all metrics are reported by the bundled evaluation script. The script reports temporal matching; collect human ratings and processing/cost telemetry separately.
+The bundled evaluator reports interval matches, invalid predicted boundaries and optional human review rates with their denominators. Supply `source_seconds` to count out-of-source ends. Omit unknown review flags. Supply observed `processing_seconds` and `estimated_cost_usd` per source for average runtime and cost per source hour. The values above only illustrate the input format. Collect edit time, caption errors and render success separately.
+
+From the repository root, run the following against your permitted held-out set.
+
+```powershell
+.venv\Scripts\python.exe .agents\skills\clip-quality-evaluation\scripts\evaluate.py --references references.json --predictions new.json --baseline prior.json --top-k 5
+```
 
 ## Interpretation cautions
 

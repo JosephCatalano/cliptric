@@ -43,7 +43,7 @@ export default function AboutPage() {
       </section>
       <section>
         <h2>Local processing</h2>
-        <p>Cliptric stores your recordings and projects and renders videos on the computer running its backend. Optional AI features send relevant transcript text to OpenAI only after you approve sharing.</p>
+        <p>Cliptric stores your recordings and projects and renders videos on the computer running its backend. AI features send relevant transcript text to OpenAI after you approve sharing. Optional visual analysis can also send sampled still images and local audio measurements.</p>
       </section>
     </>
   );

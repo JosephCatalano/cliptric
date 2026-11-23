@@ -9,11 +9,14 @@ from .limits import MAX_MEDIA_SECONDS
 from .transcription_models import TranscriptionJob, clean_text
 
 ACTIVE = {"queued", "analysing", "cancelling"}
-PROMPT_VERSION = "transcript-highlights-v9-editorial"
-DISCOVERY_VERSION = "windowed-discovery-v2"
+PROMPT_VERSION = "highlights-v10-context"
+DISCOVERY_VERSION = "windowed-discovery-v3-context"
 WINDOW_SECONDS = 180
 OVERLAP_SECONDS = 30
 MAX_COVERAGE_WINDOW_SECONDS = 600
+ContentProfile = Literal[
+    "auto", "comedy", "podcast", "gaming", "interview", "education", "entertainment"
+]
 
 
 class HighlightError(Exception):
@@ -42,6 +45,8 @@ class HighlightRequest(BaseModel):
     excluded_ranges: list[SourceRange] = Field(default_factory=list, max_length=5000)
     ai_instructions: AIInstructions = ""
     quality_mode: bool = Field(default=False, strict=True)
+    content_profile: ContentProfile = "auto"
+    multimodal: bool = Field(default=False, strict=True)
     model_config = ConfigDict(extra="forbid", allow_inf_nan=False)
     transcription_id: UUID
     revision: int = Field(ge=1, strict=True)
@@ -116,11 +121,31 @@ class ProposedHighlights(BaseModel):
     candidates: list[ProposedCandidate] = Field(max_length=5)
 
 
+class NarrativeNote(BaseModel):
+    model_config = ConfigDict(extra="forbid", strict=True)
+    first_segment: int = Field(ge=0)
+    last_segment: int = Field(ge=0)
+    role: Literal["topic", "setup", "question_answer", "turning_point", "payoff", "callback"]
+    summary: str = Field(min_length=1, max_length=240)
+    quote: str = Field(min_length=8, max_length=120)
+
+
+class DiscoveryProposal(ProposedHighlights):
+    narrative: list[NarrativeNote] = Field(default_factory=list, max_length=3)
+
+
 Review = Literal["unreviewed", "accepted", "rejected"]
+
+
+class VisualEvidence(BaseModel):
+    model_config = ConfigDict(extra="forbid", allow_inf_nan=False)
+    frame_times: list[float] = Field(min_length=2, max_length=3)
+    description: str = Field(min_length=1, max_length=300)
 
 
 class Candidate(BaseModel):
     quality: EditorialQuality | None = None
+    visual: VisualEvidence | None = None
     id: str
     job_id: str
     start: float
@@ -136,6 +161,12 @@ class Candidate(BaseModel):
 
 
 class HighlightJob(BaseModel):
+    media_status: Literal["sampling", "reviewing", "ready", "unavailable"] | None = None
+    media_warning: str | None = None
+    elapsed_seconds: float | None = None
+    vision_model: str | None = None
+    vision_input_tokens: int = 0
+    vision_output_tokens: int = 0
     discovery_cache_hit: bool = False
     editorial_status: Literal["pending", "reviewing", "completed"] | None = None
     discovered_candidates: int = 0

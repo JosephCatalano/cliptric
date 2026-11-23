@@ -10,7 +10,7 @@ from .captions import CaptionCustomization, CaptionPreset
 from .editing import QualityOptions, mapped_overlays, retained_intervals
 from .framing import FramingMode, SourceRegion, SplitLayout, validate_framing
 from .headlines import HeadlineOptions
-from .highlight_models import EditorialQuality, SourceRange
+from .highlight_models import ContentProfile, EditorialQuality, SourceRange, VisualEvidence
 from .limits import MAX_MEDIA_SECONDS
 from .models import Clip, EmphasisWords
 from .overlays import Overlays, layout
@@ -29,6 +29,8 @@ class ProjectSettingsDraft(BaseModel):
     presentation_mode: Literal["off", "auto", "talking_head", "podcast", "gameplay"] = "off"
     ai_instructions: AIInstructions = ""
     quality_mode: bool = Field(default=False, strict=True)
+    content_profile: ContentProfile = "auto"
+    multimodal: bool = Field(default=False, strict=True)
     audio_cleanup: Literal["off", "light", "standard"] = "off"
     normalize_audio: bool = Field(default=False, strict=True)
     model_config = ConfigDict(extra="forbid", allow_inf_nan=False)
@@ -96,6 +98,10 @@ class ProjectCreate(BaseModel):
             raise ValueError("Each supplied recording must appear only once.")
         if bool(self.recording_ids) != (self.settings.duration_mode == "full"):
             raise ValueError("Full-length processing requires a batch of supplied clips.")
+        if self.settings.multimodal and (self.recording_ids or not self.remote_consent):
+            raise ValueError(
+                "Sampled frame analysis requires explicit consent and one long-form source."
+            )
         if self.generate_post_copy and not self.remote_consent:
             raise ValueError("Posting copy requires explicit transcript-sharing consent.")
         if self.generate_titles and (not self.recording_ids or not self.remote_consent):
@@ -118,6 +124,10 @@ class ProjectCreate(BaseModel):
 
 
 class ProjectItem(BaseModel):
+    selection_reason: str | None = None
+    selection_score: int | None = Field(default=None, ge=0, le=100)
+    selection_evidence: str | None = None
+    selection_visual: VisualEvidence | None = None
     post_copy: SocialCopy | None = None
     post_copy_selected: CopyOption | None = None
     post_copy_source: str | None = None
@@ -185,6 +195,7 @@ class ProjectItem(BaseModel):
 
 
 class Project(BaseModel):
+    media_analysis_warning: str | None = None
     step_progress: float | None = Field(default=None, ge=0, le=1)
     step_started_at: str | None = None
     step_updated_at: str | None = None

@@ -28,9 +28,11 @@ import type { Project } from "@/lib/projects";
 export function MoreClips({
   projectId,
   disabled,
+  includeFrames,
 }: {
   projectId: string;
   disabled: boolean;
+  includeFrames: boolean;
 }) {
   const router = useRouter();
   const fieldId = useId();
@@ -122,8 +124,9 @@ export function MoreClips({
                 onCheckedChange={(value) => setConsent(value === true)}
               />
               <FieldLabel htmlFor={`${fieldId}-consent`}>
-                I approve sending the remaining transcript sections for another
-                AI analysis, which may incur API charges.
+                I approve sending the remaining transcript sections
+                {includeFrames ? " and sampled still images with local audio measurements" : ""}
+                {" "}for another AI analysis, which may incur API charges.
               </FieldLabel>
             </Field>
             <Button type="submit" disabled={disabled || busy || !consent}>

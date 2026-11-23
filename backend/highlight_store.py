@@ -114,7 +114,7 @@ class HighlightStore:
 
     def discovery(
         self, recording_id: str, key: str
-    ) -> tuple[list[Candidate], dict[str, int]] | None:
+    ) -> tuple[list[Candidate], dict[str, int], list[dict], str | None, str | None] | None:
         with self.store.connection() as db:
             row = db.execute(
                 "SELECT payload FROM highlight_discovery WHERE recording_id=? AND cache_key=?",
@@ -126,22 +126,33 @@ class HighlightStore:
         return (
             [Candidate.model_validate(candidate) for candidate in payload["leads"]],
             payload["rejection_reasons"],
+            payload.get("signals", []),
+            payload.get("media_status"),
+            payload.get("media_warning"),
         )
 
     def save_discovery(
-        self, recording_id: str, key: str, leads: list[Candidate], rejection_reasons: dict[str, int]
+        self,
+        job: HighlightJob,
+        key: str,
+        leads: list[Candidate],
+        rejection_reasons: dict[str, int],
+        signals: list[dict],
     ) -> None:
         with self.store.connection() as db:
             db.execute(
                 "INSERT INTO highlight_discovery VALUES (?,?,?) ON CONFLICT(recording_id) "
                 "DO UPDATE SET cache_key=excluded.cache_key,payload=excluded.payload",
                 (
-                    recording_id,
+                    job.recording_id,
                     key,
                     json.dumps(
                         {
                             "leads": [candidate.model_dump() for candidate in leads],
                             "rejection_reasons": rejection_reasons,
+                            "signals": signals,
+                            "media_status": job.media_status,
+                            "media_warning": job.media_warning,
                         }
                     ),
                 ),

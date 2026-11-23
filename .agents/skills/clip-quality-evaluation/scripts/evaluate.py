@@ -40,15 +40,49 @@ def to_map(doc, field):
         for index, item in enumerate(entries):
             if not isinstance(item, dict):
                 raise ValueError(f"{video_id}/{index} must be an object")
-            check_interval(item, f"{video_id}/{index}")
+            if field == "highlights":
+                check_interval(item, f"{video_id}/{index}")
         result[video_id] = entries
     return result
 
 
-def evaluate(golds, predictions, top_k, threshold):
+def number(value, name, *, positive=False):
+    if (
+        type(value) not in {int, float}
+        or not math.isfinite(value)
+        or value < 0
+        or (positive and value == 0)
+    ):
+        raise ValueError(
+            f"{name} must be a finite {'positive' if positive else 'nonnegative'} number"
+        )
+    return value
+
+
+def run_metadata(doc):
+    result = {}
+    for row in doc["videos"]:
+        result[row["id"]] = {
+            key: number(row[key], key, positive=key == "source_seconds")
+            for key in ("source_seconds", "processing_seconds", "estimated_cost_usd")
+            if row.get(key) is not None
+        }
+    return result
+
+
+def evaluate(golds, predictions, top_k, threshold, metadata=None):
+    metadata = metadata or {}
     all_results = []
     total_preds = total_golds = total_matches = 0
     start_errors, end_errors = [], []
+    invalid = 0
+    review_flags = {
+        "duplicate": [],
+        "missing_setup": [],
+        "missing_payoff": [],
+        "standalone": [],
+        "approved": [],
+    }
     for video_id, truth in golds.items():
         if video_id not in predictions:
             raise ValueError(f"No predictions entry for reference video {video_id}")
@@ -65,10 +99,27 @@ def evaluate(golds, predictions, top_k, threshold):
                 )
             available = sorted(available, key=lambda p: p["score"], reverse=True)
         selected = available[:top_k]
+        source_duration = metadata.get(video_id, {}).get("source_seconds")
+        if source_duration is not None and any(gold["end"] > source_duration for gold in truth):
+            raise ValueError(f"{video_id}: a human reference is outside the source duration")
         used = set()
         matches = []
         for rank, p in enumerate(selected, start=1):
-            candidate_range = check_interval(p, f"{video_id}/prediction-{rank}")
+            review = p.get("review", {})
+            if not isinstance(review, dict):
+                raise ValueError(f"{video_id}/prediction-{rank}: review must be an object")
+            for flag, results in review_flags.items():
+                if flag in review:
+                    if type(review[flag]) is not bool:
+                        raise ValueError(f"{video_id}/prediction-{rank}: {flag} must be a boolean")
+                    results.append(review[flag])
+            try:
+                candidate_range = check_interval(p, f"{video_id}/prediction-{rank}")
+                if source_duration is not None and candidate_range[1] > source_duration:
+                    raise ValueError("Clip exceeds the source duration.")
+            except ValueError:
+                invalid += 1
+                continue
             options = [
                 (iou(candidate_range, check_interval(t, f"{video_id}/reference-{i}")), i)
                 for i, t in enumerate(truth)
@@ -107,6 +158,16 @@ def evaluate(golds, predictions, top_k, threshold):
             }
         )
     weak = [result for result in all_results if result["reference_highlights"] == 0]
+    timed_runs = [
+        metadata[video_id]["processing_seconds"]
+        for video_id in golds
+        if "processing_seconds" in metadata.get(video_id, {})
+    ]
+    priced_runs = [
+        metadata[video_id]
+        for video_id in golds
+        if {"source_seconds", "estimated_cost_usd"} <= metadata.get(video_id, {}).keys()
+    ]
     return {
         "top_k": top_k,
         "min_iou": threshold,
@@ -125,6 +186,28 @@ def evaluate(golds, predictions, top_k, threshold):
         ),
         "total_matches": total_matches,
         "total_predictions_evaluated": total_preds,
+        "invalid_boundaries": invalid,
+        "invalid_boundary_rate": round(invalid / total_preds, 4) if total_preds else None,
+        "human_review_rates": {
+            flag: {
+                "count": len(values),
+                "rate": round(sum(values) / len(values), 4) if values else None,
+            }
+            for flag, values in review_flags.items()
+        },
+        "mean_processing_seconds": round(sum(timed_runs) / len(timed_runs), 3)
+        if timed_runs
+        else None,
+        "timed_runs": len(timed_runs),
+        "estimated_usd_per_source_hour": round(
+            3600
+            * sum(run["estimated_cost_usd"] for run in priced_runs)
+            / sum(run["source_seconds"] for run in priced_runs),
+            4,
+        )
+        if priced_runs
+        else None,
+        "priced_runs": len(priced_runs),
         "total_reference_highlights": total_golds,
         "per_video": all_results,
     }
@@ -136,6 +219,9 @@ def main() -> int:
     )
     p.add_argument("--references", required=True, type=pathlib.Path)
     p.add_argument("--predictions", required=True, type=pathlib.Path)
+    p.add_argument(
+        "--baseline", type=pathlib.Path, help="Optional earlier predictions for the same sources"
+    )
     p.add_argument("--top-k", type=int, default=5)
     p.add_argument("--min-iou", type=float, default=0.5)
     p.add_argument("--output", type=pathlib.Path, help="Optional JSON report output")
@@ -144,7 +230,8 @@ def main() -> int:
         if args.top_k < 1 or not math.isfinite(args.min_iou) or not 0 < args.min_iou <= 1:
             raise ValueError("Require top-k >= 1 and 0 < min-iou <= 1")
         golds = to_map(json.loads(args.references.read_text(encoding="utf-8")), "highlights")
-        predictions = to_map(json.loads(args.predictions.read_text(encoding="utf-8")), "clips")
+        predictions_doc = json.loads(args.predictions.read_text(encoding="utf-8"))
+        predictions = to_map(predictions_doc, "clips")
         if not golds:
             raise ValueError("No reference videos supplied")
         unexpected = set(predictions) - set(golds)
@@ -153,7 +240,14 @@ def main() -> int:
                 f"Warning: ignoring predictions for videos without references: {', '.join(sorted(unexpected))}",
                 file=sys.stderr,
             )
-        report = evaluate(golds, predictions, args.top_k, args.min_iou)
+        report = evaluate(
+            golds, predictions, args.top_k, args.min_iou, run_metadata(predictions_doc)
+        )
+        if args.baseline:
+            baseline = json.loads(args.baseline.read_text(encoding="utf-8"))
+            report["baseline"] = evaluate(
+                golds, to_map(baseline, "clips"), args.top_k, args.min_iou, run_metadata(baseline)
+            )
         if args.output:
             args.output.parent.mkdir(parents=True, exist_ok=True)
             args.output.write_text(json.dumps(report, indent=2) + "\n", encoding="utf-8")

@@ -67,6 +67,9 @@ class Settings:
     nvenc_ffmpeg: str = ""
     openai_api_key: str = field(default_factory=read_openai_key, repr=False)
     highlight_model: str = "gpt-6-luna"
+    highlight_vision_model: str = "gpt-4.1-mini"
+    highlight_media_samples: int = 6
+    highlight_media_seconds: int = 55
     highlight_max_windows: int = 64
     highlight_max_input_bytes: int = 2 * 1024**2
     highlight_output_tokens: int = 2048
@@ -119,6 +122,12 @@ class Settings:
             raise ValueError("Set CLIPPING_PUBLIC_ORIGIN when setting a gateway token.")
         if not self.highlight_model or len(self.highlight_model) > 120:
             raise ValueError("CLIPPING_HIGHLIGHT_MODEL must be a model ID.")
+        if not self.highlight_vision_model or len(self.highlight_vision_model) > 120:
+            raise ValueError("CLIPPING_HIGHLIGHT_VISION_MODEL must be a model ID.")
+        if not 1 <= self.highlight_media_samples <= 12:
+            raise ValueError("CLIPPING_HIGHLIGHT_MEDIA_SAMPLES must be between 1 and 12.")
+        if not 5 <= self.highlight_media_seconds <= 180:
+            raise ValueError("CLIPPING_HIGHLIGHT_MEDIA_SECONDS must be between 5 and 180.")
         if not 1 <= self.highlight_max_windows <= 192:
             raise ValueError("CLIPPING_HIGHLIGHT_MAX_WINDOWS must be between 1 and 192.")
 
@@ -203,5 +212,21 @@ class Settings:
                 os.environ.get("CLIPPING_MODEL_DIR", str(ROOT / ".tools" / "models" / "small.en"))
             ).resolve(),
             highlight_model=os.environ.get("CLIPPING_HIGHLIGHT_MODEL", "gpt-6-luna"),
+            highlight_vision_model=os.environ.get(
+                "CLIPPING_HIGHLIGHT_VISION_MODEL",
+                values.get("CLIPPING_HIGHLIGHT_VISION_MODEL") or "gpt-4.1-mini",
+            ),
+            highlight_media_samples=int(
+                os.environ.get(
+                    "CLIPPING_HIGHLIGHT_MEDIA_SAMPLES",
+                    values.get("CLIPPING_HIGHLIGHT_MEDIA_SAMPLES") or "6",
+                )
+            ),
+            highlight_media_seconds=int(
+                os.environ.get(
+                    "CLIPPING_HIGHLIGHT_MEDIA_SECONDS",
+                    values.get("CLIPPING_HIGHLIGHT_MEDIA_SECONDS") or "55",
+                )
+            ),
             highlight_max_windows=int(os.environ.get("CLIPPING_HIGHLIGHT_MAX_WINDOWS", "64")),
         )

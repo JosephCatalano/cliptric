@@ -43,7 +43,7 @@ def test_actual_caption_presets_thumbnails_trim_zip_and_reopen(
     calls, subtitles = [], []
 
     class Provider:
-        async def suggest(self, window, request):
+        async def suggest(self, window, request, *, context=None):
             calls.append(request)
             return ProviderResult(
                 ProposedHighlights(

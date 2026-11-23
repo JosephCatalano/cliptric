@@ -50,7 +50,7 @@ class SyntheticProvider:
         self.entered = threading.Event()
         self.empty = False
 
-    async def suggest(self, window, request):
+    async def suggest(self, window, request, *, context=None):
         self.calls.append((window, request))
         self.entered.set()
         while self.hold:

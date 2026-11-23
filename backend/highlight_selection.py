@@ -25,6 +25,7 @@ class Segment:
     start: float
     end: float
     text: str
+    continuation: bool = False
 
 
 def build_segments(words: list[TranscriptWord], duration: float) -> list[Segment]:
@@ -32,6 +33,7 @@ def build_segments(words: list[TranscriptWord], duration: float) -> list[Segment
     group: list[TranscriptWord] = []
     previous_start = -1.0
     previous_id = -1
+    continuation = False
 
     def flush() -> None:
         if group:
@@ -41,6 +43,7 @@ def build_segments(words: list[TranscriptWord], duration: float) -> list[Segment
                     group[0].start,
                     max(w.end for w in group),
                     " ".join(w.text for w in group),
+                    continuation,
                 )
             )
             group.clear()
@@ -52,10 +55,15 @@ def build_segments(words: list[TranscriptWord], duration: float) -> list[Segment
         if not word.text:
             continue
         if group and (word.start - group[-1].end > 1.5 or word.end - group[0].start > 12):
+            split_sentence = word.start - group[-1].end < 0.45 and not re.search(
+                r"[.!?][\"')\]]?$", group[-1].text
+            )
             flush()
+            continuation = split_sentence
         group.append(word)
         if re.search(r"[.!?][\"')\]]?$", word.text) and word.end - group[0].start >= 1:
             flush()
+            continuation = False
     flush()
     return segments
 
@@ -146,6 +154,7 @@ def window_text(window: list[Segment]) -> str:
                 "start": round(segment.start, 3),
                 "end": round(segment.end, 3),
                 "text": segment.text,
+                **({"continues_previous": True} if segment.continuation else {}),
             }
             for segment in window
         ],
@@ -205,6 +214,11 @@ def ground_candidates(
         text = " ".join(s.text for s in selected)
         quality = proposal.quality
         if request.quality_mode:
+            if selected[0].continuation or (
+                last + 1 < len(window) and window[last + 1].continuation
+            ):
+                rejected["mid_thought_boundary"] += 1
+                continue
             if derive_boundary_evidence and quality is not None:
                 quality = quality.model_copy(
                     update={
@@ -274,6 +288,7 @@ def rank_unique(
     *,
     iou_threshold: float = 0.65,
     evidence_threshold: float = 0.5,
+    exact_only: bool = False,
 ) -> list[Candidate]:
     """Rank one source at a time. Require shared evidence for fuzzy time matches."""
     selected: list[tuple[Candidate, set[str]]] = []
@@ -288,10 +303,20 @@ def rank_unique(
             similarity = len(words & other_words) / max(1, len(words | other_words))
             if (
                 candidate.fingerprint == other.fingerprint
-                or (candidate.start == other.start and candidate.end == other.end)
-                or (intersection / union >= iou_threshold and similarity >= evidence_threshold)
                 or (
-                    intersection == min(candidate.end - candidate.start, other.end - other.start)
+                    candidate.start == other.start
+                    and candidate.end == other.end
+                    and (not exact_only or bool(candidate.visual) == bool(other.visual))
+                )
+                or (
+                    not exact_only
+                    and intersection / union >= iou_threshold
+                    and similarity >= evidence_threshold
+                )
+                or (
+                    not exact_only
+                    and intersection
+                    == min(candidate.end - candidate.start, other.end - other.start)
                     and candidate.evidence == other.evidence
                 )
             ):

@@ -170,7 +170,7 @@ def test_overlapping_windows_send_a_unique_shortlist_and_review_can_drop_leads(
     )
     windows = []
 
-    async def discover(window, options):
+    async def discover(window, options, *, context=None):
         windows.append(window)
         first = window[0].id
         proposals = (
@@ -187,7 +187,7 @@ def test_overlapping_windows_send_a_unique_shortlist_and_review_can_drop_leads(
     async def review(payload, options, limit):
         assert len(windows) == 2
         data = json.loads(payload)
-        assert [option["lead_start"] for option in data] == [50, 20]
+        assert [option["lead_start"] for option in data] == [50, 20, 15]
         return (
             EditorialProposal(
                 candidates=[
@@ -202,8 +202,8 @@ def test_overlapping_windows_send_a_unique_shortlist_and_review_can_drop_leads(
     monkeypatch.setattr(manager.reviewer, "review", review)
     job = finished(manager, manager.submit(recording.id, request(transcript)).id)
     assert job.status == "succeeded" and job.requests_made == 3
-    assert job.discovered_candidates == 4 and job.editorial_options == 2
-    assert job.discovery_duplicates == 2 and job.discovery_rejections == {"duration": 1}
+    assert job.discovered_candidates == 4 and job.editorial_options == 3
+    assert job.discovery_duplicates == 1 and job.discovery_rejections == {"duration": 1}
     assert [(c.start, c.end, c.title) for c in job.candidates] == [
         (20, 44, "Selected after global review"),
     ]

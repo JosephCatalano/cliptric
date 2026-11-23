@@ -45,8 +45,10 @@ export default function PrivacyPage() {
           If you approve AI video review, highlight analysis, caption emphasis
           or supplied-clip titles, Cliptric sends the relevant saved transcript
           text and, where needed, source timestamps to OpenAI. Project-specific
-          AI instructions are included when supplied for that task. These
-          requests do not send the source video or audio. If you import a
+          AI instructions are included when supplied for that task. If you
+          enable sampled frame analysis, Cliptric also sends a small set of
+          still images and timestamped measurements derived from audio.
+          The original video and audio files stay on your computer. If you import a
           YouTube or Twitch VOD link, Cliptric contacts that provider and its
           media services to retrieve the video. When you approve a post,
           Cliptric sends the selected exported video and your chosen publishing

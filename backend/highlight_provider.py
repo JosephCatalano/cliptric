@@ -6,7 +6,8 @@ import httpx2
 from pydantic import BaseModel
 
 from .config import Settings
-from .highlight_models import HighlightError, HighlightRequest, ProposedHighlights, ProviderResult
+from .highlight_context import PROFILES
+from .highlight_models import DiscoveryProposal, HighlightError, HighlightRequest, ProviderResult
 from .highlight_selection import Segment, window_text
 from .prompt_settings import request_prompt
 
@@ -27,6 +28,15 @@ same event. Use actual inclusive segment IDs. Check last end minus first start a
 and max_seconds, including gaps. Keep meaningful adjacent setup or response when it completes the
 beat and fits the bounds. Skip a beat if it only fits by adding filler. Quote 8-320 exact contiguous
 characters from inside the chosen range. Give a faithful temporary title and reason. Set quality to null.
+Use the chapter excerpts and shared terms to search for setups, questions, answers, turning points
+and callbacks. The chapter map is an index, not proof of a story relationship. Use the actual
+timed segments to propose a cut. Where provided, audio measurements and visual observations can
+guide attention, but do not prove audience reactions, emotions, or events between sampled frames.
+For narrative, return up to three concise notes for consequential sections across this window.
+Label the narrative role and summarize what happens, with exact boundary segment IDs and an exact
+contiguous supporting quote. Include noteworthy setups or questions even if their resolution is
+outside the window. Return an empty array if there is no substantive narrative. Do not ascribe
+identity to an unlabelled speaker.
 """
 
 
@@ -35,17 +45,21 @@ class OpenAIHighlights:
         self.settings = settings
         self.transport = transport
 
-    async def suggest(self, window: list[Segment], request: HighlightRequest) -> ProviderResult:
+    async def suggest(
+        self, window: list[Segment], request: HighlightRequest, *, context: dict | None = None
+    ) -> ProviderResult:
         if not self.settings.openai_api_key:
             raise HighlightError(
                 "Configure a backend OpenAI API key before analysing transcripts.", 503
             )
-        schema = ProposedHighlights.model_json_schema()
+        schema = DiscoveryProposal.model_json_schema()
+        schema["required"] = list(schema["properties"])
         # Strict structured output requires optional nullable fields to be listed
         # as required too; older saved/provider fixtures still load with null defaults.
         schema["$defs"]["ProposedCandidate"]["required"] = list(
             schema["$defs"]["ProposedCandidate"]["properties"]
         )
+        schema["$defs"]["ProposedCandidate"]["properties"]["quality"].pop("default", None)
         body = {
             "model": self.settings.highlight_model,
             "store": False,
@@ -62,6 +76,9 @@ class OpenAIHighlights:
                     "max_seconds": request.max_seconds,
                     "max_candidates": min(5, request.max_candidates),
                     "quality_mode": False,
+                    "content_profile": request.content_profile,
+                    "profile_guidance": PROFILES[request.content_profile].guidance,
+                    "source_context": context or {},
                     **(
                         {"project_instructions": request.ai_instructions}
                         if request.ai_instructions
@@ -132,7 +149,7 @@ class OpenAIHighlights:
 
     @staticmethod
     def parse(raw: bytes) -> ProviderResult:
-        return ProviderResult(*parse_highlight_response(raw, ProposedHighlights))
+        return ProviderResult(*parse_highlight_response(raw, DiscoveryProposal))
 
 
 def parse_highlight_response(

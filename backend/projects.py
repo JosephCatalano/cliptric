@@ -140,6 +140,10 @@ class Projects:
                             project.progress = 0.5 + 0.25 * project.step_progress
                         if analysis.editorial_status == "reviewing":
                             project.stage = "AI editorial review: comparing promising moments"
+                        elif analysis.media_status == "sampling":
+                            project.stage = "Sampling frames and measuring audio"
+                        elif analysis.media_status == "reviewing":
+                            project.stage = "AI is inspecting sampled frames"
                 for item in project.items:
                     item.post_copy_stale = bool(
                         (item.post_copy or item.post_copy_selected)
@@ -273,10 +277,10 @@ class Projects:
             )
             if not recording:
                 raise HTTPException(404, "Recording not found.")
-            if not recording.has_audio:
+            if not recording.has_audio and not request.settings.multimodal:
                 raise HTTPException(
                     422,
-                    "Automatic spoken highlights require a recording with audio. Use the manual studio for silent video.",
+                    "This recording has no audio. Enable sampled frame analysis or use the manual studio.",
                 )
             if request.settings.analysis_end > recording.duration:
                 raise HTTPException(422, "Analysis range exceeds the source duration.")
@@ -804,7 +808,7 @@ class Projects:
             (lambda: self.youtube.cancel(prior.id)) if owned else None,
         )
         recording = self.store.recording(prior.recording_id)
-        if not recording or not recording.has_audio:
+        if not recording or (not recording.has_audio and not project.settings.multimodal):
             raise HTTPException(422, "Downloaded video has no supported audio.")
         # YouTube metadata rounds duration to seconds; probe is frame-accurate.
         if project.settings.analysis_end > recording.duration + 1:
@@ -908,7 +912,11 @@ class Projects:
                     self.records.save(project)
                 transcript = self._available(
                     identifier,
-                    lambda: self.transcriptions.submit(project.recording_id, identifier=child_id),
+                    lambda: self.transcriptions.submit(
+                        project.recording_id,
+                        identifier=child_id,
+                        allow_no_audio=project.settings.multimodal,
+                    ),
                 )
                 owned = transcript.id == child_id
             else:
@@ -957,6 +965,8 @@ class Projects:
                     revision=transcript.revision,
                     remote_consent=True,
                     quality_mode=s.quality_mode,
+                    content_profile=s.content_profile,
+                    multimodal=s.multimodal,
                     analysis_start=s.analysis_start,
                     analysis_end=min(
                         s.analysis_end, self.store.recording(project.recording_id).duration
@@ -1013,6 +1023,7 @@ class Projects:
                     candidate for candidate in result.candidates if candidate.review != "rejected"
                 ]
                 project.analysis_cache_hit = result.cache_hit
+                project.media_analysis_warning = result.media_warning
                 if project.avoid_used_clips:
                     blocked = self.records.used_ranges(project.recording_id)
                     unused = []
@@ -1030,12 +1041,18 @@ class Projects:
                         headline_enabled=project.settings.headline_enabled,
                         headline_position=project.settings.headline_position,
                         editorial_quality=c.quality,
+                        selection_reason=c.reason,
+                        selection_score=c.score,
+                        selection_evidence=c.evidence,
+                        selection_visual=c.visual,
                         id=str(uuid4()),
                         candidate_id=c.id,
                         title=c.title,
                         start=c.start,
                         end=c.end,
-                        caption_preset=project.settings.caption_preset,
+                        caption_preset=project.settings.caption_preset
+                        if transcript.word_count
+                        else "none",
                         caption_customization=project.settings.caption_customization,
                         emphasis_words=project.settings.emphasis_words,
                         caption_position=project.settings.caption_position,

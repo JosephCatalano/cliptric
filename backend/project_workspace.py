@@ -103,6 +103,7 @@ def create_workspace_router(manager):
     @router.post("/api/project-presets", status_code=201)
     def save_preset(request: PresetRequest):
         identifier = str(uuid4())
+        request.settings.multimodal = False
         with manager.store.connection() as db:
             db.execute("BEGIN IMMEDIATE")
             if any(

@@ -117,12 +117,23 @@ export const defaultQuality: QualityOptions = {
   removals: [],
   smart_framing: null,
 };
+export type ContentProfile =
+  | "auto"
+  | "comedy"
+  | "podcast"
+  | "gaming"
+  | "interview"
+  | "education"
+  | "entertainment";
+
 export type ProjectSettings = {
   batch_mode?: "keep" | "auto" | "highlights";
   clips_per_source?: number;
   presentation_mode?: "off" | "auto" | "talking_head" | "podcast" | "gameplay";
   ai_instructions?: string;
   quality_mode?: boolean;
+  content_profile?: ContentProfile;
+  multimodal?: boolean;
   audio_cleanup?: "off" | "light" | "standard";
   normalize_audio?: boolean;
   analysis_start: number;
@@ -174,6 +185,10 @@ export type ProjectItem = {
   analysis_attempted?: boolean;
   analysis_complete?: boolean;
   analysis_reason?: string | null;
+  selection_reason?: string | null;
+  selection_score?: number | null;
+  selection_evidence?: string | null;
+  selection_visual?: { frame_times: number[]; description: string } | null;
   analysis_start?: number | null;
   analysis_end?: number | null;
   analysis_error?: string | null;
@@ -254,6 +269,7 @@ export type Project = {
   youtube_source_id: string | null;
   source_thumbnail_url: string | null;
   progress: number;
+  media_analysis_warning?: string | null;
   title: string;
   created_at: string;
   settings: ProjectSettings;

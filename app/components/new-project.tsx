@@ -244,7 +244,7 @@ export function NewProject({
   const minimum = settings.duration_mode === "auto" ? 8 : settings.min_seconds;
   const validRange = settings.analysis_end - settings.analysis_start >= minimum;
   const flow = useCreationFlow(
-    Boolean(source?.has_audio && title.trim() && validRange),
+    Boolean(source && title.trim() && validRange),
     validRange && (settings.framing !== "split" || Boolean(mediaSource)),
     busy,
   );
@@ -409,19 +409,32 @@ export function NewProject({
                     </AlertDescription>
                   </Alert>
                 ) : null}
-                {!source.has_audio ? (
-                  <Alert role="alert" variant="destructive">
-                    <AlertDescription>
-                      This video has no audio.{" "}
-                      <Link href="/studio">Use the manual studio</Link> to clip
-                      it.
-                    </AlertDescription>
-                  </Alert>
-                ) : null}
               </CreationPanel>
               <CreationPanel value={1} active={flow.step}>
                 <h2>Make it your style</h2>
                 <FieldGroup className="grid gap-4 sm:grid-cols-2">
+                  <Field>
+                    <FieldLabel htmlFor={fieldId + "-profile"}>Content type</FieldLabel>
+                    <NativeSelect
+                      id={fieldId + "-profile"}
+                      disabled={busy}
+                      value={settings.content_profile ?? "auto"}
+                      onChange={(event) =>
+                        setSettings((current) => ({
+                          ...current,
+                          content_profile: event.target.value as ProjectSettings["content_profile"],
+                        }))
+                      }
+                    >
+                      <NativeSelectOption value="auto">Auto detect</NativeSelectOption>
+                      <NativeSelectOption value="comedy">Comedy</NativeSelectOption>
+                      <NativeSelectOption value="podcast">Podcast</NativeSelectOption>
+                      <NativeSelectOption value="gaming">Gaming</NativeSelectOption>
+                      <NativeSelectOption value="interview">Interview or debate</NativeSelectOption>
+                      <NativeSelectOption value="education">Educational</NativeSelectOption>
+                      <NativeSelectOption value="entertainment">Entertainment</NativeSelectOption>
+                    </NativeSelect>
+                  </Field>
                   <Field>
                     <FieldLabel htmlFor={`${fieldId}-2`}>
                       Clip duration
@@ -731,15 +744,6 @@ export function NewProject({
                     </AlertDescription>
                   </Alert>
                 ) : null}
-                {!source.has_audio ? (
-                  <Alert role="alert" variant="destructive">
-                    <AlertDescription>
-                      This video has no audio.{" "}
-                      <Link href="/studio">Use the manual studio</Link> to clip
-                      it.
-                    </AlertDescription>
-                  </Alert>
-                ) : null}
               </CreationPanel>
               <CreationPanel value={2} active={flow.step}>
                 <h2>Ready to create</h2>
@@ -775,10 +779,31 @@ export function NewProject({
                     each clip (additional AI usage).
                   </FieldLabel>
                 </Field>
+                <Field orientation="horizontal">
+                  <Checkbox
+                    id={fieldId + "-multimodal"}
+                    checked={settings.multimodal ?? false}
+                    disabled={busy}
+                    onCheckedChange={(checked) =>
+                      setSettings((current) => ({ ...current, multimodal: checked === true }))
+                    }
+                  />
+                  <FieldLabel htmlFor={fieldId + "-multimodal"}>
+                    Include sampled video frames for visual moments (one additional OpenAI request)
+                  </FieldLabel>
+                </Field>
+                {!source.has_audio && !settings.multimodal && (
+                  <Alert>
+                    <AlertDescription>
+                      This video has no audio. Enable frame analysis or open the{" "}
+                      <Link href="/studio">manual studio</Link>.
+                    </AlertDescription>
+                  </Alert>
+                )}
                 <p>
-                  Creating shares saved transcript text and timestamps with
-                  OpenAI. API charges apply. Your video stays local; AI may
-                  return fewer clips.
+                  Creating shares saved transcript text and timestamps with OpenAI.
+                  If enabled, Cliptric also sends a small set of still images and local audio measurements.
+                  Full video and audio files stay on this computer. API charges apply.
                 </p>
               </CreationPanel>
               <CreationFooter
@@ -788,7 +813,7 @@ export function NewProject({
                   <Button
                     type="submit"
                     disabled={
-                      !source.has_audio ||
+                      (!source.has_audio && !settings.multimodal) ||
                       !validRange ||
                       busy ||
                       (settings.framing === "split" && !mediaSource)

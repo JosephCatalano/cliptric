@@ -90,14 +90,23 @@ class Transcriptions:
         with self.lock:
             return self.transcripts.job(self.active) if self.active else None
 
-    def submit(self, recording_id: str, *, identifier: str | None = None) -> TranscriptionJob:
+    def submit(
+        self, recording_id: str, *, identifier: str | None = None, allow_no_audio: bool = False
+    ) -> TranscriptionJob:
         recording = self._recording(recording_id)
-        if not recording.has_audio:
+        if not recording.has_audio and not allow_no_audio:
             raise TranscriptionError("This recording has no audio to transcribe.")
         with self.lock:
             if self.stopping:
                 raise TranscriptionError(
                     "Transcription service is stopping. Retry after restart.", 503
+                )
+            if not recording.has_audio:
+                current = self.transcripts.latest(recording_id)
+                if current and current.status == "succeeded":
+                    return current
+                return self.transcripts.create(
+                    identifier or str(uuid4()), recording_id, silent_source=True
                 )
             if self.active is not None:
                 current = self.transcripts.job(self.active)

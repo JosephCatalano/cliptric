@@ -82,13 +82,24 @@ class TranscriptStore:
             ).fetchone()
             return TranscriptionJob.model_validate(dict(row)) if row else None
 
-    def create(self, transcription_id: str, recording_id: str) -> TranscriptionJob:
+    def create(
+        self, transcription_id: str, recording_id: str, *, silent_source: bool = False
+    ) -> TranscriptionJob:
         with self.store.connection() as db:
             db.execute(
                 "INSERT INTO transcriptions "
-                "(id,recording_id,status,model,language,created_at,updated_at) "
-                "VALUES (?,?,'queued','small.en','en',?,?)",
-                (transcription_id, recording_id, now(), now()),
+                "(id,recording_id,status,model,language,created_at,updated_at,revision,progress,warning) "
+                "VALUES (?,?,?,'small.en','en',?,?,?,?,?)",
+                (
+                    transcription_id,
+                    recording_id,
+                    "succeeded" if silent_source else "queued",
+                    now(),
+                    now(),
+                    int(silent_source),
+                    float(silent_source),
+                    "No audio track. No speech was transcribed." if silent_source else None,
+                ),
             )
         job = self.job(transcription_id)
         if job is None:

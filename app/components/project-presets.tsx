@@ -125,6 +125,7 @@ export function ProjectPresets({
             if (!preset) return;
             onApply({
               ...preset.settings,
+              multimodal: settings.multimodal ?? false,
               analysis_start: settings.analysis_start,
               analysis_end: settings.analysis_end,
               duration_mode:

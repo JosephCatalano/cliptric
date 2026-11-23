@@ -39,7 +39,7 @@ class SyntheticProvider:
         self.error = None
         self.cancelled = False
 
-    async def suggest(self, window, request):
+    async def suggest(self, window, request, *, context=None):
         self.calls += 1
         self.entered.set()
         try:
@@ -237,7 +237,7 @@ def test_transcript_change_stops_remaining_billable_windows(service):
         )
     original = provider.suggest
 
-    async def changing(window, payload):
+    async def changing(window, payload, *, context=None):
         result = await original(window, payload)
         manager.transcripts.patch(
             transcript.id, WordsPatch(revision=1, updates=[{"id": 0, "text": "Changed evidence."}])
@@ -422,7 +422,7 @@ def test_pool_keeps_unused_candidates_and_invalidates_changed_instructions(servi
     manager, recording, transcript, provider = service
     original = provider.suggest
 
-    async def multiple(window, payload):
+    async def multiple(window, payload, *, context=None):
         result = await original(window, payload)
         assert payload.max_candidates == 5
         one = result.candidates.candidates[0]
