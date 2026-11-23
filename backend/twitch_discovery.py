@@ -13,6 +13,7 @@ from fastapi import APIRouter, HTTPException, Query, Request
 from fastapi.responses import JSONResponse, RedirectResponse
 from pydantic import BaseModel, Field
 
+from .autopilot import POLL_ENABLED, Autopilot
 from .twitch_editor import CALLBACK
 from .twitch_helix import ScanSettings, TwitchClip, TwitchError, TwitchHelix
 from .twitch_intake import Grant, ImportRequest
@@ -226,6 +227,7 @@ class TwitchDiscovery:
                     "revision": pending["revision"],
                     "settings": pending["settings"],
                     "source_ids": pending["source_ids"],
+                    "managed_manual": Autopilot.enrollment(db, row["id"]) is not None,
                 }
             if identifier:
                 row = self.require(db, identifier)
@@ -233,7 +235,8 @@ class TwitchDiscovery:
                 if not self.api.configured:
                     return None
                 row = db.execute(
-                    "SELECT * FROM twitch_scans WHERE enabled=1 AND next_run<=? ORDER BY next_run LIMIT 1",
+                    f"SELECT s.* FROM twitch_scans s WHERE enabled=1 AND next_run<=? AND {POLL_ENABLED} "
+                    "ORDER BY next_run LIMIT 1",
                     (stamp,),
                 ).fetchone()
                 if not row:
@@ -257,12 +260,23 @@ class TwitchDiscovery:
                     "UPDATE twitch_scans SET next_run=? WHERE id=?",
                     (stamp + row["interval_minutes"] * 60, row["id"]),
                 )
-            return run_id, row
+            enrollment = Autopilot.enrollment(db, row["id"]) if not identifier else None
+            return run_id, {
+                **dict(row),
+                "autopilot": dict(enrollment) if enrollment else None,
+            }
 
     def execute(self, run_id, row):
         stamp = time.time()
         try:
             settings = ScanSettings.model_validate_json(row["settings"])
+            autopilot = row.get("autopilot")
+            if autopilot:
+                settings = settings.model_copy(
+                    update={"auto_prepare": autopilot["mode"] == "prepare"}
+                )
+            elif row.get("managed_manual"):
+                settings = settings.model_copy(update={"auto_prepare": False})
             ranked, detail = self.scan(settings, json.loads(row["source_ids"]), stamp)
             clips = ranked[: settings.limit]
             status = "partial" if detail else "complete"
@@ -274,7 +288,12 @@ class TwitchDiscovery:
                     eligible = [clip for clip in ranked if not self.is_hidden(clip.id, stamp)]
                     try:
                         processed = self.intake.enqueue(
-                            row["id"], settings, eligible, automatic=True, revision=row["revision"]
+                            row["id"],
+                            settings,
+                            eligible,
+                            automatic=True,
+                            revision=row["revision"],
+                            autopilot=autopilot,
                         )
                         if processed < min(settings.import_limit, len(eligible)):
                             detail = " ".join(

@@ -1,5 +1,6 @@
 """Rights and duplicate checks shared by Twitch processing and existing publishers."""
 
+import json
 import time
 from contextlib import nullcontext
 
@@ -18,7 +19,7 @@ def source_rights(db, recording_id):
     ).fetchone():
         return None
     return db.execute(
-        "SELECT j.clip_id,r.expires,r.can_publish,r.can_share,a.editor_id,a.validated "
+        "SELECT j.clip_id,j.options,r.expires,r.can_publish,r.can_share,a.editor_id,a.validated "
         "FROM twitch_intake j LEFT JOIN twitch_rights r ON r.broadcaster_id=j.broadcaster_id "
         "AND r.editor_id=j.editor_id LEFT JOIN twitch_editor a ON a.slot=1 AND a.editor_id=j.editor_id "
         "WHERE j.recording_id=?",
@@ -44,6 +45,23 @@ def processing_error(store, recording_id, *, ai=False):
     return None
 
 
+def autopilot_quality_error(db, source, clip):
+    policy = json.loads(source["options"])
+    if policy.get("autopilot_revision") is None:
+        return None
+    if (clip["duration"] or 0) < policy.get("minimum_seconds", 0):
+        return "Finished clip is shorter than this run's minimum duration."
+    if (
+        policy.get("require_captions")
+        and not db.execute(
+            "SELECT 1 FROM clip_captions WHERE clip_id=? AND json_array_length(words)>0",
+            (clip["id"],),
+        ).fetchone()
+    ):
+        return "This run requires captions in the finished export."
+    return None
+
+
 def publishing_error(store, export_id, platform, account_id, job_id, *, reserve=False, db=None):
     table = TABLES[platform]
     context = store.connection() if db is None else nullcontext(db)
@@ -51,13 +69,15 @@ def publishing_error(store, export_id, platform, account_id, job_id, *, reserve=
         if reserve:
             connection.execute("BEGIN IMMEDIATE")
         clip = connection.execute(
-            "SELECT recording_id FROM clips WHERE id=?", (str(export_id),)
+            "SELECT id,recording_id,duration FROM clips WHERE id=?", (str(export_id),)
         ).fetchone()
-        source = source_rights(connection, clip[0]) if clip else None
+        source = source_rights(connection, clip["recording_id"]) if clip else None
         if not source:
             return None
         if not active(source) or not source["can_publish"]:
             return "Current Twitch reuse rights do not permit publishing this clip."
+        if quality := autopilot_quality_error(connection, source, clip):
+            return quality
         destination = "*" if platform == "x" else account_id
         key = (source["clip_id"], platform, destination)
         claim = connection.execute(

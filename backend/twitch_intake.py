@@ -12,6 +12,7 @@ import httpx2
 from fastapi import HTTPException
 from pydantic import BaseModel, Field, field_validator
 
+from .autopilot import Autopilot
 from .files import remove_artifact, require_space
 from .models import Recording
 from .project_models import ProjectCreate, ProjectSettings
@@ -184,10 +185,22 @@ class TwitchIntake:
             (broadcaster, editor, stamp, stamp - 3600),
         ).fetchone()
 
-    def enqueue(self, scan_id, settings, clips, *, automatic, revision=None):
+    def enqueue(self, scan_id, settings, clips, *, automatic, revision=None, autopilot=None):
         stamp = time.time()
         with self.store.connection() as db:
             db.execute("BEGIN IMMEDIATE")
+            if autopilot:
+                current = Autopilot.enrollment(db, scan_id)
+                if (
+                    not current
+                    or not current["enabled"]
+                    or current["mode"] != "prepare"
+                    or current["revision"] != autopilot["revision"]
+                ):
+                    raise HTTPException(
+                        409,
+                        "Autopilot changed during this scan. The results remain available for review.",
+                    )
             if (
                 revision is not None
                 and not db.execute(
@@ -212,7 +225,8 @@ class TwitchIntake:
                 ).fetchone()[0]
             )
             # One source per project, two optional paid operations per source.
-            paid = int(settings.ai_titles) + int(settings.ai_copy)
+            ai_review = bool(autopilot and autopilot["ai_review"])
+            paid = int(settings.ai_titles) + int(settings.ai_copy) + int(ai_review)
             ai_remaining = (
                 settings.daily_ai_limit
                 - db.execute(
@@ -239,6 +253,10 @@ class TwitchIntake:
                 "ai_copy": settings.ai_copy,
                 "paid": paid,
                 "auto": automatic,
+                "ai_review": ai_review,
+                "autopilot_revision": autopilot["revision"] if autopilot else None,
+                "minimum_seconds": autopilot["minimum_seconds"] if autopilot else 0,
+                "require_captions": bool(autopilot and autopilot["require_captions"]),
                 "storage_limit_mib": settings.storage_limit_mib,
             }
             count = 0
@@ -299,8 +317,14 @@ class TwitchIntake:
             db.execute("BEGIN IMMEDIATE")
             job = db.execute(
                 "SELECT j.* FROM twitch_intake j LEFT JOIN twitch_scans s ON s.id=j.scan_id "
-                "WHERE j.status='queued' AND (json_extract(j.options,'$.auto')=0 OR "
-                "(s.id IS NOT NULL AND json_extract(s.settings,'$.auto_prepare')=1)) "
+                "WHERE j.status='queued' AND (json_extract(j.options,'$.auto')=0 OR ("
+                "(json_extract(j.options,'$.autopilot_revision') IS NULL AND "
+                " json_extract(s.settings,'$.auto_prepare')=1 AND "
+                " NOT EXISTS(SELECT 1 FROM autopilot_scans a WHERE a.scan_id=s.id)) OR "
+                "(json_extract(j.options,'$.autopilot_revision') IS NOT NULL AND s.enabled=1 AND "
+                " EXISTS(SELECT 1 FROM autopilot_scans a CROSS JOIN autopilot_settings b "
+                " WHERE a.scan_id=s.id AND a.scan_revision=s.revision "
+                " AND b.id=1 AND b.enabled=1 AND b.mode='prepare')))) "
                 "AND COALESCE(json_extract(j.options,'$.retry_at'),0)<=? ORDER BY j.queued LIMIT 1",
                 (time.time(),),
             ).fetchone()
@@ -417,7 +441,9 @@ class TwitchIntake:
                         "analysis_start": 0,
                         "analysis_end": recording.duration,
                         "duration_mode": "full",
-                        "batch_mode": "keep",
+                        "batch_mode": "auto"
+                        if options.get("ai_review") and recording.has_audio
+                        else "keep",
                         "multimodal": False,
                     }
                 ),

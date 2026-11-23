@@ -12,6 +12,7 @@ from fastapi.responses import FileResponse, JSONResponse
 from starlette.concurrency import run_in_threadpool
 from starlette.requests import ClientDisconnect
 
+from .autopilot import Autopilot, create_autopilot_router
 from .boundary import RequestBoundary
 from .caption_emphasis import create_emphasis_router
 from .caption_styles import CaptionStyles, create_caption_style_router
@@ -115,6 +116,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         store, tiktok, youtube_publishing, instagram=instagram, x=x_publishing, facebook=facebook
     )
     discovery = TwitchDiscovery(store)
+    autopilot = Autopilot(discovery)
     twitch_editor = TwitchEditor(store, discovery.api, settings)
     discovery.intake = TwitchIntake(store, twitch_editor, projects, media, settings)
     deletions = Deletions(
@@ -149,6 +151,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
             facebook.initialize()
             scheduler.initialize()
             discovery.initialize()
+            autopilot.initialize()
             twitch_editor.initialize()
             discovery.intake.initialize()
             deletions.initialize()
@@ -219,6 +222,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
     app.include_router(create_tiktok_router(tiktok))
     app.include_router(create_youtube_publishing_router(youtube_publishing))
     app.include_router(create_scheduling_router(scheduler))
+    app.include_router(create_autopilot_router(autopilot))
     app.include_router(
         create_twitch_discovery_router(discovery, twitch_editor, deletions, previews)
     )

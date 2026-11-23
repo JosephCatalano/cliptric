@@ -1,0 +1,29 @@
+# Cliptric Autopilot verification
+
+## Implemented workflow
+
+Autopilot enrolls existing saved Twitch scans and runs either discovery or draft preparation. The master control pauses enrolled scheduled work, while the Discover workspace remains available for manual searches. The preparation path uses the existing Twitch OAuth and download adapter, rights checks, duplicate detection, import budgets, supplied-video transcription and editing, local presentation, caption and headline rendering, and optional posting copy. The optional editorial stage uses the existing speech-based keep/trim reviewer. It uses the existing OpenAI backend configuration and requires separate enrollment consent and AI sharing rights.
+
+The central review shows actual Twitch imports, prepared exports, operational warnings, and the existing project link for full editing. It can transition selected current exports into the existing exact-post batch review. Individual scheduling stays in the existing platform reviews. A configurable minimum finished length and a caption requirement are saved with each intake. The central review and publishing adapters both apply these holds. Published or scheduled outcomes remain in the existing publishing records. Dashboard handoff counts do not imply provider-confirmed publication.
+
+## Persistence and recovery
+
+- SQLite adds `autopilot_settings` and `autopilot_scans`. Enrollment records the saved scan revision. Existing intake job options additionally retain the Autopilot revision, editorial choice and quality policy. No media or publishing schemas were replaced.
+- The existing worker claims polls and imports. Enrolled scans stop at the next claim after pause. A run that finishes discovery after pause can retain its results without admitting new imports. Already-started import/project work may finish. Existing approved posts remain on their independent scheduler.
+- Revisions protect enrollment and scan changes. Removing an enrolled scan disables its recurrence and automatic preparation to avoid accidentally restarting the legacy path. Source, billing and post permissions remain independently enforced. The existing scheduler still handles ambiguous provider handoffs and duplicate suppression.
+
+## Verification performed
+
+- **Backend:** `.venv\Scripts\pytest.exe -xq backend/tests/test_autopilot.py backend/tests/test_twitch_discovery.py backend/tests/test_scheduling.py backend/tests/test_batch_review.py` passed **48 tests**. These cover enrollment and restart persistence, manual scans while paused, pause during discovery, changed scan revisions, AI consent, authorized simulated intake, inherited editor results, a caption quality hold at publishing, and the existing approval/scheduling and duplicate protection paths.
+- **Desktop browser:** `npm.cmd run test:e2e -- autopilot.spec.ts --project=desktop` passed. The test creates a real manual scan through the local API, loads Autopilot, selects that saved scan, and sees the activation blocker from the backend. Browser verification did not exercise a live account connection or submit a publishing approval.
+- **Local media:** Real FFmpeg rendered synthetic silent and audio sources through Autopilot into 1080 × 1920 output. The silent export was held when captions were required. The audio export used a simulated timed transcript and keep/trim response, produced a captioned export and reached review. The tests do not measure recognition accuracy, professional editing quality, or audience response.
+- **Static checks:** TypeScript, targeted ESLint, Ruff, and diff whitespace checks passed.
+- **Live providers:** No Twitch authorization or download, paid AI call, or live destination upload was exercised. Operational use requires Twitch developer credentials, broadcaster/editor access and applicable reuse rights. Each publishing destination requires its own configured account and any applicable provider permissions or product approval. The implementation does not certify current access or audit status for an installation.
+
+## Provider boundaries and remaining phases
+
+Twitch discovery can show public clips, but its download endpoint requires authorized broadcaster/editor access. Media reuse and sharing also depend on the applicable rights and terms. [Twitch Clips API](https://dev.twitch.tv/docs/api/reference/clips) · [Twitch developer agreement](https://legal.twitch.com/en/legal/developer-agreement/)
+
+All five configured platform flows continue to require Cliptric's exact-export approval. The reviewed integrations retain their existing provider settings. No standing-approval path has been implemented or verified for this application. TikTok calls for express upload consent and its own user experience; YouTube requires express consent for actions on the user’s behalf; X applies authorization and duplicate-content rules; and Facebook and Instagram require the applicable account capabilities and publishing permissions. [TikTok sharing guidelines](https://developers.tiktok.com/docs/en/content-sharing-guidelines) · [YouTube developer policies](https://developers.google.com/youtube/terms/developer-policies) · [X automation rules](https://help.x.com/en/rules-and-policies/x-automation) · [Facebook Reels publishing](https://developers.facebook.com/documentation/video-api/guides/reels-publishing) · [Instagram Platform](https://developers.facebook.com/docs/instagram-platform/)
+
+The remaining brief includes multimodal gaming and visual-only ranking, cross-clip editorial comparisons, context recovery, the Moment Map and alternate-cut workspace, gaming vocabulary and caption improvements, deeper visual/editorial quality scoring, saved destination and slot rules, analytics feedback, preference learning, and hosted operation. Representative benchmark footage and human judgments are still needed to assess the proposed gain targets. The current release does not establish those gains.
