@@ -108,8 +108,9 @@ def shortlist(
         context_start, context_end = bisect_left(starts, start), bisect_right(starts, end)
         context = segments[context_start:context_end]
         lead_segments = segments[
-            bisect_left(starts, lead.start, context_start, context_end) :
-            bisect_left(starts, lead.end, context_start, context_end)
+            bisect_left(starts, lead.start, context_start, context_end) : bisect_left(
+                starts, lead.end, context_start, context_end
+            )
         ]
         anchored = (
             lead_segments
@@ -122,7 +123,10 @@ def shortlist(
             "lead_end": lead.end,
             "lead_evidence": lead.evidence,
             **(
-                {"lead_first_segment": lead_segments[0].id, "lead_last_segment": lead_segments[-1].id}
+                {
+                    "lead_first_segment": lead_segments[0].id,
+                    "lead_last_segment": lead_segments[-1].id,
+                }
                 if anchored
                 else {}
             ),

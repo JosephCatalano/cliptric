@@ -9,7 +9,7 @@ from .limits import MAX_MEDIA_SECONDS
 from .transcription_models import TranscriptionJob, clean_text
 
 ACTIVE = {"queued", "analysing", "cancelling"}
-PROMPT_VERSION = "transcript-highlights-v7-coverage"
+PROMPT_VERSION = "transcript-highlights-v8-editorial"
 DISCOVERY_VERSION = "windowed-discovery-v2"
 WINDOW_SECONDS = 180
 OVERLAP_SECONDS = 30
