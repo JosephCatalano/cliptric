@@ -40,7 +40,7 @@ import { Separator } from "@/components/ui/separator";
 import { toggleTheme } from "../lib/theme";
 
 const destinations = [
-  { href: "/", label: "Home", icon: HouseIcon },
+  { href: "/workspace", label: "Home", icon: HouseIcon },
   { href: "/projects", label: "Projects", icon: FolderOpenIcon },
   { href: "/studio", label: "Clip editor", icon: ScissorsIcon },
   { href: "/calendar", label: "Schedule", icon: CalendarDaysIcon },
@@ -49,7 +49,7 @@ const destinations = [
 ];
 
 function currentDestination(pathname: string) {
-  if (pathname.startsWith("/projects/new/")) return "/";
+  if (pathname === "/" || pathname.startsWith("/projects/new/")) return "/workspace";
   if (pathname.startsWith("/projects/")) return "/projects";
   if (pathname.startsWith("/publish/")) return "/connections";
   return pathname;
@@ -77,7 +77,7 @@ export function AppSidebar() {
           <SidebarMenuItem>
             <SidebarMenuButton asChild size="lg" tooltip="Cliptric">
               <Link
-                href="/"
+                href="/workspace"
                 aria-label="Cliptric home"
                 aria-disabled={locked}
                 onClick={navigate}

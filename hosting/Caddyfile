@@ -10,34 +10,53 @@ https://cliptric.com {
 		}
 	}
 
-	basic_auth {
-		cliptric {$CLIPPING_PASSWORD_HASH}
-	}
-
 	header {
 		Cache-Control "private, no-store"
 		X-Content-Type-Options nosniff
 		Referrer-Policy no-referrer
+		defer
 	}
 
-	handle /api/import {
-		reverse_proxy 127.0.0.1:3000 {
-			header_up -Authorization
-			header_up X-Cliptric-Gateway {$CLIPPING_GATEWAY_TOKEN}
+	@public {
+		method GET HEAD
+		path / /about /privacy /terms /data-deletion /favicon.ico /icon.png /_next/static/*
+	}
+	handle @public {
+		@home path /
+		redir @home /about 302
+		handle_path /_next/static/* {
+			root * .next/static
+			file_server
 		}
-	}
-
-	handle /api/* {
-		reverse_proxy 127.0.0.1:8765 {
-			header_up -Authorization
-			header_up X-Cliptric-Gateway {$CLIPPING_GATEWAY_TOKEN}
+		handle {
+			reverse_proxy 127.0.0.1:3000 {
+				header_up -Authorization
+				header_up -X-Cliptric-Gateway
+			}
 		}
 	}
 
 	handle {
-		reverse_proxy 127.0.0.1:3000 {
-			header_up -Authorization
-			header_up -X-Cliptric-Gateway
+		basic_auth {
+			cliptric {$CLIPPING_PASSWORD_HASH}
+		}
+		handle /api/import {
+			reverse_proxy 127.0.0.1:3000 {
+				header_up -Authorization
+				header_up X-Cliptric-Gateway {$CLIPPING_GATEWAY_TOKEN}
+			}
+		}
+		handle /api/* {
+			reverse_proxy 127.0.0.1:8765 {
+				header_up -Authorization
+				header_up X-Cliptric-Gateway {$CLIPPING_GATEWAY_TOKEN}
+			}
+		}
+		handle {
+			reverse_proxy 127.0.0.1:3000 {
+				header_up -Authorization
+				header_up -X-Cliptric-Gateway
+			}
 		}
 	}
 }

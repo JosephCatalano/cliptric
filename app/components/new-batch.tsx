@@ -411,7 +411,7 @@ export function NewBatch() {
     <section className="project-workspace new-project-workspace">
       <header className="project-heading">
         <Button asChild variant="outline">
-          <Link href="/">Home</Link>
+          <Link href="/workspace">Home</Link>
         </Button>
         <Button asChild variant="outline">
           <Link href="/projects">Your projects</Link>

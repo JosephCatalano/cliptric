@@ -13,7 +13,7 @@ export default function PrivacyPage() {
       <header>
         <h1>Privacy Policy</h1>
         <p className="mt-2 text-muted-foreground">
-          Last updated: November 21, 2026
+          Last updated: November 22, 2026
         </p>
       </header>
       <p>
@@ -31,7 +31,7 @@ export default function PrivacyPage() {
           Operational logs may contain processing details and errors.
         </p>
         <p className="mt-2">
-          When you connect TikTok, YouTube or Instagram, Cliptric processes
+          When you connect TikTok, YouTube, Instagram, Facebook or X, Cliptric processes
           account or channel identifiers, profile details provided by the
           platform, authorized permissions, access and refresh tokens, and
           publishing records such as captions, visibility settings, upload
@@ -122,9 +122,8 @@ export default function PrivacyPage() {
       <section>
         <h2>Privacy questions and requests</h2>
         <p>
-          Public contact details are pending and will be added before public
-          release. For this local version, the person operating your
-          installation controls access to and removal of its stored data.
+          For privacy questions, email <a href="mailto:hello.cliptric@gmail.com">hello.cliptric@gmail.com</a>.
+          See <Link href="/data-deletion">data deletion</Link> for how to disconnect an account or request removal.
         </p>
       </section>
     </>

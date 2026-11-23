@@ -84,7 +84,7 @@ export default function ProjectsPage() {
         <h1>Your projects</h1>
         <div className="project-actions">
           <Button asChild variant="default">
-            <Link href="/">New project</Link>
+            <Link href="/workspace">New project</Link>
           </Button>
           <Button asChild variant="outline">
             <Link href="/projects/batch">Batch edit supplied clips</Link>
@@ -217,7 +217,7 @@ export default function ProjectsPage() {
               </Button>
             ) : null}
             <Button asChild>
-              <Link href="/">New project</Link>
+              <Link href="/workspace">New project</Link>
             </Button>
           </EmptyContent>
         </Empty>

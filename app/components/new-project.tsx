@@ -252,7 +252,7 @@ export function NewProject({
     <section className="project-workspace new-project-workspace">
       <header className="project-heading">
         <Button asChild variant="outline">
-          <Link href="/">Choose another video</Link>
+          <Link href="/workspace">Choose another video</Link>
         </Button>
         <Button asChild variant="outline">
           <Link href="/projects">Your projects</Link>
