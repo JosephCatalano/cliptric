@@ -92,13 +92,18 @@ export function FramingEditor({
   const [mediaError, setMediaError] = useState(false);
   const picture = useRef<HTMLDivElement>(null);
   const video = useRef<HTMLVideoElement>(null);
-  const [previewPlayer, setPreviewPlayer] = useState<HTMLVideoElement | null>(null);
+  const [previewPlayer, setPreviewPlayer] = useState<HTMLVideoElement | null>(
+    null,
+  );
   const livePreview = previewOptions !== undefined;
-  const mountVideo = useCallback((node: HTMLVideoElement | null) => {
-    video.current = node;
-    if (livePreview) setPreviewPlayer(node);
-    onPlayer?.(node);
-  }, [onPlayer, livePreview]);
+  const mountVideo = useCallback(
+    (node: HTMLVideoElement | null) => {
+      video.current = node;
+      if (livePreview) setPreviewPlayer(node);
+      onPlayer?.(node);
+    },
+    [onPlayer, livePreview],
+  );
   const [dimensions, setDimensions] = useState({
     width: 16,
     height: 9,
@@ -130,7 +135,10 @@ export function FramingEditor({
       : undefined;
   const removals = quality?.removals;
   const kept = useMemo(
-    () => rangeEnd === undefined ? [] : previewIntervals(rangeStart, rangeEnd, removals ?? []),
+    () =>
+      rangeEnd === undefined
+        ? []
+        : previewIntervals(rangeStart, rangeEnd, removals ?? []),
     [rangeStart, rangeEnd, removals],
   );
   const tracking =
@@ -142,10 +150,13 @@ export function FramingEditor({
       ? autoLayout
       : null;
   const viewMode = mode === "auto" ? (decision?.mode ?? "pad") : mode;
-  const smart = mode === "pad" && !cropRegion &&
+  const smart =
+    mode === "pad" &&
+    !cropRegion &&
     quality?.smart_framing?.points[0]?.at === rangeStart &&
     (quality?.smart_framing?.points.at(-1)?.at ?? Infinity) <= (rangeEnd ?? -1)
-    ? quality.smart_framing : null;
+      ? quality.smart_framing
+      : null;
   const regionLabel = mode === "crop" ? "portrait crop" : regionName;
 
   useEffect(() => {
@@ -165,15 +176,24 @@ export function FramingEditor({
     };
     function draw() {
       if (!context || !player || player.readyState < 2) return;
-      if (!player.paused && !player.seeking && rangeEnd !== undefined &&
-        !kept.some(([from, to]) => from <= player.currentTime && player.currentTime < to)) {
+      if (
+        !player.paused &&
+        !player.seeking &&
+        rangeEnd !== undefined &&
+        !kept.some(
+          ([from, to]) => from <= player.currentTime && player.currentTime < to,
+        )
+      ) {
         const next = kept.find(([from]) => from > player.currentTime);
         if (next) {
           player.currentTime = next[0];
           return;
         }
         player.pause();
-        player.currentTime = Math.max(rangeStart, (kept.at(-1)?.[1] ?? rangeEnd) - 0.01);
+        player.currentTime = Math.max(
+          rangeStart,
+          (kept.at(-1)?.[1] ?? rangeEnd) - 0.01,
+        );
       }
       const panel = (
         crop: SourceRegion,
@@ -381,25 +401,47 @@ export function FramingEditor({
   }
 
   return (
-    <>
-    {previewSlot && previewOptions ? createPortal(
-      <LiveClipStage
-        key={sourceUrl}
-        player={previewPlayer}
-        start={rangeStart}
-        end={rangeEnd}
-        kept={kept}
-        options={previewOptions}
-        split={viewMode === "split"}
-        pendingPresentation={(mode === "auto" && !decision) || (viewMode === "follow" && !tracking)}
-        mediaError={mediaError}
-        onRetry={retryPreview}
-      >
-        <canvas ref={canvas} width={432} height={768} className="size-full" aria-label="Live portrait composition" />
-      </LiveClipStage>,
-      previewSlot,
-    ) : null}
     <FieldSet className="framing-editor" disabled={disabled}>
+      {previewSlot && previewOptions
+        ? createPortal(
+            <LiveClipStage
+              key={sourceUrl}
+              player={previewPlayer}
+              playerRef={video}
+              start={rangeStart}
+              end={rangeEnd}
+              kept={kept}
+              options={{
+                ...previewOptions,
+                coverAt: quality?.cover_at,
+                exportAudio:
+                  !!quality && (quality.normalize || quality.cleanup !== "off"),
+              }}
+              split={viewMode === "split"}
+              pendingPresentation={
+                (mode === "auto" && !decision) ||
+                (viewMode === "follow" && !tracking)
+              }
+              invalidRemovals={
+                !!removals?.some((cut) => cut.enabled) &&
+                kept.length === 1 &&
+                kept[0][0] === rangeStart &&
+                kept[0][1] === rangeEnd
+              }
+              mediaError={mediaError}
+              onRetry={retryPreview}
+            >
+              <canvas
+                ref={canvas}
+                width={432}
+                height={768}
+                className="size-full"
+                aria-label="Live portrait composition"
+              />
+            </LiveClipStage>,
+            previewSlot,
+          )
+        : null}
       <FieldLegend>Framing</FieldLegend>
       <Field>
         <FieldLabel htmlFor={`${id}-mode`}>Video layout</FieldLabel>
@@ -527,6 +569,7 @@ export function FramingEditor({
               <video
                 ref={mountVideo}
                 key={`${sourceUrl}-${reload}`}
+                aria-label="Source video for framing"
                 controls
                 muted
                 playsInline
@@ -542,7 +585,16 @@ export function FramingEditor({
                     Math.min(rangeEnd ?? player.duration, player.duration) -
                       0.01,
                   );
-                  const at = clamp(player.currentTime, rangeStart, last);
+                  let at = clamp(player.currentTime, rangeStart, last);
+                  if (
+                    livePreview &&
+                    kept.length &&
+                    !kept.some(([from, to]) => from <= at && at < to)
+                  ) {
+                    at =
+                      kept.find(([from]) => from > at)?.[0] ??
+                      Math.max(rangeStart, kept[kept.length - 1][1] - 0.01);
+                  }
                   if (Math.abs(at - player.currentTime) > 0.001)
                     player.currentTime = at;
                 }}
@@ -550,9 +602,10 @@ export function FramingEditor({
                   const player = event.currentTarget;
                   if (
                     player.currentTime < rangeStart ||
-                    (rangeEnd !== undefined && player.currentTime >= rangeEnd)
+                    (rangeEnd !== undefined &&
+                      player.currentTime >= rangeEnd - (livePreview ? 0.01 : 0))
                   )
-                    player.currentTime = rangeStart;
+                    player.currentTime = kept[0]?.[0] ?? rangeStart;
                 }}
                 onTimeUpdate={(event) => {
                   const player = event.currentTarget;
@@ -575,7 +628,7 @@ export function FramingEditor({
                   });
                   if (Number.isFinite(rangeStart))
                     player.currentTime = clamp(
-                      rangeStart,
+                      kept[0]?.[0] ?? rangeStart,
                       0,
                       Math.max(0, player.duration - 0.01),
                     );
@@ -664,16 +717,12 @@ export function FramingEditor({
         {sourceUrl && dimensions.source !== sourceUrl && !mediaError ? (
           <p role="status">Loading clip preview...</p>
         ) : null}
-        {mediaError ? (
+        {mediaError && !livePreview ? (
           <Alert>
             <AlertDescription>
               The source preview could not load. Retry after checking your
               connection to Cliptric. If it still fails, reopen the recording.{" "}
-              <Button
-                type="button"
-                variant="link"
-                onClick={retryPreview}
-              >
+              <Button type="button" variant="link" onClick={retryPreview}>
                 Retry preview
               </Button>
             </AlertDescription>
@@ -748,6 +797,5 @@ export function FramingEditor({
         ) : null}
       </>
     </FieldSet>
-    </>
   );
 }

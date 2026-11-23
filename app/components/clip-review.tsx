@@ -274,16 +274,28 @@ function ReviewItem({
           autoLayout={item.export?.auto_layout}
           previewSlot={previewSlot}
           previewOptions={{
-            savedExportId: item.export?.status === "succeeded" ? item.export.id : null,
+            savedExportId:
+              item.export?.status === "succeeded" ? item.export.id : null,
             onPlaybackTarget: setPlayer,
             transcriptionId: item.transcription_id ?? project.transcription_id,
-            transcriptRevision: item.transcript_revision ?? project.transcript_revision,
-            captions: { preset: item.caption_preset, position: captions, customization: item.caption_customization },
-            headline: headline ? { text: text.trim() || title, position, seconds: 8 } : null,
+            transcriptRevision:
+              item.transcript_revision ?? project.transcript_revision,
+            captions: {
+              preset: item.caption_preset,
+              position: captions,
+              customization: item.caption_customization,
+            },
+            headline: headline
+              ? { text: text.trim() || title, position, seconds: 8 }
+              : null,
             emphasis: item.emphasis_words,
             overlays: item.overlays,
           }}
-          quality={framingChanged ? { ...item.quality, smart_framing: null } : item.quality}
+          quality={
+            framingChanged
+              ? { ...item.quality, smart_framing: null }
+              : item.quality
+          }
           sourceUrl={
             project.recording_id || item.recording_id
               ? `/api/recordings/${item.recording_id ?? project.recording_id}/media`
@@ -323,101 +335,101 @@ function ReviewItem({
             {item.posted ? "Mark unposted" : "Mark posted"}
           </Button>
         </div>
-      <form
-        onSubmit={(event) => {
-          event.preventDefault();
-          void update("save");
-        }}
-      >
-        <FieldGroup>
-          <Field>
-            <FieldLabel htmlFor={`review-title-${item.id}`}>
-              Clip title
-            </FieldLabel>
-            <Input
-              id={`review-title-${item.id}`}
-              value={title}
-              required
-              maxLength={120}
-              disabled={busy || locked}
-              onChange={(event) => setTitle(event.target.value)}
-            />
-          </Field>
-          <Field>
-            <FieldLabel htmlFor={`review-headline-${item.id}`}>
-              Opening headline (blank uses title)
-            </FieldLabel>
-            <Input
-              id={`review-headline-${item.id}`}
-              value={text}
-              maxLength={120}
-              disabled={busy || locked}
-              onChange={(event) => setText(event.target.value)}
-            />
-          </Field>
-          <Field orientation="horizontal">
-            <Checkbox
-              id={`review-enabled-${item.id}`}
-              checked={headline}
-              disabled={busy || locked}
-              onCheckedChange={(value) => setHeadline(value === true)}
-            />
-            <FieldLabel htmlFor={`review-enabled-${item.id}`}>
-              Show headline
-            </FieldLabel>
-          </Field>
-          <Field>
-            <FieldLabel htmlFor={`review-position-${item.id}`}>
-              Headline position
-            </FieldLabel>
-            <NativeSelect
-              id={`review-position-${item.id}`}
-              value={position}
-              disabled={busy || locked}
-              onChange={(event) =>
-                setPosition(event.target.value as typeof position)
-              }
-            >
-              <NativeSelectOption value="auto">Auto</NativeSelectOption>
-              <NativeSelectOption value="upper">Upper</NativeSelectOption>
-              <NativeSelectOption value="centre">Centre</NativeSelectOption>
-            </NativeSelect>
-          </Field>
-          <Field>
-            <FieldLabel htmlFor={`review-captions-${item.id}`}>
-              Caption position
-            </FieldLabel>
-            <NativeSelect
-              id={`review-captions-${item.id}`}
-              value={captions}
-              disabled={busy || locked}
-              onChange={(event) =>
-                setCaptions(event.target.value as typeof captions)
-              }
-            >
-              <NativeSelectOption value="auto">Auto</NativeSelectOption>
-              <NativeSelectOption value="lower">Lower</NativeSelectOption>
-              <NativeSelectOption value="centre">Centre</NativeSelectOption>
-              <NativeSelectOption value="upper">Upper</NativeSelectOption>
-            </NativeSelect>
-          </Field>
-          <p role="status" className="text-sm text-muted-foreground">
-            {busy
-              ? "Saving…"
-              : dirty
-                ? "Unsaved changes. Save before using review actions."
-                : "Saved"}
-          </p>
-          <Button type="submit" disabled={!dirty || busy || locked}>
-            Save changes
-          </Button>
-          {error ? (
-            <Alert variant="destructive">
-              <AlertDescription>{error}</AlertDescription>
-            </Alert>
-          ) : null}
-        </FieldGroup>
-      </form>
+        <form
+          onSubmit={(event) => {
+            event.preventDefault();
+            void update("save");
+          }}
+        >
+          <FieldGroup>
+            <Field>
+              <FieldLabel htmlFor={`review-title-${item.id}`}>
+                Clip title
+              </FieldLabel>
+              <Input
+                id={`review-title-${item.id}`}
+                value={title}
+                required
+                maxLength={120}
+                disabled={busy || locked}
+                onChange={(event) => setTitle(event.target.value)}
+              />
+            </Field>
+            <Field>
+              <FieldLabel htmlFor={`review-headline-${item.id}`}>
+                Opening headline (blank uses title)
+              </FieldLabel>
+              <Input
+                id={`review-headline-${item.id}`}
+                value={text}
+                maxLength={120}
+                disabled={busy || locked}
+                onChange={(event) => setText(event.target.value)}
+              />
+            </Field>
+            <Field orientation="horizontal">
+              <Checkbox
+                id={`review-enabled-${item.id}`}
+                checked={headline}
+                disabled={busy || locked}
+                onCheckedChange={(value) => setHeadline(value === true)}
+              />
+              <FieldLabel htmlFor={`review-enabled-${item.id}`}>
+                Show headline
+              </FieldLabel>
+            </Field>
+            <Field>
+              <FieldLabel htmlFor={`review-position-${item.id}`}>
+                Headline position
+              </FieldLabel>
+              <NativeSelect
+                id={`review-position-${item.id}`}
+                value={position}
+                disabled={busy || locked}
+                onChange={(event) =>
+                  setPosition(event.target.value as typeof position)
+                }
+              >
+                <NativeSelectOption value="auto">Auto</NativeSelectOption>
+                <NativeSelectOption value="upper">Upper</NativeSelectOption>
+                <NativeSelectOption value="centre">Centre</NativeSelectOption>
+              </NativeSelect>
+            </Field>
+            <Field>
+              <FieldLabel htmlFor={`review-captions-${item.id}`}>
+                Caption position
+              </FieldLabel>
+              <NativeSelect
+                id={`review-captions-${item.id}`}
+                value={captions}
+                disabled={busy || locked}
+                onChange={(event) =>
+                  setCaptions(event.target.value as typeof captions)
+                }
+              >
+                <NativeSelectOption value="auto">Auto</NativeSelectOption>
+                <NativeSelectOption value="lower">Lower</NativeSelectOption>
+                <NativeSelectOption value="centre">Centre</NativeSelectOption>
+                <NativeSelectOption value="upper">Upper</NativeSelectOption>
+              </NativeSelect>
+            </Field>
+            <p role="status" className="text-sm text-muted-foreground">
+              {busy
+                ? "Saving…"
+                : dirty
+                  ? "Unsaved changes. Save before using review actions."
+                  : "Saved"}
+            </p>
+            <Button type="submit" disabled={!dirty || busy || locked}>
+              Save changes
+            </Button>
+            {error ? (
+              <Alert variant="destructive">
+                <AlertDescription>{error}</AlertDescription>
+              </Alert>
+            ) : null}
+          </FieldGroup>
+        </form>
       </div>
     </div>
   );

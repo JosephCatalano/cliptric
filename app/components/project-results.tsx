@@ -1447,6 +1447,7 @@ function ClipCard({
                     onChoose={(hook) => {
                       setDraftStart(String(hook.start));
                       setOpeningText(hook.opening_text);
+                      setDirty(true);
                     }}
                   />
                   <FramingEditor
@@ -1572,6 +1573,7 @@ function ClipCard({
                     onBounds={(start, end) => {
                       setDraftStart(String(start));
                       setDraftEnd(String(end));
+                      setDirty(true);
                     }}
                     source={
                       project.transcription_id && project.transcript_revision

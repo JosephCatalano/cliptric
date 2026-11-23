@@ -41,10 +41,12 @@ export function TextOverlayFields({
     initial.map((overlay, index) => ({ id: `saved-${index}`, overlay })),
   );
   return (
-    <FieldSet onChangeCapture={(event) => {
-      const form = event.currentTarget.form;
-      if (form) onChange(readOverlays(new FormData(form)));
-    }}>
+    <FieldSet
+      onChangeCapture={(event) => {
+        const form = event.currentTarget.form;
+        if (form) onChange(readOverlays(new FormData(form)));
+      }}
+    >
       <FieldLegend>Text overlays</FieldLegend>
       <p>
         Titles, headlines and CTAs use seconds from the start of this trimmed
@@ -146,7 +148,12 @@ export function TextOverlayFields({
             variant="outline"
             onClick={(event) => {
               const form = event.currentTarget.form;
-              if (form) onChange(readOverlays(new FormData(form)).filter((_, at) => at !== index));
+              if (form)
+                onChange(
+                  readOverlays(new FormData(form)).filter(
+                    (_, at) => at !== index,
+                  ),
+                );
               setRows((current) => current.filter((row) => row.id !== rowId));
             }}
           >
@@ -160,7 +167,12 @@ export function TextOverlayFields({
         disabled={rows.length >= 6}
         onClick={(event) => {
           const overlay: TextOverlay = {
-            text: "", kind: "cta", start: 0, end: Math.min(5, duration), position: "auto", style: "card",
+            text: "",
+            kind: "cta",
+            start: 0,
+            end: Math.min(5, duration),
+            position: "auto",
+            style: "card",
           };
           const row = { id: crypto.randomUUID(), overlay };
           const form = event.currentTarget.form;

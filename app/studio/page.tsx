@@ -1030,6 +1030,7 @@ export default function Workspace() {
                       }
                     />
                   )}
+                </div>
                 <Card
                   className="export-panel"
                   aria-label="Export settings"
@@ -1480,7 +1481,6 @@ export default function Workspace() {
                       )}
                   </CardContent>
                 </Card>
-                </div>
               </div>
               <section
                 className="exports"

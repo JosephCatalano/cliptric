@@ -815,16 +815,25 @@
   .editor-grid {
     @apply grid min-w-0 items-start gap-6 lg:grid-cols-[minmax(17rem,0.8fr)_minmax(0,1.2fr)];
   }
+  .editor-grid > .clip-preview-column {
+    @apply lg:row-span-2;
+  }
+  .editor-grid > .export-panel {
+    @apply lg:col-start-2;
+  }
   .clip-preview-column {
-    @apply min-w-0 lg:sticky lg:top-2 lg:self-start;
+    @apply sticky top-0 z-10 min-w-0 self-start lg:top-2;
   }
   .live-clip-preview {
     @apply mx-auto flex w-full max-w-[min(100%,25rem)] flex-col gap-2 rounded-lg border bg-card p-3 text-card-foreground;
   }
   .live-clip-frame {
     @apply relative mx-auto aspect-[9/16] w-full overflow-hidden rounded-md bg-editor-preview;
-    max-width: min(100%, 34dvh);
+    max-width: min(100%, 26dvh);
     container-type: inline-size;
+  }
+  @media (width >= 64rem) {
+    .live-clip-frame { max-width: min(100%, 38dvh); }
   }
   .live-clip-headline,
   .live-clip-overlay,
