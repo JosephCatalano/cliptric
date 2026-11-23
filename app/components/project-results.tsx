@@ -69,7 +69,8 @@ import {
 } from "@/components/ui/native-select";
 import { PlayIcon } from "lucide-react";
 
-import { useId, useRef, useEffect, useState, type FormEvent } from "react";
+import { useCallback, useId, useRef, useEffect, useState, type FormEvent } from "react";
+import { flushSync } from "react-dom";
 import Image from "next/image";
 import Link from "next/link";
 import { api, ApiError, message } from "../../lib/client-api";
@@ -120,6 +121,7 @@ export function ProjectResults({ id }: { id: string }) {
   const [clipSort, setClipSort] = useState("ai");
   const [reviewId, setReviewId] = useState<string | null>(null);
   const [reviewIds, setReviewIds] = useState<string[]>([]);
+  const [previewId, setPreviewId] = useState<string | null>(null);
   useEffect(() => {
     const controller = new AbortController();
     let timer: ReturnType<typeof setTimeout>;
@@ -209,9 +211,7 @@ export function ProjectResults({ id }: { id: string }) {
   );
   const visibleIds = new Set(visibleItems.map((item) => item.id));
   function openReview(id: string) {
-    document
-      .querySelectorAll<HTMLVideoElement>(".clip-gallery video")
-      .forEach((video) => video.pause());
+    setPreviewId(null);
     setReviewIds(visibleItems.map((item) => item.id));
     setReviewId(id);
   }
@@ -561,6 +561,8 @@ export function ProjectResults({ id }: { id: string }) {
               <ClipCard
                 key={item.id}
                 hidden={!visibleIds.has(item.id)}
+                previewOpen={previewId === item.id && visibleIds.has(item.id)}
+                onPreviewChange={(open) => setPreviewId(open ? item.id : null)}
                 onReview={() => openReview(item.id)}
                 project={project}
                 item={item}
@@ -816,6 +818,8 @@ export function ProjectResults({ id }: { id: string }) {
 function ClipCard({
   project: savedProject,
   hidden,
+  previewOpen,
+  onPreviewChange,
   onReview,
   item,
   locked,
@@ -827,6 +831,8 @@ function ClipCard({
 }: {
   project: Project;
   hidden: boolean;
+  previewOpen: boolean;
+  onPreviewChange(open: boolean): void;
   onReview(): void;
   item: ProjectItem;
   locked: boolean;
@@ -886,14 +892,31 @@ function ClipCard({
   const [saving, setSaving] = useState(false);
   const [dirty, setDirty] = useState(false);
   useUnsavedEdits(dirty);
-  const [playing, setPlaying] = useState(false);
+  const [playbackError, setPlaybackError] = useState("");
   const clipPlayer = useRef<HTMLVideoElement>(null);
-  useEffect(() => {
-    if (hidden) clipPlayer.current?.pause();
-  }, [hidden]);
+  const attachClipPlayer = useCallback((player: HTMLVideoElement | null) => {
+    if (!player) clipPlayer.current?.pause();
+    clipPlayer.current = player;
+  }, []);
   const [failedThumbnail, setFailedThumbnail] = useState<string | null>(null);
   const thumbnailUrl = `/api/projects/${project.id}/thumbnail?item_id=${item.id}&revision=${item.revision}&export=${encodeURIComponent(item.thumbnail_export_id ?? item.export_id ?? "")}`;
   const available = ready(item);
+  function playClip() {
+    // Start playback inside the click so browsers can associate it with the user gesture.
+    if (!previewOpen) flushSync(() => onPreviewChange(true));
+    const player = clipPlayer.current;
+    if (!player) return;
+    setPlaybackError("");
+    if (player.error) player.load();
+    void player.play().catch((error: unknown) => {
+      if (clipPlayer.current !== player || (error instanceof DOMException && error.name === "AbortError")) return;
+      setPlaybackError(
+        error instanceof DOMException && error.name === "NotAllowedError"
+          ? "Your browser blocked playback. Press Play in the video controls."
+          : "This export could not play. Retry playback or download the MP4 to check it locally.",
+      );
+    });
+  }
   async function save(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
     setSaving(true);
@@ -934,7 +957,6 @@ function ClipCard({
       );
       setEditing(null);
       setDirty(false);
-      setPlaying(false);
       onSaved(value);
     } catch (error) {
       setError(message(error));
@@ -949,6 +971,7 @@ function ClipCard({
   const toggleEditor = () => {
     if (editing && dirty && !window.confirm("Discard unsaved clip edits?"))
       return;
+    if (!editing) onPreviewChange(false);
     setDirty(false);
     setEditing((v) => (v ? null : item));
     setQuality(item.quality ?? defaultQuality);
@@ -984,12 +1007,16 @@ function ClipCard({
       className="project-card"
       style={hidden ? { display: "none" } : undefined}
     >
-      {playing && available ? (
+      {previewOpen && available ? (
         <video
-          ref={clipPlayer}
+          key={item.export!.id}
+          ref={attachClipPlayer}
           className="project-preview"
+          aria-label={`Player for ${item.title}`}
           controls
-          autoPlay
+          playsInline
+          onPlaying={() => setPlaybackError("")}
+          onError={() => setPlaybackError("The export could not load. Retry playback or download the MP4 to check it locally.")}
           src={`/api/clips/${item.export!.id}/media`}
           poster={
             item.thumbnail && failedThumbnail !== thumbnailUrl
@@ -1035,13 +1062,23 @@ function ClipCard({
               className="project-thumbnail-play absolute top-1/2 left-1/2 -translate-x-1/2 -translate-y-1/2"
               aria-label={`Play ${item.title}`}
               title="Play clip"
-              onClick={() => setPlaying(true)}
+              onClick={playClip}
             >
               <PlayIcon aria-hidden="true" />
             </Button>
           ) : null}
         </div>
       )}
+      {previewOpen && available && playbackError ? (
+        <Alert variant="destructive">
+          <AlertDescription>
+            <p>{playbackError}</p>
+            <Button type="button" size="sm" variant="outline" onClick={playClip}>
+              Retry playback
+            </Button>
+          </AlertDescription>
+        </Alert>
+      ) : null}
 
       <CardHeader>
         <CardTitle
@@ -1169,8 +1206,8 @@ function ClipCard({
                 >
                   Versions / undo
                 </DropdownMenuItem>
-                {playing ? (
-                  <DropdownMenuItem onSelect={() => setPlaying(false)}>
+                {previewOpen ? (
+                  <DropdownMenuItem onSelect={() => onPreviewChange(false)}>
                     Hide preview
                   </DropdownMenuItem>
                 ) : null}

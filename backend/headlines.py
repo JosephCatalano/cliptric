@@ -10,12 +10,15 @@ from pydantic import BaseModel, ConfigDict, Field, field_validator
 
 from .captions import _ass_text, _ass_time, _font_size
 
+POP_RISE_PX = 34
+POP_ENTRANCE_MS = 180
+
 
 class HeadlineOptions(BaseModel):
     model_config = ConfigDict(extra="forbid", allow_inf_nan=False)
     text: str = Field(min_length=1, max_length=120, strict=True)
     position: Literal["auto", "upper", "centre"] = "auto"
-    appearance: Literal["classic", "cover", "profile"] = "profile"
+    appearance: Literal["classic", "cover", "profile", "pop"] = "pop"
     seconds: float = Field(default=8, ge=1, le=10, strict=True)
     fade_ms: int = Field(default=250, ge=0, le=1000, strict=True)
 
@@ -47,7 +50,9 @@ def headline_parts(
     centiseconds = max(1, math.floor(min(duration, options.seconds) * 100))
     opening = (
         min(25, centiseconds)
-        if options.appearance == "profile" and profile_cover and caption_position != "centre"
+        if options.appearance in {"profile", "pop"}
+        and profile_cover
+        and caption_position != "centre"
         else 0
     )
     profile_styles, profile_events = "", ""
@@ -65,6 +70,7 @@ def headline_parts(
             0,
             0,
             decorated=True,
+            pop=options.appearance == "pop",
             style_name="ProfileCover",
             first_layer=10,
         )
@@ -82,8 +88,19 @@ def headline_parts(
     # Keep both fades within the actual quantized display interval, even on tiny clips.
     fade_ms = min(options.fade_ms, (centiseconds - opening) * 5)
     fade_in = 0 if decorated else fade_ms
+    entrance_ms = min(POP_ENTRANCE_MS, (centiseconds - opening) * 5)
     styles, events = _card_parts(
-        lines, size, top, height, opening, centiseconds, fade_in, fade_ms, decorated=decorated
+        lines,
+        size,
+        top,
+        height,
+        opening,
+        centiseconds,
+        fade_in,
+        fade_ms,
+        decorated=decorated,
+        pop=options.appearance == "pop",
+        entrance_ms=entrance_ms,
     )
     return profile_styles + styles, events + profile_events
 
@@ -99,16 +116,36 @@ def _card_parts(
     fade_ms: int,
     *,
     decorated: bool,
+    pop: bool = False,
+    entrance_ms: int = 0,
     style_name: str = "Headline",
     first_layer: int = 0,
 ) -> tuple[str, str]:
     start, end = _ass_time(start_cs), _ass_time(end_cs)
     bottom = top + height
     fade = f"\\fad({fade_in},{fade_ms})" if fade_ms else ""
-    # Only validated numeric geometry enters override tags. User text is escaped.
-    box = f"m 112 {top} l 968 {top} b 975 {top} 980 {top + 5} 980 {top + 12} l 980 {bottom - 12} b 980 {bottom - 5} 975 {bottom} 968 {bottom} l 112 {bottom} b 105 {bottom} 100 {bottom - 5} 100 {bottom - 12} l 100 {top + 12} b 100 {top + 5} 105 {top} 112 {top}"
     text = r"\N".join(_ass_text(line) for line in lines)
     style = f"Style: {style_name},Arial,{size},&H00000000,&H00000000,&H00000000,&H00000000,-1,0,0,0,100,100,0,0,1,0,0,5,100,100,0,1\n"
+    if pop:
+        box = _rounded_box(100, top, 980, bottom, 40)
+        accent = _rounded_box(472, bottom - 14, 608, bottom - 6, 4)
+
+        def event(layer: int, x: int, y: int, tags: str, value: str) -> str:
+            position = (
+                f"\\move({x},{y + POP_RISE_PX},{x},{y},0,{entrance_ms})"
+                if entrance_ms
+                else f"\\pos({x},{y})"
+            )
+            return f"Dialogue: {first_layer + layer},{start},{end},{style_name},,0,0,0,,{{{position}{fade}{tags}}}{value}\n"
+
+        return style, (
+            event(0, 0, 8, r"\an7\1c&HF65C8B&\p1", box)
+            + event(1, 0, 0, r"\an7\1c&HFFFFFF&\3c&H2E1514&\bord3\p1", box)
+            + event(2, 0, 0, r"\an7\1c&HD3B608&\p1", accent)
+            + event(3, 540, top + height // 2, r"\an5\1c&H2E1514&", text)
+        )
+    # Only validated numeric geometry enters override tags. User text is escaped.
+    box = f"m 112 {top} l 968 {top} b 975 {top} 980 {top + 5} 980 {top + 12} l 980 {bottom - 12} b 980 {bottom - 5} 975 {bottom} 968 {bottom} l 112 {bottom} b 105 {bottom} 100 {bottom - 5} 100 {bottom - 12} l 100 {top + 12} b 100 {top + 5} 105 {top} 112 {top}"
     events = (
         f"Dialogue: {first_layer},{start},{end},{style_name},,0,0,0,,{{\\an7\\pos(0,0)\\1c&HFFFFFF&{fade}\\p1}}{box}\n"
         f"Dialogue: {first_layer + 1},{start},{end},{style_name},,0,0,0,,{{\\an5\\pos(540,{top + height // 2}){fade}}}{text}\n"
@@ -124,6 +161,20 @@ def _card_parts(
             f"Dialogue: {first_layer + 3},{start},{end},{style_name},,0,0,0,,{{\\an5\\pos(540,{top + height // 2}){fade}}}{text}\n"
         )
     return style, events
+
+
+def _rounded_box(left: int, top: int, right: int, bottom: int, radius: int) -> str:
+    control = round(radius * 0.45)
+    return (
+        f"m {left + radius} {top} l {right - radius} {top} "
+        f"b {right - control} {top} {right} {top + control} {right} {top + radius} "
+        f"l {right} {bottom - radius} "
+        f"b {right} {bottom - control} {right - control} {bottom} {right - radius} {bottom} "
+        f"l {left + radius} {bottom} "
+        f"b {left + control} {bottom} {left} {bottom - control} {left} {bottom - radius} "
+        f"l {left} {top + radius} "
+        f"b {left} {top + control} {left + control} {top} {left + radius} {top}"
+    )
 
 
 def headline_ass(options: HeadlineOptions, duration: float, caption_position=None) -> str:

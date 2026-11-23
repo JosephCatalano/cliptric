@@ -863,7 +863,27 @@
   .live-clip-headline[data-appearance="classic"][data-position="centre"] { top: 39.6%; }
   .live-clip-headline[data-position="centre"] { top: 46.9%; transform: translate(-50%, -50%); }
   .live-clip-headline[data-position="cover"] { top: 50%; transform: translate(-50%, -50%); font-size: 10cqw; }
-  .live-clip-headline:not([data-appearance="classic"]) { border-bottom: 0.65cqw solid #8b5cf6; }
+  .live-clip-headline:is([data-appearance="cover"], [data-appearance="profile"]) { border-bottom: 0.65cqw solid #8b5cf6; }
+  .live-clip-headline[data-appearance="pop"] {
+    border: 0.28cqw solid #14152e;
+    border-radius: 3.7cqw;
+    box-shadow: 0 0.74cqw #8b5cf6;
+    color: #14152e;
+    translate: 0 var(--headline-rise, 0);
+  }
+  .live-clip-headline[data-appearance="pop"]::after {
+    position: absolute;
+    inset: auto 0 0.55cqw;
+    width: 12.6cqw;
+    height: 0.74cqw;
+    margin-inline: auto;
+    border-radius: 999px;
+    background: #08b6d3;
+    content: "";
+  }
+  @media (prefers-reduced-motion: reduce) {
+    .live-clip-headline[data-appearance="pop"] { translate: none; }
+  }
   .live-clip-overlay {
     top: 50%;
     transform: translate(-50%, -50%);

@@ -24,6 +24,7 @@ import {
 
 import { Button } from "@/components/ui/button";
 import { cn } from "@/lib/utils";
+import type { PreviewHeadline } from "@/lib/clip-preview";
 import { Badge } from "@/components/ui/badge";
 import { Input } from "@/components/ui/input";
 import { Alert, AlertDescription } from "@/components/ui/alert";
@@ -112,12 +113,7 @@ type Clip = {
   size_bytes: number | null;
   captions: CaptionSelection | null;
 };
-type Headline = {
-  appearance?: "classic" | "cover" | "profile";
-  text: string;
-  position: "auto" | "upper" | "centre";
-  seconds: number;
-};
+type Headline = PreviewHeadline;
 type SelectionDraft = {
   quality: QualityOptions;
   headline?: Headline | null;

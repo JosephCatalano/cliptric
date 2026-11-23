@@ -4,7 +4,8 @@ export type PreviewHeadline = {
   text: string;
   position: "auto" | "upper" | "centre";
   seconds: number;
-  appearance?: "classic" | "cover" | "profile";
+  appearance?: "classic" | "cover" | "profile" | "pop";
+  fade_ms?: number;
 };
 
 type Region = Exclude<TextOverlay["position"], "auto">;

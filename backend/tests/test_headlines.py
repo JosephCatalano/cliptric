@@ -34,7 +34,7 @@ def test_headline_escaping_wrapping_clamping_and_caption_avoidance(tmp_path):
     assert "0:00:02.50" in value and "0:00:05.00" not in value
     assert r"{\pos(0,0)}" not in value
     assert "｛" in value and r"\N" in value
-    assert r"\pos(540,900)" in value
+    assert r"\move(540,934,540,900,0,180)" in value
     with pytest.raises(FileExistsError):
         write_headline(path, options, 2.5)
 
@@ -64,6 +64,7 @@ def test_additive_migration_and_immutable_headline_snapshot(tmp_path):
     assert reopened.clips(source.id)[0].headline.text == "The saved headline"
     assert reopened.draft(source).headline.text == "Source"
     assert reopened.clip(clip.id).headline.fade_ms == 250
+    assert reopened.clip(clip.id).headline.appearance == "pop"
     with reopened.connection() as db:
         old = json.loads(
             db.execute("SELECT options FROM clip_headlines WHERE clip_id=?", (clip.id,)).fetchone()[
@@ -173,6 +174,7 @@ def test_profile_title_is_centered_and_fits_a_square_preview(text):
     first = [line for line in events.splitlines() if ",ProfileCover," in line]
     assert len(first) == 4 and all(",0:00:00.00,0:00:00.25," in line for line in first)
     assert r"\pos(540,960)" in first[-1]
+    assert all(r"\move(" not in line for line in first)
     assert all(
         ",0:00:00.25,0:00:08.00," in line for line in events.splitlines() if ",Headline," in line
     )
@@ -212,8 +214,14 @@ def test_real_profile_first_frame_is_large_and_centered(caption_media, tmp_path,
     assert 420 < top < bottom < 1500
     assert abs((top + bottom) / 2 - 960) < 3
     assert bottom - top > 250
+    assert pixels[(top + 5) * 1080 + 110] < 100
+    assert pixels[(top + 5) * 1080 + 300] > 220
+    entering = [
+        index for index, value in enumerate(frame_pixels(settings, output, 0.30)) if value > 220
+    ]
     later = frame_pixels(settings, output, 0.5)
     normal = [index for index, value in enumerate(later) if value > 220]
+    assert 10 < min(entering) // 1080 - min(normal) // 1080 <= 34
     assert max(normal) // 1080 - min(normal) // 1080 < bottom - top
     if position == "upper":
         assert max(normal) // 1080 < 650

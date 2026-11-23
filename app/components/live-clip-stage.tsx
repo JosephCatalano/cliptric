@@ -4,6 +4,7 @@ import {
   useEffect,
   useMemo,
   useState,
+  type CSSProperties,
   type ReactNode,
   type RefObject,
 } from "react";
@@ -22,6 +23,8 @@ import type { CaptionStyle, TextOverlay } from "@/lib/projects";
 
 const noOverlays: TextOverlay[] = [];
 const wordWindow = 30;
+const headlineCoverSeconds = 0.25;
+const headlineEntranceSeconds = 0.18;
 
 export type LiveClipOptions = {
   captions?: CaptionStyle;
@@ -92,6 +95,9 @@ export function LiveClipStage({
   const wordsKey = `${transcription}:${revision}:${lower}:${upper}`;
   const showSaved = options.savedExportId && (saved || !player || mediaError);
   const onPlaybackTarget = options.onPlaybackTarget;
+  const headline = options.headline?.text.trim() ? options.headline : null;
+  const appearance = headline?.appearance ?? "pop";
+  const animateHeadline = Boolean(headline && appearance === "pop");
 
   useEffect(() => {
     onPlaybackTarget?.(showSaved ? savedPlayer : player);
@@ -110,7 +116,11 @@ export function LiveClipStage({
       setMuted(player.muted);
     }
     function tick(at: number) {
-      if (at - last > 75) {
+      const opening =
+        player &&
+        animateHeadline &&
+        clipTime(player.currentTime, kept) < headlineCoverSeconds + headlineEntranceSeconds;
+      if (opening || at - last > 75) {
         last = at;
         sync();
       }
@@ -139,7 +149,7 @@ export function LiveClipStage({
       for (const event of events) player.removeEventListener(event, sync);
       player.removeEventListener("play", play);
     };
-  }, [player]);
+  }, [player, animateHeadline, kept]);
 
   useEffect(() => {
     if (!transcription || upper - lower < 0.1) return;
@@ -184,7 +194,6 @@ export function LiveClipStage({
   const cue = cues.find(
     (part) => part.start <= position && position < part.end,
   );
-  const headline = options.headline?.text.trim() ? options.headline : null;
   const overlays = (options.overlays ?? noOverlays)
     .filter(
       (overlay) =>
@@ -203,16 +212,33 @@ export function LiveClipStage({
     duration,
     split,
   );
-  const cover = Boolean(
+  const hasCover = Boolean(
     headline &&
-    headline.appearance !== "classic" &&
-    headline.appearance !== "cover" &&
+    (appearance === "profile" || appearance === "pop") &&
     layout.caption !== "centre" &&
     !layout.overlays?.some(
-      (overlay) => overlay.position === "centre" && overlay.start < 0.25,
-    ) &&
-    position < 0.25,
+      (overlay) => overlay.position === "centre" && overlay.start < headlineCoverSeconds,
+    ),
   );
+  const headlineEnd = Math.floor(Math.min(duration, headline?.seconds ?? 0) * 100) / 100;
+  const regularStart = hasCover ? Math.min(headlineCoverSeconds, headlineEnd) : 0;
+  const cover = position < regularStart;
+  const regularElapsed = Math.max(0, position - regularStart);
+  const halfRegular = (headlineEnd - regularStart) / 2;
+  const fade = Math.min((headline?.fade_ms ?? 250) / 1000, halfRegular);
+  const entrance = Math.min(headlineEntranceSeconds, halfRegular);
+  const rise =
+    animateHeadline && !cover && entrance > 0
+      ? Math.max(0, 1 - regularElapsed / entrance) * (34 / 1080 * 100)
+      : 0;
+  const opacity =
+    cover || fade <= 0
+      ? 1
+      : Math.min(
+          1,
+          (headlineEnd - position) / fade,
+          appearance === "classic" ? regularElapsed / fade : 1,
+        );
   const controlsReady = Boolean(player && ready && valid && !mediaError);
   const setting = captions?.customization;
   const coverAt = options.coverAt;
@@ -278,18 +304,12 @@ export function LiveClipStage({
             className="pointer-events-none absolute inset-0 overflow-hidden"
             aria-hidden="true"
           >
-            {headline && position < Math.min(duration, headline.seconds) && (
+            {headline && position < headlineEnd && (
               <div
                 className="live-clip-headline"
                 data-position={cover ? "cover" : layout.headlineRegion}
-                data-appearance={headline.appearance ?? "profile"}
-                style={{
-                  opacity: Math.min(
-                    1,
-                    (Math.min(duration, headline.seconds) - position) / 0.25,
-                    headline.appearance === "classic" ? position / 0.25 : 1,
-                  ),
-                }}
+                data-appearance={appearance}
+                style={{ opacity, "--headline-rise": `${rise}cqw` } as CSSProperties}
               >
                 {headline.text}
               </div>

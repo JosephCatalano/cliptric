@@ -92,9 +92,16 @@ def test_upper_caption_profile_and_legacy_snapshot_are_distinct(context, tmp_pat
 
 
 @pytest.mark.parametrize(
-    "table,field", [("clip_headlines", "appearance"), ("clip_captions", "presentation_version")]
+    "table,field,prior_value",
+    [
+        ("clip_headlines", "appearance", None),
+        ("clip_headlines", "appearance", "profile"),
+        ("clip_captions", "presentation_version", None),
+    ],
 )
-def test_explicit_resume_updates_legacy_style_without_repeating_analysis(context, table, field):
+def test_explicit_resume_updates_legacy_style_without_repeating_analysis(
+    context, table, field, prior_value
+):
     client, manager, recording, provider, _ = context
     result = create(client, payload(recording))
     original = result["items"][0]["export_id"]
@@ -102,13 +109,17 @@ def test_explicit_resume_updates_legacy_style_without_repeating_analysis(context
         options = json.loads(
             db.execute(f"SELECT options FROM {table} WHERE clip_id=?", (original,)).fetchone()[0]
         )
-        del options[field]
+        if prior_value is None:
+            del options[field]
+        else:
+            options[field] = prior_value
         db.execute(f"UPDATE {table} SET options=? WHERE clip_id=?", (json.dumps(options), original))
     renders = len(manager.media.renders)
     client.post(f"/api/projects/{result['id']}/resume", json={})
     updated = finished(client, result["id"])
     assert updated["status"] == "ready"
     assert updated["items"][0]["export_id"] != original
+    assert updated["items"][0]["export"]["headline"]["appearance"] == "pop"
     assert len(manager.media.renders) == renders + 1 and len(provider.calls) == 1
     assert manager.store.export_path(original).is_file()
     assert manager.store.clip(original).status == "succeeded"
@@ -116,7 +127,7 @@ def test_explicit_resume_updates_legacy_style_without_repeating_analysis(context
     assert len(manager.media.renders) == renders + 1 and len(provider.calls) == 1
     old = manager.store.clip(original)
     assert (
-        (old.headline.appearance == "classic")
+        (old.headline.appearance == (prior_value or "classic"))
         if field == "appearance"
         else (old.captions.presentation_version == 1)
     )
