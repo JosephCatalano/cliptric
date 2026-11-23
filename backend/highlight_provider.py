@@ -13,17 +13,20 @@ from .prompt_settings import request_prompt
 ENDPOINT = "https://api.openai.com/v1/responses"
 MAX_RESPONSE_BYTES = 256 * 1024
 Proposal = TypeVar("Proposal", bound=BaseModel)
-DISCOVERY_INSTRUCTIONS = """Scan the entire timed transcript window for distinct promising moments.
-Look for jokes and callbacks, complete exchanges, surprises, emotional turns, useful insights,
-and stories with a payoff. For gameplay and compilations, look for reactions, reversals,
-failed plans, quick banter and short exchanges with a payoff. A brief grounded reaction can
-be a lead. If its meaning depends on footage, explain what needs checking in the reason and
-describe only what the transcript supports. Preserve available setup and escalation. Keep a
-promising window-edge lead when nearby speech may supply the setup or ending in final review.
-Return up to max_candidates distinct leads that have real promise. If there are more, prefer
-different moments over alternate cuts of the same moment. Use actual inclusive segment IDs,
-respect source durations including pauses, and quote 8-320 exact contiguous characters from
-inside each lead. Give a faithful temporary title and reason. Set quality to null.
+DISCOVERY_INSTRUCTIONS = """Scan the whole timed window from beginning to end for distinct leads.
+This is discovery. Keep promising beats for review, including complete short exchanges, specific
+reactions, reversals, failed plans, punchlines, callbacks, useful insights and stories with a payoff.
+For gameplay, look for speech that establishes what was attempted, what changed and how someone
+responded. One revealing line and its response can be as useful as a longer story. Generic
+exclamations, routine gameplay narration and banter with no turn are weak leads on their own.
+If a beat depends on footage, identify the missing visual context in the reason and describe only
+what the speech supports. Keep a promising window-edge lead when its own speech supplies concrete
+evidence and adjacent timed speech may complete its setup or ending during review.
+Return up to max_candidates promising leads. Prefer different beats over alternate cuts of the
+same event. Use actual inclusive segment IDs. Check last end minus first start against min_seconds
+and max_seconds, including gaps. Keep meaningful adjacent setup or response when it completes the
+beat and fits the bounds. Skip a beat if it only fits by adding filler. Quote 8-320 exact contiguous
+characters from inside the chosen range. Give a faithful temporary title and reason. Set quality to null.
 """
 
 

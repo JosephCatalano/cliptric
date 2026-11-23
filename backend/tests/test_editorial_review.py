@@ -89,6 +89,10 @@ def test_review_meters_one_request_and_never_publishes_raw_leads(service, outcom
     assert calls[0]["text"]["format"]["strict"] is True
     assert calls[0]["store"] is False
     assert "Evidence 6." in calls[0]["input"]  # Beyond the discovery interval.
+    review_request, options = calls[0]["input"].split("\nEDITORIAL OPTIONS DATA:\n")
+    assert json.loads(review_request)["requested_candidates"] == 1
+    option = json.loads(options)[0]
+    assert (option["lead_first_segment"], option["lead_last_segment"]) == (0, 4)
     assert result.editorial_options == 1
     assert result.discovery_shortlist == [SourceRange(start=0, end=24)]
     if outcome not in {"malformed", "api_failure"}:

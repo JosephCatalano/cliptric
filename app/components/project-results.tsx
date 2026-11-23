@@ -29,7 +29,7 @@ import {
 import { ClipReview } from "./clip-review";
 import { ClipVersions } from "./clip-versions";
 import { ClipBulkActions } from "./clip-bulk-actions";
-import { YouTubeBatchUpload } from "./youtube-batch-upload";
+import { BatchPublish } from "./batch-publish";
 import { useUnsavedEdits } from "./use-unsaved-edits";
 import { reviewNeeded } from "@/lib/project-edit";
 import { useRouter } from "next/navigation";
@@ -453,7 +453,7 @@ export function ProjectResults({ id }: { id: string }) {
               <p>{selected.size} selected across all filters</p>
               <div className="flex flex-wrap gap-2">
                 {selectedReady.length ? (
-                  <YouTubeBatchUpload
+                  <BatchPublish
                     items={selectedReady}
                     disabled={
                       running || busy || selectedReady.length !== selected.size

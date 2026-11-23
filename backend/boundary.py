@@ -98,8 +98,9 @@ class RequestBoundary:
         # requests are small and must be bounded before FastAPI buffers them.
         if request.method in {"POST", "PUT", "PATCH"} and request.url.path != "/api/recordings":
             body_limit = (
-                1024 * 1024
-                if request.url.path == "/api/youtube-publishing/posts/batch"
+                2 * 1024 * 1024
+                if request.url.path
+                in {"/api/youtube-publishing/posts/batch", "/api/schedule/batch"}
                 else 16 * 1024
             )
             body = bytearray()

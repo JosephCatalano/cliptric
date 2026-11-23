@@ -98,7 +98,15 @@ class PostJob(BaseModel):
 
 class TikTok:
     def __init__(
-        self, store, media, settings, web_origin, *, public_origin="", api=None, protector=protect_tokens
+        self,
+        store,
+        media,
+        settings,
+        web_origin,
+        *,
+        public_origin="",
+        api=None,
+        protector=protect_tokens,
     ):
         self.store, self.media, self.settings, self.web_origin = store, media, settings, web_origin
         self.public_origin = public_origin
@@ -367,8 +375,9 @@ class TikTok:
             ).fetchall()
         return [PostJob.model_validate_json(row[0]) for row in rows]
 
-    def validate_post(self, request):
-        creator = self.creator(request.account_id)
+    def validate_post(self, request, creator=None):
+        if creator is None:
+            creator = self.creator(request.account_id)
         if creator["account_id"] != request.account_id:
             raise TikTokError("The destination account changed. Review the post again.", 409)
         clip, path = self.export(str(request.export_id))

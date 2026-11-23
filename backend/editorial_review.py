@@ -27,26 +27,31 @@ MAX_RESULTS = 20
 MAX_OPTION_BYTES = 96 * 1024
 CONTEXT_SECONDS = 30
 
-INSTRUCTIONS = """Compare these leads from one recording as Cliptric's final editor.
-Assess each lead on its own. Keep every distinct clip with a clear hook, usable context
-and a supported payoff, up to max_candidates. If more clips qualify, rank them and keep
-the strongest. Return fewer when fewer qualify. Compare the actual speech and remove alternate
-versions of the same story, central joke or payoff, including paraphrases across windows.
-Preserve independent moments from the same conversation when each resolves on its own.
-A quick gameplay reaction or exchange can qualify when its setup and payoff are clear from
-the transcript. A setup can be as short as one line. Reject a clip whose payoff requires
-assuming an unverified event. Keep clips as short as the full moment and duration bounds allow.
-Check the opening, context, escalation, payoff, pacing and standalone clarity.
-Preserve comedic setup, misdirection, meaningful pauses, callbacks and the ending.
-For an exchange, include the answer. For a story, include the authentic resolution.
-Trim weak introductions, tangents and repetition only when the complete arc survives.
-Adjacent timed speech can repair window-edge cuts. Use only inclusive IDs within the
-chosen option's segments, intersecting its original lead. Use each option at most once.
-Duration includes gaps in speech. Never invent delivery, visual events or audience reactions.
-Provide a specific title, a concise reason, and a short contiguous exact quote from the final range.
-Score 0-100 as editorial quality. In quality_mode, every dimension must be at least
-3 of 5. Use exact opening and ending evidence from the first and last selected segments,
-and score = 5 * (hook + context + payoff + standalone). Otherwise quality may be null.
+INSTRUCTIONS = """Review every option from this recording as Cliptric's final editor.
+First assess each option on its own. Identify a concrete hook, enough context for a new viewer,
+and an outcome, answer, emotional turn, useful insight or punchline that the speech supports.
+A short gameplay exchange can qualify when both sides are understandable from the words alone.
+If the moment starts weakly or ends early, check adjacent timed speech for a tighter opening,
+brief setup or the real payoff. Preserve misdirection, useful pauses, callbacks and reactions
+that complete the beat. Skip options that still depend on an unverified event or contain only
+routine commentary, generic reactions or filler.
+After that pass, compare the qualifying clips and remove alternate cuts of the same central beat.
+Distinct moments can share a topic or participants. Keep each that resolves independently.
+Use requested_candidates as a coverage target and max_candidates as the output limit. Keep all
+distinct ready-to-use cuts up to max_candidates, ranked strongest first. A solid clip qualifies
+on its own merits even if another is exceptional. Return fewer if the source has fewer qualifying
+moments. Do not create filler, repeat a beat or stretch a cut to meet the target.
+Use lead_first_segment and lead_last_segment as the starting cut when present. Keep their IDs if
+the cut already works. When refining it, select inclusive IDs in that option and intersect the
+original lead. Check last end minus first start, including pauses, against both duration bounds.
+Use each option at most once. Give a specific title, concise reason and a short exact contiguous
+quote from the selected range. Never invent speech, delivery, visual events or audience reactions.
+In quality_mode, rate hook, context, payoff and standalone from 0 to 5. A 3 means the dimension
+works for a new viewer without added explanation or a guessed outcome. A 4 is strong, and a 5
+is exceptional. A 2 or lower means a specific weakness remains after possible refinement.
+Every dimension must meet 3. Quote exact text from the chosen first and last segments for opening
+and ending evidence. Set score to 5 * (hook + context + payoff + standalone). Otherwise score
+0-100 for ranking and quality may be null.
 """
 
 
@@ -100,12 +105,27 @@ def shortlist(
                 start = max(start, excluded.end)
             if excluded.start >= lead.end:
                 end = min(end, excluded.start)
-        context = segments[bisect_left(starts, start) : bisect_right(starts, end)]
+        context_start, context_end = bisect_left(starts, start), bisect_right(starts, end)
+        context = segments[context_start:context_end]
+        lead_segments = segments[
+            bisect_left(starts, lead.start, context_start, context_end) :
+            bisect_left(starts, lead.end, context_start, context_end)
+        ]
+        anchored = (
+            lead_segments
+            and lead_segments[0].start == lead.start
+            and max(segment.end for segment in lead_segments) == lead.end
+        )
         option = {
             "option": len(options),
             "lead_start": lead.start,
             "lead_end": lead.end,
             "lead_evidence": lead.evidence,
+            **(
+                {"lead_first_segment": lead_segments[0].id, "lead_last_segment": lead_segments[-1].id}
+                if anchored
+                else {}
+            ),
             "segments": json.loads(window_text(context)),
         }
         size = len(json.dumps(option, ensure_ascii=False).encode()) + 2
@@ -188,6 +208,7 @@ class EditorialReviewer:
                 {
                     "min_seconds": request.min_seconds,
                     "max_seconds": request.max_seconds,
+                    "requested_candidates": min(request.max_candidates, limit),
                     "max_candidates": limit,
                     "quality_mode": request.quality_mode,
                     **(

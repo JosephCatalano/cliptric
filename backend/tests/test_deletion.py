@@ -20,7 +20,7 @@ def post_row(manager, table, export_id, status, *, identifier=None):
     with manager.store.connection() as db:
         if table == "scheduled_posts":
             db.execute(
-                "INSERT INTO scheduled_posts VALUES (?, 'tiktok', ?, 'account', '2099-01-01T00:00:00+00:00', ?, '{}', 'digest', NULL)",
+                "INSERT INTO scheduled_posts (id,platform,export_id,account_id,scheduled_at,status,payload,sha256) VALUES (?, 'tiktok', ?, 'account', '2099-01-01T00:00:00+00:00', ?, '{}', 'digest')",
                 (identifier, export_id, status),
             )
         else:

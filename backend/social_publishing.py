@@ -267,13 +267,16 @@ class SocialPublisher:
         with path.open("rb") as stream:
             return hashlib.file_digest(stream, "sha256").hexdigest()
 
-    def validate_post(self, request):
+    def validate_post(self, request, creator=None):
         if self.platform == "x" and (len(request.caption) > 280 or request.is_ai_generated):
             raise SocialError(
                 "Use at most 280 characters for X. AI disclosure here applies only to Facebook; X also validates weighted text length.",
                 422,
             )
-        creator = self.creator(request.account_id)
+        if creator is None:
+            creator = self.creator(request.account_id)
+        if creator["account_id"] != request.account_id:
+            raise SocialError("The destination account changed. Review the post again.", 409)
         clip, path, _ = self.export(str(request.export_id))
         return creator, clip, path
 

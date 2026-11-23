@@ -1,8 +1,10 @@
 """Durable local scheduling of explicitly approved social posts."""
 
 import hashlib
+import json
 import logging
 import threading
+from contextlib import nullcontext
 from datetime import datetime, timedelta, timezone
 from typing import Annotated, Literal
 from uuid import UUID
@@ -62,6 +64,15 @@ POST_TABLES = {
 PUBLISHING_ERRORS = (TikTokError, YouTubeError, InstagramError, SocialError)
 
 
+BatchPost = Annotated[YouTubeSchedule | XSchedule | TikTokSchedule, Field(discriminator="platform")]
+
+
+class BatchPostRequest(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+    id: UUID
+    posts: list[BatchPost] = Field(min_length=1, max_length=225)
+
+
 class ScheduleRequest(BaseModel):
     model_config = ConfigDict(extra="forbid")
     scheduled_at: AwareDatetime
@@ -95,6 +106,14 @@ class Scheduler:
                 ON scheduled_posts(platform,export_id,account_id)
                 WHERE status IN ('scheduled','dispatching','submitted','unknown');
             """)
+            if not any(
+                row["name"] == "batch_id"
+                for row in db.execute("PRAGMA table_info(scheduled_posts)")
+            ):
+                db.execute("ALTER TABLE scheduled_posts ADD COLUMN batch_id TEXT")
+            db.execute(
+                "CREATE INDEX IF NOT EXISTS scheduled_posts_batch ON scheduled_posts(batch_id)"
+            )
             # A crash may occur after provider submission but before our final write.
             # Never automatically repeat that boundary; the existing review can reconcile it.
             db.execute(
@@ -118,11 +137,47 @@ class Scheduler:
         with path.open("rb") as stream:
             return hashlib.file_digest(stream, "sha256").hexdigest()
 
+    @staticmethod
+    def _insert(db, payload, scheduled, digest, batch_id=None):
+        platform, request = payload.post.platform, payload.post.request
+        target = (str(request.export_id), request.account_id)
+        if db.execute("SELECT 1 FROM scheduled_posts WHERE id=?", (str(request.id),)).fetchone():
+            raise HTTPException(409, "This posting token already belongs to another approval.")
+        if db.execute(
+            "SELECT 1 FROM scheduled_posts WHERE platform=? AND export_id=? AND account_id=? "
+            "AND status IN ('scheduled','dispatching','submitted','unknown')",
+            (platform, *target),
+        ).fetchone():
+            raise HTTPException(
+                409, "This export already has a scheduled or queued post. Check the calendar."
+            )
+        if db.execute(
+            f"SELECT 1 FROM {POST_TABLES[platform]} WHERE export_id=? AND account_id=? AND status!='failed'",
+            target,
+        ).fetchone():
+            raise HTTPException(
+                409, "This export already has a publishing attempt. Check its saved status."
+            )
+        db.execute(
+            "INSERT INTO scheduled_posts (id,platform,export_id,account_id,scheduled_at,status,payload,sha256,batch_id) "
+            "VALUES (?,?,?,?,?,'scheduled',?,?,?)",
+            (
+                str(request.id),
+                platform,
+                *target,
+                scheduled.isoformat(),
+                payload.model_dump_json(),
+                digest,
+                batch_id,
+            ),
+        )
+
     def create(self, payload):
         request = payload.post.request
         identifier = str(request.id)
         scheduled = payload.scheduled_at.astimezone(timezone.utc)
-        canonical = payload.model_copy(update={"scheduled_at": scheduled}).model_dump_json()
+        payload = payload.model_copy(update={"scheduled_at": scheduled})
+        canonical = payload.model_dump_json()
         with self.lock:
             with self.store.connection() as db:
                 existing = db.execute(
@@ -151,51 +206,98 @@ class Scheduler:
             digest = self.digest(validated[-1])
             with self.store.connection() as db:
                 db.execute("BEGIN IMMEDIATE")
-                duplicate = db.execute(
-                    "SELECT 1 FROM scheduled_posts WHERE platform=? AND export_id=? AND account_id=? AND status IN ('scheduled','dispatching','submitted','unknown')",
-                    (payload.post.platform, str(request.export_id), request.account_id),
-                ).fetchone()
-                if duplicate:
-                    raise HTTPException(
-                        409, "This export already has a scheduled post. Check the calendar."
-                    )
-                table = POST_TABLES[payload.post.platform]
-                if db.execute(
-                    f"SELECT 1 FROM {table} WHERE export_id=? AND account_id=? AND status!='failed'",
-                    (str(request.export_id), request.account_id),
-                ).fetchone():
-                    raise HTTPException(
-                        409, "This export already has a publishing attempt. Check its saved status."
-                    )
                 if (
                     db.execute(
-                        "SELECT count(*) FROM scheduled_posts WHERE status='scheduled'"
+                        "SELECT count(*) FROM scheduled_posts WHERE status='scheduled' AND batch_id IS NULL"
                     ).fetchone()[0]
                     >= 200
                 ):
                     raise HTTPException(
                         409, "The calendar supports up to 200 pending posts. Cancel a post first."
                     )
-                db.execute(
-                    "INSERT INTO scheduled_posts VALUES (?,?,?,?,?,'scheduled',?,?,NULL)",
-                    (
-                        identifier,
-                        payload.post.platform,
-                        str(request.export_id),
-                        request.account_id,
-                        scheduled.isoformat(),
-                        canonical,
-                        digest,
-                    ),
-                )
+                self._insert(db, payload, scheduled, digest)
         return {"id": identifier}
+
+    def create_batch(self, payload):
+        batch_id = str(payload.id)
+        posts = payload.posts
+        exports = {post.request.export_id for post in posts}
+        if (
+            len(exports) > 75
+            or len({post.request.id for post in posts}) != len(posts)
+            or len({(post.platform, post.request.export_id) for post in posts}) != len(posts)
+        ):
+            raise HTTPException(
+                422, "Choose up to 75 exports and one account per clip and platform."
+            )
+        with self.lock:
+            with self.store.connection() as db:
+                saved = db.execute(
+                    "SELECT payload FROM scheduled_posts WHERE batch_id=? ORDER BY rowid",
+                    (batch_id,),
+                ).fetchall()
+            if saved:
+                if [ScheduleRequest.model_validate_json(row[0]).post for row in saved] != posts:
+                    raise HTTPException(
+                        409, "This batch token belongs to different approved posts."
+                    )
+                return self.batch(batch_id)
+
+            creators, digests, approvals = {}, {}, []
+            current = datetime.now(timezone.utc)
+            for post in posts:
+                platform, request = post.platform, post.request
+                service = self.services.get(platform)
+                if service is None:
+                    raise HTTPException(503, "This publishing platform is unavailable.")
+                destination = (platform, request.account_id)
+                if destination not in creators:
+                    creators[destination] = service.creator(request.account_id)
+                path = service.validate_post(request, creators[destination])[-1]
+                if path not in digests:
+                    digests[path] = self.digest(path)
+                approvals.append((ScheduleRequest(scheduled_at=current, post=post), digests[path]))
+
+            with self.store.connection() as db:
+                db.execute("BEGIN IMMEDIATE")
+                pending = db.execute(
+                    "SELECT count(*) FROM scheduled_posts WHERE status='scheduled' AND batch_id IS NOT NULL"
+                ).fetchone()[0]
+                if pending + len(posts) > 225:
+                    raise HTTPException(
+                        409,
+                        "Wait for queued posts to finish or cancel pending posts in the calendar.",
+                    )
+                for approval, digest in approvals:
+                    self._insert(db, approval, current, digest, batch_id)
+        return self.batch(batch_id)
+
+    def batch(self, identifier):
+        with self.store.connection() as db:
+            result = []
+            for row in db.execute(
+                "SELECT id,platform,export_id,account_id,status,error FROM scheduled_posts WHERE batch_id=? ORDER BY rowid",
+                (identifier,),
+            ):
+                item = dict(row)
+                table = POST_TABLES[item["platform"]]
+                job = db.execute(
+                    f"SELECT status,payload FROM {table} WHERE id=?", (item["id"],)
+                ).fetchone()
+                if job:
+                    item["post_status"] = job["status"]
+                    item["error"] = json.loads(job["payload"]).get("error") or item["error"]
+                result.append(item)
+        if not result:
+            raise HTTPException(404, "Posting batch not found.")
+        return {"id": identifier, "posts": result}
 
     def list(self, start, end):
         if end <= start or end - start > timedelta(days=62):
             raise HTTPException(422, "Choose a calendar range of up to 62 days.")
         with self.store.connection() as db:
             rows = db.execute(
-                "SELECT id,platform,export_id,account_id,scheduled_at,status,error,payload FROM scheduled_posts WHERE scheduled_at>=? AND scheduled_at<? ORDER BY scheduled_at",
+                "SELECT id,platform,export_id,account_id,scheduled_at,status,error,payload,batch_id FROM scheduled_posts WHERE scheduled_at>=? AND scheduled_at<? ORDER BY scheduled_at",
                 (
                     start.astimezone(timezone.utc).isoformat(),
                     end.astimezone(timezone.utc).isoformat(),
@@ -226,6 +328,20 @@ class Scheduler:
                 )
         return {"id": identifier}
 
+    def _batch_can_dispatch(self, platform, db):
+        active = getattr(self.services[platform], "active", None)
+        if active is not None and not active.done():
+            return False
+        if platform in {"youtube", "tiktok"}:
+            table = POST_TABLES[platform]
+            return (
+                db.execute(
+                    f"SELECT count(*) FROM {table} WHERE julianday(created_at)>julianday('now','-1 minute')"
+                ).fetchone()[0]
+                < 6
+            )
+        return True
+
     def tick(self):
         current = datetime.now(timezone.utc)
         with self.lock, self.store.connection() as db:
@@ -248,16 +364,30 @@ class Scheduler:
                     f"(SELECT 1 FROM {table} WHERE {table}.id=scheduled_posts.id AND {table}.status!='failed')",
                     (platform,),
                 )
-            row = db.execute(
-                "SELECT * FROM scheduled_posts WHERE status='scheduled' AND scheduled_at<=? ORDER BY scheduled_at LIMIT 1",
+            rows = db.execute(
+                "SELECT * FROM scheduled_posts WHERE status='scheduled' AND scheduled_at<=? "
+                "ORDER BY batch_id IS NOT NULL, scheduled_at, rowid",
                 (current.isoformat(),),
-            ).fetchone()
+            ).fetchall()
+            available = {}
+            row = None
+            for candidate in rows:
+                platform = candidate["platform"]
+                if candidate["batch_id"] is not None:
+                    if platform not in available:
+                        available[platform] = self._batch_can_dispatch(platform, db)
+                    if not available[platform]:
+                        continue
+                row = candidate
+                break
             if not row:
                 return
             db.execute("UPDATE scheduled_posts SET status='dispatching' WHERE id=?", (row["id"],))
         status, error = "submitted", None
         try:
-            if current - datetime.fromisoformat(row["scheduled_at"]) > timedelta(minutes=5):
+            if row["batch_id"] is None and current - datetime.fromisoformat(
+                row["scheduled_at"]
+            ) > timedelta(minutes=5):
                 status, error = (
                     "missed",
                     "The local API was unavailable at the scheduled time. Schedule a new post.",
@@ -270,7 +400,16 @@ class Scheduler:
                     raise HTTPException(
                         409, "The approved video changed. Review and schedule it again."
                     )
-                service.submit(payload.post.request)
+                if row["batch_id"] is None:
+                    service.submit(payload.post.request)
+                else:
+                    with getattr(service, "lock", nullcontext()):
+                        with self.store.connection() as db:
+                            available = self._batch_can_dispatch(row["platform"], db)
+                        if available:
+                            service.submit(payload.post.request)
+                        else:
+                            status = "scheduled"
         except (*PUBLISHING_ERRORS, HTTPException) as exc:
             status, error = (
                 "failed",
@@ -320,6 +459,17 @@ def create_scheduling_router(service):
             return service.create(payload)
         except PUBLISHING_ERRORS as exc:
             raise HTTPException(exc.status_code, str(exc)) from exc
+
+    @router.post("/batch", status_code=202)
+    def create_batch(payload: BatchPostRequest):
+        try:
+            return service.create_batch(payload)
+        except PUBLISHING_ERRORS as exc:
+            raise HTTPException(exc.status_code, str(exc)) from exc
+
+    @router.get("/batch/{identifier}")
+    def batch(identifier: UUID):
+        return service.batch(str(identifier))
 
     @router.post("/{identifier}/cancel")
     def cancel(identifier: UUID):

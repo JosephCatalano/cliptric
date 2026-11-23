@@ -41,6 +41,7 @@ type ScheduledPost = {
   platform: Platform;
   account_id: string;
   scheduled_at: string;
+  batch_id?: string | null;
   status: string;
   error: string | null;
   title: string;
@@ -56,6 +57,10 @@ const statusLabels: Record<string, string> = {
   cancelled: "Cancelled",
   missed: "Missed",
 };
+const postStatus = (post: ScheduledPost) =>
+  post.batch_id && post.status === "scheduled"
+    ? "Queued"
+    : (statusLabels[post.status] ?? post.status);
 const dateKey = (date: Date) =>
   `${date.getFullYear()}-${String(date.getMonth() + 1).padStart(2, "0")}-${String(date.getDate()).padStart(2, "0")}`;
 
@@ -324,7 +329,7 @@ export function PostCalendar() {
                               key={post.id}
                               href={`#post-${post.id}`}
                               className="truncate rounded bg-accent px-2 py-1 text-xs text-accent-foreground focus-visible:outline-2 focus-visible:outline-ring"
-                              title={`${post.title} (${statusLabels[post.status]})`}
+                              title={`${post.title} (${postStatus(post)})`}
                             >
                               {new Date(post.scheduled_at).toLocaleTimeString(
                                 [],
@@ -375,7 +380,7 @@ export function PostCalendar() {
                     : "secondary"
                 }
               >
-                {statusLabels[post.status] ?? post.status}
+                {postStatus(post)}
               </Badge>
               {post.error ? (
                 <p className="text-sm text-destructive">{post.error}</p>

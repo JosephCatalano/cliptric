@@ -1,8 +1,9 @@
 """Scheduler unit tests use explicit publishing doubles; no remote posts are sent."""
 
+from concurrent.futures import Future
 from datetime import datetime, timedelta, timezone
 from types import SimpleNamespace
-from uuid import uuid4
+from uuid import UUID, uuid4
 
 import pytest
 from fastapi import FastAPI, HTTPException
@@ -27,7 +28,9 @@ def scheduled(tmp_path):
             "x_posts",
             "facebook_posts",
         ):
-            db.execute(f"CREATE TABLE {table}(id TEXT,export_id TEXT,account_id TEXT,status TEXT)")
+            db.execute(
+                f"CREATE TABLE {table}(id TEXT,export_id TEXT,account_id TEXT,status TEXT,created_at TEXT,payload TEXT)"
+            )
 
     class PublishingDouble:
         account = "a" * 64
@@ -36,13 +39,13 @@ def scheduled(tmp_path):
         def __init__(self):
             self.calls = []
 
-        def creator(self):
+        def creator(self, account_id=None):
             return {"account_id": self.account}
 
         def export(self, identifier):
             return SimpleNamespace(), path
 
-        def validate_post(self, request):
+        def validate_post(self, request, creator=None):
             if self.account != request.account_id:
                 raise HTTPException(409, "The connected account changed.")
             return self.export(str(request.export_id))
@@ -96,6 +99,47 @@ def row(scheduler, identifier):
         return dict(
             db.execute("SELECT * FROM scheduled_posts WHERE id=?", (identifier,)).fetchone()
         )
+
+
+def test_publish_batch_is_atomic_and_survives_restart(scheduled):
+    scheduler, publishing, _ = scheduled
+    posts = [
+        payload(platform).post.model_dump(mode="json") for platform in ("youtube", "x", "tiktok")
+    ]
+    app = FastAPI()
+    app.include_router(create_scheduling_router(scheduler))
+    with TestClient(app) as client:
+        body = {"id": str(uuid4()), "posts": posts}
+        duplicate = payload("tiktok", post=posts[-1])
+        scheduler.create(duplicate)
+        assert client.post("/api/schedule/batch", json=body).status_code == 409
+        assert client.get(f"/api/schedule/batch/{body['id']}").status_code == 404
+        assert publishing.calls == []
+        scheduler.cancel(str(duplicate.post.request.id))
+        # The cancelled appointment's request ID is still reserved.
+        posts[-1]["request"]["id"] = str(uuid4())
+        response = client.post("/api/schedule/batch", json=body)
+        assert response.status_code == 202
+        assert [item["status"] for item in response.json()["posts"]] == ["scheduled"] * 3
+        scheduler.initialize()
+        for post in posts:
+            make_due(scheduler, post["request"]["id"], minutes=10)
+        # Delaying one platform still lets the two other approved posts start.
+        youtube = type(publishing)()
+        youtube.active = Future()
+        scheduler.services["youtube"] = youtube
+        for _ in range(3):
+            scheduler.tick()
+        assert [call.id for call in publishing.calls] == [
+            UUID(post["request"]["id"]) for post in posts[1:]
+        ]
+        assert not youtube.calls
+        youtube.active.set_result(None)
+        scheduler.tick()
+        assert len(youtube.calls) == 1
+        assert client.post("/api/schedule/batch", json=body).status_code == 202
+        scheduler.tick()
+        assert len(youtube.calls) == 1 and len(publishing.calls) == 2
 
 
 @pytest.mark.parametrize("platform", ["tiktok", "youtube", "instagram", "x", "facebook"])
@@ -159,7 +203,7 @@ def test_failed_handoff_can_be_scheduled_again_after_reconciliation(scheduled):
     scheduler.tick()
     with scheduler.store.connection() as db:
         db.execute(
-            "INSERT INTO tiktok_posts VALUES (?,?,?,'failed')",
+            "INSERT INTO tiktok_posts(id,export_id,account_id,status) VALUES (?,?,?,'failed')",
             (identifier, str(request.post.request.export_id), request.post.request.account_id),
         )
     scheduler.tick()
@@ -176,7 +220,7 @@ def test_interrupted_handoff_with_durable_job_is_reconciled_without_resubmit(sch
     with scheduler.store.connection() as db:
         db.execute("UPDATE scheduled_posts SET status='dispatching' WHERE id=?", (identifier,))
         db.execute(
-            "INSERT INTO tiktok_posts VALUES (?,?,?,'processing')",
+            "INSERT INTO tiktok_posts(id,export_id,account_id,status) VALUES (?,?,?,'processing')",
             (identifier, str(request.post.request.export_id), request.post.request.account_id),
         )
     scheduler.initialize()
