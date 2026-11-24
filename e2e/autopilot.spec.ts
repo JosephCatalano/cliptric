@@ -17,18 +17,19 @@ test("Autopilot displays real saved scans and activation blockers", async ({
   try {
     await page.goto("/autopilot");
     await expect(
-      page.getByRole("heading", { name: "Autopilot", exact: true }),
-    ).toBeVisible();
-    await expect(
-      page.getByRole("heading", { name: "Review queue" }),
+      page.getByRole("heading", { name: "Twitch", exact: true }),
     ).toBeVisible();
     await page.getByLabel("Autopilot browser test").check();
-    await page.getByLabel("Mode", { exact: true }).selectOption("discover");
+    await page.getByLabel("Mode", { exact: true }).selectOption("prepare");
     await page.getByRole("button", { name: "Enable Autopilot" }).click();
     await expect(
       page.getByText(
-        /configure Twitch app credentials|choose a saved Twitch scan with recurrence enabled/i,
+        /configure Twitch app credentials|connect a Twitch editor and record reuse rights/i,
       ),
+    ).toBeVisible();
+    await page.getByRole("tab", { name: "Review queue" }).click();
+    await expect(
+      page.getByRole("heading", { name: "Review queue" }),
     ).toBeVisible();
     await expect(
       page.getByText("No Autopilot imports yet.", { exact: false }),

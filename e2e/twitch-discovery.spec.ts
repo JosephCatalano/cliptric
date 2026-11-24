@@ -17,7 +17,7 @@ test("Discover saves, edits, pauses, clones and deletes a Twitch scan", async ({
   });
   await page.goto("/discover");
   await expect(
-    page.getByRole("heading", { name: "Discover", exact: true }),
+    page.getByRole("heading", { name: "Twitch", exact: true }),
   ).toBeVisible();
   await page.getByLabel("Scan name").fill("Gaming clips");
   await page.getByLabel("Source", { exact: true }).selectOption("game");

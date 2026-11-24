@@ -318,19 +318,29 @@ export default function Workspace() {
 
   useEffect(() => {
     const controller = new AbortController();
+    const params = new URLSearchParams(window.location.search);
+    const requested = params.get("recording");
+    const clip = params.get("twitchClip");
     api<Recording[]>("/api/recordings", { signal: controller.signal })
-      .then((items) => {
+      .then(async (items) => {
+        const first = requested && /^[a-f0-9-]{36}$/i.test(requested)
+          ? items.find((item) => item.id === requested) ??
+            await api<Recording>(`/api/recordings/${encodeURIComponent(requested)}`, { signal: controller.signal })
+          : items[0];
         if (controller.signal.aborted) return;
-        setRecordings(items);
+        if (clip && /^[A-Za-z0-9_-]{1,150}$/.test(clip)) {
+          setTwitchUrl((value) => value || `https://clips.twitch.tv/${clip}`);
+        }
+        setRecordings(first && !items.some((item) => item.id === first.id) ? [first, ...items] : items);
         setMoreRecordings(items.length === 100);
-        setSelectedId(items[0]?.id ?? "");
-        selectionRef.current = items[0]?.id ?? "";
+        setSelectedId(first?.id ?? "");
+        selectionRef.current = first?.id ?? "";
         setStart("0");
-        setEnd(String(Math.min(items[0]?.duration ?? 10, 30)));
+        setEnd(String(Math.min(first?.duration ?? 10, 30)));
         setClips([]);
         setPreviewError(false);
         setPlayerReady(false);
-        setDraftLoading(items.length > 0);
+        setDraftLoading(Boolean(first));
         setSavedDraft(null);
         setDraftRefresh((value) => value + 1);
         setCaptionState(null);
@@ -865,7 +875,7 @@ export default function Workspace() {
                   <AlertDescription>
                     {twitchError}{" "}
                     <Link
-                      href="/discover"
+                      href="/twitch"
                       className="underline"
                       aria-disabled={navigationLocked}
                       onClick={(event) => {

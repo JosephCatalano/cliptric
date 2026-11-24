@@ -12,12 +12,9 @@ import {
   CalendarDaysIcon,
   CompassIcon,
   FolderOpenIcon,
-  LinkIcon,
   MonitorCheckIcon,
   MoonIcon,
   HouseIcon,
-  ScissorsIcon,
-  ZapIcon,
   SettingsIcon,
   SunIcon,
 } from "lucide-react";
@@ -41,20 +38,29 @@ import { Separator } from "@/components/ui/separator";
 import { toggleTheme } from "../lib/theme";
 
 const destinations = [
-  { href: "/workspace", label: "Home", icon: HouseIcon },
-  { href: "/discover", label: "Discover", icon: CompassIcon },
-  { href: "/autopilot", label: "Autopilot", icon: ZapIcon },
+  { href: "/workspace", label: "Create", icon: HouseIcon },
+  { href: "/twitch", label: "Twitch", icon: CompassIcon },
   { href: "/projects", label: "Projects", icon: FolderOpenIcon },
-  { href: "/studio", label: "Editor", icon: ScissorsIcon },
   { href: "/calendar", label: "Publishing", icon: CalendarDaysIcon },
-  { href: "/connections", label: "Accounts", icon: LinkIcon },
   { href: "/settings", label: "Settings", icon: SettingsIcon },
 ];
 
 function currentDestination(pathname: string) {
-  if (pathname === "/" || pathname.startsWith("/projects/new/")) return "/workspace";
+  if (
+    pathname === "/" ||
+    pathname === "/studio" ||
+    pathname === "/projects/batch" ||
+    pathname.startsWith("/projects/new/")
+  )
+    return "/workspace";
+  if (pathname === "/discover" || pathname === "/autopilot") return "/twitch";
   if (pathname.startsWith("/projects/")) return "/projects";
-  if (pathname.startsWith("/publish/")) return "/calendar";
+  if (
+    pathname === "/connections" ||
+    pathname.startsWith("/publishing/") ||
+    pathname.startsWith("/publish/")
+  )
+    return "/calendar";
   return pathname;
 }
 
@@ -166,21 +172,24 @@ export function AppHeader() {
   const pathname = usePathname();
   const { locked } = useWorkspaceNavigation();
   const current = currentDestination(pathname);
-  const title = pathname.startsWith("/publish/x/")
-    ? "Review X post"
-    : pathname.startsWith("/publish/facebook/")
-      ? "Review Facebook Reel"
-      : pathname.startsWith("/publish/instagram/")
-        ? "Review Instagram Reel"
-        : pathname.startsWith("/publish/youtube/")
-          ? "Review YouTube upload"
-          : pathname.startsWith("/publish/tiktok/")
-            ? "Review TikTok post"
-            : pathname.startsWith("/projects/new/")
-              ? "Set up your project"
-              : (destinations.find(
-                  (destination) => destination.href === current,
-                )?.label ?? "Workspace");
+  const title =
+    pathname === "/studio"
+      ? "Editor"
+      : pathname.startsWith("/publish/x/")
+        ? "Review X post"
+        : pathname.startsWith("/publish/facebook/")
+          ? "Review Facebook Reel"
+          : pathname.startsWith("/publish/instagram/")
+            ? "Review Instagram Reel"
+            : pathname.startsWith("/publish/youtube/")
+              ? "Review YouTube upload"
+              : pathname.startsWith("/publish/tiktok/")
+                ? "Review TikTok post"
+                : pathname.startsWith("/projects/new/")
+                  ? "Set up your project"
+                  : (destinations.find(
+                      (destination) => destination.href === current,
+                    )?.label ?? "Workspace");
   return (
     <header className="flex min-h-16 shrink-0 items-center gap-3 border-b border-divider bg-sidebar px-3 sm:px-6">
       <SidebarTrigger className="hidden md:inline-flex" />

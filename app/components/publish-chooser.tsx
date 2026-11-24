@@ -166,7 +166,7 @@ export function PublishChooser({
               </EmptyHeader>
               <EmptyContent>
                 <Button asChild variant="outline">
-                  <Link href="/connections">Connect an account</Link>
+                  <Link href="/publishing/accounts">Connect an account</Link>
                 </Button>
               </EmptyContent>
             </Empty>

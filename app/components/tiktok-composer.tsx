@@ -310,7 +310,7 @@ export function TikTokComposer({
       ) : null}
       {connection && !connection.connected ? (
         <p>
-          <Link href="/connections">Connect TikTok</Link> before posting this
+          <Link href="/publishing/accounts">Connect TikTok</Link> before posting this
           clip.
         </p>
       ) : null}

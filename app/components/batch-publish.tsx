@@ -582,7 +582,7 @@ function BatchReview({
                   {platformNames[platform]}
                 </FieldLabel>
                 {connections[platform]?.accounts.length === 0 ? (
-                  <Link href="/connections" className="text-sm underline">
+                  <Link href="/publishing/accounts" className="text-sm underline">
                     Connect {platformNames[platform]}
                   </Link>
                 ) : null}

@@ -236,7 +236,7 @@ function json(method: string, data: unknown): RequestInit {
   };
 }
 
-export function TwitchDiscovery() {
+export function TwitchDiscovery({ visible: panelVisible = true, onAutomate }: { visible?: boolean; onAutomate?: (id: string) => void } = {}) {
   const [list, setList] = useState<Workspace>();
   const [form, setForm] = useState<Form>(initial);
   const [baseline, setBaseline] = useState<Form>(initial);
@@ -305,7 +305,7 @@ export function TwitchDiscovery() {
   }, [dirty]);
 
   useEffect(() => {
-    if (!id) return;
+    if (!id || !panelVisible) return;
     const controller = new AbortController();
     async function refresh() {
       try {
@@ -326,7 +326,7 @@ export function TwitchDiscovery() {
       controller.abort();
       window.clearInterval(timer);
     };
-  }, [id, selectedRun]);
+  }, [id, selectedRun, panelVisible]);
 
   useEffect(() => {
     if (
@@ -429,7 +429,7 @@ export function TwitchDiscovery() {
     setList(await api<Workspace>());
   }
 
-  async function save(run = false) {
+  async function save(run = false, automate = false) {
     const settings: Settings = {
       ...form,
       streamers: form.source === "streamers" ? split(form.streamers) : [],
@@ -456,6 +456,7 @@ export function TwitchDiscovery() {
     setBaseline(formFor(saved.settings));
     await refreshList();
     if (run) await runScan(saved.id);
+    if (automate) onAutomate?.(saved.id);
   }
 
   async function runScan(scanId: string) {
@@ -468,7 +469,8 @@ export function TwitchDiscovery() {
   function submit(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
     const submitter = (event.nativeEvent as SubmitEvent).submitter;
-    void action(() => save(submitter?.getAttribute("value") === "run"));
+    const intent = submitter?.getAttribute("value");
+    void action(() => save(intent === "run", intent === "automation"));
   }
 
   async function setRecurring(enabled: boolean) {
@@ -1175,6 +1177,12 @@ export function TwitchDiscovery() {
                 >
                   Save and run
                 </Button>
+                {onAutomate && (
+                  <Button type="submit" value="automation" variant="outline"
+                    disabled={busy || (form.source === "game" && !form.game_id)}>
+                    Save and set up automation
+                  </Button>
+                )}
                 {dirty && (
                   <Button
                     type="button"

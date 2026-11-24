@@ -59,7 +59,7 @@ test("library, full-page editor and saved export", async ({
   page.on("pageerror", (error) => errors.push(error.message));
   await page.goto("/workspace");
   await expect(
-    page.getByRole("heading", { name: "Create something worth sharing." }),
+    page.getByRole("heading", { name: "Create" }),
   ).toBeVisible();
   await expect(
     page.getByRole("heading", { name: "Recent projects" }),
@@ -193,7 +193,7 @@ test("publishing and prompt navigation at supported widths", async ({
     for (const width of [1920, 1440, 1280, 1024, 768, 390]) {
       await page.setViewportSize({ width, height: 900 });
       for (const [route, heading] of [
-        ["/workspace", "Create something worth sharing."],
+        ["/workspace", "Create"],
         ["/projects", "Projects"],
         ["/calendar", "Publishing"],
         ["/connections", "Accounts"],

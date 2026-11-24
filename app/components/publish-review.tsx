@@ -98,7 +98,7 @@ export function PublishReview({
           </NativeSelect>
           <FieldDescription>
             Changing accounts clears the previous review and approval.{" "}
-            <Link href="/connections">Manage connected accounts</Link>.
+            <Link href="/publishing/accounts">Manage connected accounts</Link>.
           </FieldDescription>
         </Field>
       )}
@@ -136,7 +136,7 @@ export function PublishReview({
           </header>
           {destination}
           <Button asChild variant="outline" className="self-start">
-            <Link href="/connections">Manage accounts</Link>
+            <Link href="/publishing/accounts">Manage accounts</Link>
           </Button>
         </section>
       )}

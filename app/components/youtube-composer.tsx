@@ -332,7 +332,7 @@ export function YouTubeComposer({
       ) : null}
       {!connection?.connected ? (
         <p>
-          <Link href="/connections">Connect YouTube</Link> to upload this
+          <Link href="/publishing/accounts">Connect YouTube</Link> to upload this
           finished clip.
         </p>
       ) : null}

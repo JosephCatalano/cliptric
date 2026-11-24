@@ -1,5 +1,7 @@
 "use client";
 
+import { PublishingNavigation } from "./publishing-navigation";
+
 import { useEffect, useState } from "react";
 import Link from "next/link";
 import { ChevronLeftIcon, ChevronRightIcon, PlusIcon } from "lucide-react";
@@ -242,6 +244,7 @@ export function PostCalendar() {
           Schedule post
         </Button>
       </header>
+      <PublishingNavigation current="posts" />
       <div className="flex flex-wrap items-center gap-x-4 gap-y-2 rounded-lg border bg-card px-4 py-3">
         <Badge
           variant={

@@ -258,7 +258,19 @@ export function NewProject({
           <Link href="/projects">Your projects</Link>
         </Button>
       </header>
-      <h1>New project</h1>
+      <h1>Find highlights</h1>
+      {mediaSource && (
+        <div className="flex flex-wrap gap-2">
+          <Button asChild variant="outline" disabled={busy}>
+            <Link href={`/studio?recording=${mediaSource.id}`}
+              aria-disabled={busy} onClick={(event) => { if (busy) event.preventDefault(); }}>Edit manually</Link>
+          </Button>
+          <Button asChild variant="outline" disabled={busy}>
+            <Link href={`/projects/batch?mode=keep&recording=${mediaSource.id}`}
+              aria-disabled={busy} onClick={(event) => { if (busy) event.preventDefault(); }}>Finish full length</Link>
+          </Button>
+        </div>
+      )}
       {error ? (
         <Alert role="alert" variant="destructive">
           <AlertDescription>

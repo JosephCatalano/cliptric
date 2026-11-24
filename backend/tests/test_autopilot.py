@@ -51,11 +51,12 @@ def test_discover_pauses_automatic_scans_preserves_manual_runs_and_survives_rest
     with TestClient(app, base_url="http://127.0.0.1:8765") as client:
         service = setup_api(app, monkeypatch, lambda _: ([clip()], None, 0))
         saved = client.post(
-            f"{ROOT}/scans", json=scan_config(enabled=True, auto_prepare=True)
+            f"{ROOT}/scans", json=scan_config(enabled=False, auto_prepare=True)
         ).json()
         assert change(client, saved).status_code == 409
         response = change(client, saved, mode="discover")
         assert response.status_code == 200, response.text
+        assert client.get(URL).json()["scans"][0]["enabled"]
         path = f"{ROOT}/scans/{saved['id']}"
         poll(client, path, lambda doc: doc["runs"] and doc["runs"][0]["status"] == "complete")
         assert not client.get(URL).json()["jobs"]

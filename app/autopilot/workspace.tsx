@@ -1,7 +1,13 @@
 "use client";
 
 import Link from "next/link";
-import { useCallback, useEffect, useState, type FormEvent } from "react";
+import {
+  useCallback,
+  useEffect,
+  useRef,
+  useState,
+  type FormEvent,
+} from "react";
 
 import { Alert, AlertDescription } from "@/components/ui/alert";
 import { Badge } from "@/components/ui/badge";
@@ -99,7 +105,16 @@ function localTime(value: number) {
   return new Date(value * 1000).toLocaleString();
 }
 
-export function AutopilotWorkspace() {
+export function AutopilotWorkspace({
+  view = "all",
+  visible = true,
+  suggestedScan = null,
+}: {
+  view?: "all" | "automation" | "review";
+  visible?: boolean;
+  suggestedScan?: string | null;
+} = {}) {
+  const appliedSuggestion = useRef<string | null>(null);
   const [snapshot, setSnapshot] = useState<Snapshot>();
   const [draft, setDraft] = useState<Configuration>();
   const [consent, setConsent] = useState(false);
@@ -114,6 +129,7 @@ export function AutopilotWorkspace() {
   >({});
 
   useEffect(() => {
+    if (!visible || view === "review") return;
     const controller = new AbortController();
     for (const platform of platforms) {
       void api<SocialConnection>(platformRoot(platform), {
@@ -132,17 +148,34 @@ export function AutopilotWorkspace() {
         });
     }
     return () => controller.abort();
-  }, []);
+  }, [view, visible]);
 
-  const load = useCallback(async (signal?: AbortSignal) => {
-    const state = await api<Snapshot>(endpoint, { signal });
-    if (signal?.aborted) return;
-    setSnapshot(state);
-    setDraft((current) => current ?? state.configuration);
-    setOffline(false);
-  }, []);
+  const load = useCallback(
+    async (signal?: AbortSignal) => {
+      const state = await api<Snapshot>(endpoint, { signal });
+      if (signal?.aborted) return;
+      setSnapshot(state);
+      const suggestion =
+        suggestedScan &&
+        suggestedScan !== appliedSuggestion.current &&
+        state.scans.some((scan) => scan.id === suggestedScan)
+          ? suggestedScan
+          : null;
+      appliedSuggestion.current = suggestedScan;
+      setDraft((current) => {
+        const settings = current ?? state.configuration;
+        return suggestion && !settings.scan_ids.includes(suggestion)
+          ? { ...settings, scan_ids: [...settings.scan_ids, suggestion] }
+          : settings;
+      });
+      if (suggestion) setConsent(false);
+      setOffline(false);
+    },
+    [suggestedScan],
+  );
 
   useEffect(() => {
+    if (!visible) return;
     const controller = new AbortController();
     let timer: ReturnType<typeof setTimeout>;
     async function poll() {
@@ -159,7 +192,7 @@ export function AutopilotWorkspace() {
       controller.abort();
       clearTimeout(timer);
     };
-  }, [load]);
+  }, [load, visible]);
 
   async function action(callback: () => Promise<void>) {
     setBusy(true);
@@ -286,13 +319,7 @@ export function AutopilotWorkspace() {
     void action(() => save(true));
   }
 
-  return (
-    <div className="flex flex-col gap-5">
-      {error && (
-        <Alert variant="destructive">
-          <AlertDescription>{error}</AlertDescription>
-        </Alert>
-      )}
+  const runSettings = view !== "review" && (
       <div className="grid gap-4 lg:grid-cols-[minmax(0,3fr)_minmax(16rem,2fr)]">
         <Card>
           <CardHeader>
@@ -300,7 +327,8 @@ export function AutopilotWorkspace() {
               Run settings
             </CardTitle>
             <CardDescription>
-              Choose saved Twitch scans to run while the local API is awake.
+              Enable Autopilot to start the selected scans at their saved
+              intervals. Keep the local API running and the computer awake.
             </CardDescription>
           </CardHeader>
           <CardContent>
@@ -329,8 +357,8 @@ export function AutopilotWorkspace() {
                     </NativeSelectOption>
                   </NativeSelect>
                   <FieldDescription>
-                    All publishing destinations require approval of the finished
-                    export.
+                    All publishing destinations require approval of the
+                    finished export.
                   </FieldDescription>
                 </Field>
                 <Field>
@@ -346,7 +374,9 @@ export function AutopilotWorkspace() {
                             scan_ids:
                               checked === true
                                 ? [...draft.scan_ids, scan.id]
-                                : draft.scan_ids.filter((id) => id !== scan.id),
+                                : draft.scan_ids.filter(
+                                    (id) => id !== scan.id,
+                                  ),
                           });
                           setConsent(false);
                         }}
@@ -364,7 +394,7 @@ export function AutopilotWorkspace() {
                     </Field>
                   ))}
                   <Button variant="link" className="w-fit px-0" asChild>
-                    <Link href="/discover">
+                    <Link href="/twitch">
                       Manage Twitch scans and source rights
                     </Link>
                   </Button>
@@ -389,7 +419,9 @@ export function AutopilotWorkspace() {
                           })
                         }
                       />
-                      <FieldDescription>Use 0 for no minimum.</FieldDescription>
+                      <FieldDescription>
+                        Use 0 for no minimum.
+                      </FieldDescription>
                     </Field>
                     <Field orientation="horizontal">
                       <Checkbox
@@ -429,15 +461,17 @@ export function AutopilotWorkspace() {
                           }
                         />
                         <FieldLabel htmlFor="autopilot-consent">
-                          Allow Cliptric to share transcripts for this enrolled
-                          configuration and use the saved AI budget.
+                          Allow Cliptric to share transcripts for this
+                          enrolled configuration and use the saved AI budget.
                         </FieldLabel>
                       </Field>
                     )}
                   </>
                 )}
                 <div className="flex flex-wrap items-center gap-2">
-                  <Button disabled={busy || offline || !draft.scan_ids.length}>
+                  <Button
+                    disabled={busy || offline || !draft.scan_ids.length}
+                  >
                     {settings.enabled ? "Apply settings" : "Enable Autopilot"}
                   </Button>
                   {settings.enabled && (
@@ -450,7 +484,10 @@ export function AutopilotWorkspace() {
                       Pause Autopilot
                     </Button>
                   )}
-                  <span role="status" className="text-sm text-muted-foreground">
+                  <span
+                    role="status"
+                    className="text-sm text-muted-foreground"
+                  >
                     {busy ? "Updating…" : runStatus}
                   </span>
                 </div>
@@ -529,7 +566,7 @@ export function AutopilotWorkspace() {
               ))}
               <div className="flex flex-wrap gap-2">
                 <Button variant="outline" className="w-fit" asChild>
-                  <Link href="/connections">Manage accounts</Link>
+                  <Link href="/publishing/accounts">Manage accounts</Link>
                 </Button>
                 <Button variant="outline" className="w-fit" asChild>
                   <Link href="/calendar">Open Publishing</Link>
@@ -539,6 +576,8 @@ export function AutopilotWorkspace() {
           </CardContent>
         </Card>
       </div>
+  );
+  const reviewQueue = view !== "automation" && (
       <Card>
         <CardHeader>
           <CardTitle role="heading" aria-level={2}>
@@ -688,7 +727,9 @@ export function AutopilotWorkspace() {
                             ? "Render checks passed"
                             : "Waiting for a valid render"}
                       </Badge>
-                      {clip.reason && <p className="text-sm">{clip.reason}</p>}
+                      {clip.reason && (
+                        <p className="text-sm">{clip.reason}</p>
+                      )}
                       {clip.warning && (
                         <p className="text-sm text-muted-foreground">
                           {clip.warning}
@@ -708,7 +749,11 @@ export function AutopilotWorkspace() {
                           disabled={busy || offline}
                           onClick={() =>
                             void action(() =>
-                              dismiss(job.project_id!, clip.id, clip.revision),
+                              dismiss(
+                                job.project_id!,
+                                clip.id,
+                                clip.revision,
+                              ),
                             )
                           }
                         >
@@ -723,6 +768,17 @@ export function AutopilotWorkspace() {
           </div>
         </CardContent>
       </Card>
+  );
+
+  return (
+    <div className="flex flex-col gap-5">
+      {error && (
+        <Alert variant="destructive">
+          <AlertDescription>{error}</AlertDescription>
+        </Alert>
+      )}
+      {runSettings}
+      {reviewQueue}
     </div>
   );
 }

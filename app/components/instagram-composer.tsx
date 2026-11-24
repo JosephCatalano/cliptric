@@ -231,7 +231,7 @@ export function InstagramComposer({
       ) : null}
       {connection && !connection.connected ? (
         <p>
-          <Link href="/connections">Connect Instagram</Link> before publishing.
+          <Link href="/publishing/accounts">Connect Instagram</Link> before publishing.
         </p>
       ) : null}
       {creator ? (

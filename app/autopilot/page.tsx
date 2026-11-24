@@ -1,18 +1,5 @@
-import type { Metadata } from "next";
-import { AutopilotWorkspace } from "./workspace";
-
-export const metadata: Metadata = { title: "Autopilot | Cliptric" };
+import { redirect } from "next/navigation";
 
 export default function AutopilotPage() {
-  return (
-    <section className="project-workspace">
-      <header className="workspace-heading">
-        <div>
-          <h1>Autopilot</h1>
-          <p>Run Twitch scans and review the clips they prepare.</p>
-        </div>
-      </header>
-      <AutopilotWorkspace />
-    </section>
-  );
+  redirect("/twitch?tab=automation");
 }

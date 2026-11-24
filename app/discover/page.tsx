@@ -1,15 +1,12 @@
-import { TwitchDiscovery } from "./twitch-discovery";
+import { redirect } from "next/navigation";
 
-export default function DiscoverPage() {
-  return (
-    <section className="project-workspace">
-      <header className="workspace-heading">
-        <div>
-          <h1>Discover</h1>
-          <p>Find Twitch clips by streamer or game.</p>
-        </div>
-      </header>
-      <TwitchDiscovery />
-    </section>
-  );
+export default async function DiscoverPage({
+  searchParams,
+}: {
+  searchParams: Promise<{ twitch?: string | string[] }>;
+}) {
+  const { twitch } = await searchParams;
+  const params = new URLSearchParams();
+  if (typeof twitch === "string") params.set("twitch", twitch);
+  redirect(params.size ? `/twitch?${params}` : "/twitch");
 }

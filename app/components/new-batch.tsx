@@ -72,11 +72,36 @@ type Upload = {
   error: string;
 };
 
-export function NewBatch() {
+export function NewBatch({
+  initialFiles = [],
+  initialRecordings = [],
+  initialMode = "highlights",
+  onChooseSource,
+}: {
+  initialFiles?: File[];
+  initialRecordings?: Recording[];
+  initialMode?: "keep" | "highlights";
+  onChooseSource?: () => void;
+} = {}) {
   const router = useRouter();
   const limits = useImportLimits();
   const maxFileBytes = limits.maxBytes ?? 0;
-  const [clips, setClips] = useState<Upload[]>([]);
+  const [clips, setClips] = useState<Upload[]>(() => [
+    ...initialFiles.map((file, index) => ({
+      id: `initial-file-${index}`,
+      name: file.name,
+      file,
+      recording: null,
+      error: "",
+    })),
+    ...initialRecordings.map((recording) => ({
+      id: recording.id,
+      name: recording.name,
+      file: null,
+      recording,
+      error: "",
+    })),
+  ]);
   const [title, setTitle] = useState("Supplied clips");
   const [style, setStyle] = useState<CaptionStyle>({
     preset: "impact",
@@ -90,7 +115,7 @@ export function NewBatch() {
   const [aiTitles, setAiTitles] = useState(false);
   const [postCopy, setPostCopy] = useState(true);
   const [batchMode, setBatchMode] = useState<"auto" | "keep" | "highlights">(
-    "highlights",
+    initialMode,
   );
   const [clipsPerSource, setClipsPerSource] = useState(3);
   const [presentation, setPresentation] =
@@ -410,9 +435,15 @@ export function NewBatch() {
   return (
     <section className="project-workspace new-project-workspace">
       <header className="project-heading">
-        <Button asChild variant="outline">
-          <Link href="/workspace">Home</Link>
-        </Button>
+        {onChooseSource ? (
+          <Button type="button" variant="outline" disabled={busy !== null} onClick={onChooseSource}>
+            Back to source
+          </Button>
+        ) : (
+          <Button asChild variant="outline">
+            <Link href="/workspace">Create</Link>
+          </Button>
+        )}
         <Button asChild variant="outline">
           <Link href="/projects">Your projects</Link>
         </Button>

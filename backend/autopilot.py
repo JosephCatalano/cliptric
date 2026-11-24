@@ -86,6 +86,18 @@ class Autopilot:
             scans = [self.discovery.require(db, identifier) for identifier in ids]
             if payload.enabled:
                 self.validate(db, payload, scans, current)
+                stamp = time.time()
+                for index, scan in enumerate(scans):
+                    if scan["enabled"]:
+                        continue
+                    settings = json.loads(scan["settings"])
+                    settings["enabled"] = True
+                    db.execute(
+                        "UPDATE twitch_scans SET enabled=1,next_run=?,settings=?,"
+                        "revision=revision+1,updated=? WHERE id=?",
+                        (stamp, json.dumps(settings), stamp, scan["id"]),
+                    )
+                    scans[index] = self.discovery.require(db, scan["id"])
             removed = set(current["scan_ids"]) - set(ids)
             if removed:
                 # Unenrolling a scan must not silently restart it as a legacy schedule.
@@ -127,8 +139,8 @@ class Autopilot:
     def validate(self, db, payload, scans, current):
         if not self.discovery.api.configured:
             raise HTTPException(409, "Configure Twitch app credentials before starting Autopilot.")
-        if not scans or not any(scan["enabled"] for scan in scans):
-            raise HTTPException(409, "Choose a saved Twitch scan with recurrence enabled.")
+        if not scans:
+            raise HTTPException(409, "Choose at least one saved Twitch scan.")
         if payload.mode != "prepare":
             return
         stamp = time.time()
@@ -143,8 +155,6 @@ class Autopilot:
         eligible = set()
         editorial_budget = False
         for scan in scans:
-            if not scan["enabled"]:
-                continue
             settings = json.loads(scan["settings"])
             ids = json.loads(scan["source_ids"])
             allowed = set(grants)
