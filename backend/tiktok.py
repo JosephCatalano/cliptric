@@ -18,7 +18,7 @@ from .social_accounts import Accounts
 from .storage import now
 from .tiktok_api import CALLBACK_PATH, TikTokAPI, TikTokError, chunk_plan, protect_tokens
 from .transcription_store import TranscriptStore
-from .twitch_rights import publishing_error
+from .twitch_publishing import publishing_error
 
 logger = logging.getLogger(__name__)
 Privacy = Literal["PUBLIC_TO_EVERYONE", "MUTUAL_FOLLOW_FRIENDS", "FOLLOWER_OF_CREATOR", "SELF_ONLY"]

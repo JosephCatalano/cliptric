@@ -19,7 +19,7 @@ from .social_accounts import Accounts
 from .social_security import CredentialError, protect_secret
 from .storage import now
 from .transcription_store import TranscriptStore
-from .twitch_rights import publishing_error
+from .twitch_publishing import publishing_error
 from .youtube_api import CALLBACK_PATH, SCOPES, YouTubeAPI, YouTubeError
 
 logger = logging.getLogger(__name__)

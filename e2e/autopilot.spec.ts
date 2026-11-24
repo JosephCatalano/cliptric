@@ -24,7 +24,7 @@ test("Autopilot displays real saved scans and activation blockers", async ({
     await page.getByRole("button", { name: "Enable Autopilot" }).click();
     await expect(
       page.getByText(
-        /configure Twitch app credentials|connect a Twitch editor and record reuse rights/i,
+        /configure Twitch app credentials|connect a Twitch editor to prepare drafts/i,
       ),
     ).toBeVisible();
     await page.getByRole("tab", { name: "Review queue" }).click();

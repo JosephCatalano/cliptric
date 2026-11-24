@@ -15,6 +15,8 @@ from pydantic import BaseModel, ConfigDict, Field, ValidationError, field_valida
 
 from .config import ROOT
 
+MAX_IMPORTS_PER_SCAN = 20
+
 
 class TwitchError(Exception):
     def __init__(self, status: int, message: str):
@@ -85,7 +87,7 @@ class ScanSettings(BaseModel):
     enabled: bool = False
     interval_minutes: int = Field(default=60, ge=10, le=10080)
     auto_prepare: bool = Field(default=False, strict=True)
-    import_limit: int = Field(default=15, ge=1, le=15)
+    import_limit: int = Field(default=15, ge=1, le=MAX_IMPORTS_PER_SCAN)
     daily_limit: int = Field(default=30, ge=1, le=100)
     daily_ai_limit: int = Field(default=10, ge=0, le=100)
     storage_limit_mib: int = Field(default=4096, ge=128, le=65536)

@@ -109,8 +109,7 @@ type Clip = {
   rank: number;
   state: "new" | "reviewed" | "hidden";
   broadcaster_id: string;
-  processing_eligible: boolean;
-  publishing_eligible: boolean;
+  can_request_download: boolean;
   intake_status: string | null;
   same_moment: boolean;
 };
@@ -131,12 +130,6 @@ type Workspace = {
     available: boolean;
     profile: { editor_id: string; login: string } | null;
   };
-};
-type Grant = {
-  broadcaster_id: string;
-  expires: number;
-  can_publish: number;
-  can_share: number;
 };
 const endpoint = "/api/twitch-discovery";
 const initial: Form = {
@@ -236,7 +229,10 @@ function json(method: string, data: unknown): RequestInit {
   };
 }
 
-export function TwitchDiscovery({ visible: panelVisible = true, onAutomate }: { visible?: boolean; onAutomate?: (id: string) => void } = {}) {
+export function TwitchDiscovery({
+  visible: panelVisible = true,
+  onAutomate,
+}: { visible?: boolean; onAutomate?: (id: string) => void } = {}) {
   const [list, setList] = useState<Workspace>();
   const [form, setForm] = useState<Form>(initial);
   const [baseline, setBaseline] = useState<Form>(initial);
@@ -257,15 +253,6 @@ export function TwitchDiscovery({ visible: panelVisible = true, onAutomate }: { 
   const [presets, setPresets] = useState<
     { id: string; name: string; workflow: string }[]
   >([]);
-  const [grants, setGrants] = useState<Grant[]>([]);
-  const [rights, setRights] = useState({
-    broadcaster: "",
-    label: "",
-    expires: "",
-    confirmed: false,
-    publish: false,
-    share: false,
-  });
   const dirty = JSON.stringify(form) !== JSON.stringify(baseline);
   const id = active?.id;
 
@@ -273,11 +260,6 @@ export function TwitchDiscovery({ visible: panelVisible = true, onAutomate }: { 
     const controller = new AbortController();
     api<Workspace>("", { signal: controller.signal })
       .then(setList)
-      .catch((cause) => {
-        if (!controller.signal.aborted) setError(message(cause));
-      });
-    api<Grant[]>("/rights", { signal: controller.signal })
-      .then(setGrants)
       .catch((cause) => {
         if (!controller.signal.aborted) setError(message(cause));
       });
@@ -495,31 +477,6 @@ export function TwitchDiscovery({ visible: panelVisible = true, onAutomate }: { 
     );
   }
 
-  async function grantRights(event: FormEvent<HTMLFormElement>) {
-    event.preventDefault();
-    await action(async () => {
-      await api(
-        "/rights",
-        json("POST", {
-          broadcaster_id: rights.broadcaster,
-          expires: new Date(rights.expires).toISOString(),
-          rights: rights.confirmed,
-          allow_publish: rights.publish,
-          allow_external_ai: rights.share,
-        }),
-      );
-      setGrants(await api<Grant[]>("/rights"));
-      setRights({
-        broadcaster: "",
-        label: "",
-        expires: "",
-        confirmed: false,
-        publish: false,
-        share: false,
-      });
-    });
-  }
-
   async function prepare() {
     const ids = eligibleSelection.map((clip) => clip.id);
     const result = await api<{ queued: number }>(
@@ -528,7 +485,7 @@ export function TwitchDiscovery({ visible: panelVisible = true, onAutomate }: { 
     );
     setNotice(
       result.queued < ids.length
-        ? `Queued ${result.queued} of ${ids.length}. Check source rights and processing limits for the remaining clips.`
+        ? `Queued ${result.queued} of ${ids.length}. Check the editor connection and processing limits for the remaining clips.`
         : `Queued ${result.queued} ${result.queued === 1 ? "clip" : "clips"}.`,
     );
     setSelected([]);
@@ -565,7 +522,7 @@ export function TwitchDiscovery({ visible: panelVisible = true, onAutomate }: { 
   const eligibleSelection = visible.filter(
     (clip) =>
       selected.includes(clip.id) &&
-      clip.processing_eligible &&
+      clip.can_request_download &&
       (!clip.intake_status || clip.intake_status === "recording"),
   );
   const running = latest?.status === "running" || latest?.status === "queued";
@@ -604,8 +561,8 @@ export function TwitchDiscovery({ visible: panelVisible = true, onAutomate }: { 
             Twitch editor access
           </CardTitle>
           <CardDescription>
-            Connect the broadcaster or an editor for authorized downloads.
-            Discovery uses your Twitch app credentials.
+            Find public clips from any channel. To download clips, connect the
+            broadcaster or a Twitch Editor for that channel.
           </CardDescription>
         </CardHeader>
         <CardContent className="flex flex-col gap-3">
@@ -648,111 +605,6 @@ export function TwitchDiscovery({ visible: panelVisible = true, onAutomate }: { 
               </Button>
             )}
           </div>
-          {!!grants.length && (
-            <ul className="flex flex-col gap-2">
-              {grants.map((grant) => (
-                <li
-                  key={grant.broadcaster_id}
-                  className="flex flex-wrap items-center gap-2 text-sm"
-                >
-                  <span>
-                    Broadcaster {grant.broadcaster_id} · expires{" "}
-                    {new Date(grant.expires * 1000).toLocaleString()}
-                  </span>
-                  <Button
-                    variant="ghost"
-                    size="sm"
-                    disabled={busy}
-                    onClick={() =>
-                      void action(async () => {
-                        await api(`/rights/${grant.broadcaster_id}`, {
-                          method: "DELETE",
-                        });
-                        setGrants(await api<Grant[]>("/rights"));
-                      })
-                    }
-                  >
-                    Revoke rights
-                  </Button>
-                </li>
-              ))}
-            </ul>
-          )}
-          {rights.broadcaster && (
-            <form onSubmit={(event) => void grantRights(event)}>
-              <FieldGroup>
-                <Field>
-                  <FieldLabel htmlFor="rights-expiry">
-                    Rights expiry for {rights.label}
-                  </FieldLabel>
-                  <Input
-                    required
-                    id="rights-expiry"
-                    type="datetime-local"
-                    value={rights.expires}
-                    onChange={(e) =>
-                      setRights({ ...rights, expires: e.target.value })
-                    }
-                  />
-                </Field>
-                <Field orientation="horizontal">
-                  <Checkbox
-                    id="rights-allow"
-                    checked={rights.confirmed}
-                    onCheckedChange={(value) =>
-                      setRights({ ...rights, confirmed: value === true })
-                    }
-                  />
-                  <FieldLabel htmlFor="rights-allow">
-                    I control or have documented permission to download, edit
-                    and retain this broadcaster’s clips.
-                  </FieldLabel>
-                </Field>
-                <Field orientation="horizontal">
-                  <Checkbox
-                    id="rights-ai"
-                    checked={rights.share}
-                    onCheckedChange={(value) =>
-                      setRights({ ...rights, share: value === true })
-                    }
-                  />
-                  <FieldLabel htmlFor="rights-ai">
-                    The permission includes sharing transcripts with the
-                    configured AI provider.
-                  </FieldLabel>
-                </Field>
-                <Field orientation="horizontal">
-                  <Checkbox
-                    id="rights-publish"
-                    checked={rights.publish}
-                    onCheckedChange={(value) =>
-                      setRights({ ...rights, publish: value === true })
-                    }
-                  />
-                  <FieldLabel htmlFor="rights-publish">
-                    The permission includes publishing edited content to my
-                    connected platforms.
-                  </FieldLabel>
-                </Field>
-                <div className="flex flex-wrap gap-2">
-                  <Button
-                    disabled={
-                      busy || !rights.confirmed || !list?.editor.profile
-                    }
-                  >
-                    Save reuse rights
-                  </Button>
-                  <Button
-                    type="button"
-                    variant="ghost"
-                    onClick={() => setRights({ ...rights, broadcaster: "" })}
-                  >
-                    Cancel
-                  </Button>
-                </div>
-              </FieldGroup>
-            </form>
-          )}
         </CardContent>
       </Card>
       <div className="grid items-start gap-4 xl:grid-cols-[minmax(15rem,1fr)_minmax(0,3fr)]">
@@ -956,7 +808,7 @@ export function TwitchDiscovery({ visible: panelVisible = true, onAutomate }: { 
                 <div className="grid gap-4 sm:grid-cols-2">
                   {(
                     [
-                      ["import_limit", "Imports per scan", 1, 15],
+                      ["import_limit", "Imports per scan", 1, 20],
                       ["daily_limit", "Imports per 24 hours", 1, 100],
                       ["daily_ai_limit", "AI requests per 24 hours", 0, 100],
                       [
@@ -1004,18 +856,29 @@ export function TwitchDiscovery({ visible: panelVisible = true, onAutomate }: { 
                   </FieldLabel>
                 </Field>
                 {(form.ai_titles || form.ai_copy) && (
-                  <Field orientation="horizontal">
-                    <Checkbox
-                      id="scan-ai-consent"
-                      checked={form.ai_consent}
-                      onCheckedChange={(value) =>
-                        edit("ai_consent", value === true)
-                      }
-                    />
-                    <FieldLabel htmlFor="scan-ai-consent">
-                      I approve sharing eligible transcripts and paying for
-                      these AI requests within the saved budget.
-                    </FieldLabel>
+                  <Field>
+                    <FieldDescription>
+                      Each enabled AI option uses one request per clip. This
+                      daily budget covers up to{" "}
+                      {Math.floor(
+                        form.daily_ai_limit /
+                          (Number(form.ai_titles) + Number(form.ai_copy)),
+                      )}{" "}
+                      clips before any additional Autopilot editorial review.
+                    </FieldDescription>
+                    <Field orientation="horizontal">
+                      <Checkbox
+                        id="scan-ai-consent"
+                        checked={form.ai_consent}
+                        onCheckedChange={(value) =>
+                          edit("ai_consent", value === true)
+                        }
+                      />
+                      <FieldLabel htmlFor="scan-ai-consent">
+                        I approve sharing eligible transcripts and paying for
+                        these AI requests within the saved budget.
+                      </FieldLabel>
+                    </Field>
                   </Field>
                 )}
               </FieldGroup>
@@ -1178,8 +1041,12 @@ export function TwitchDiscovery({ visible: panelVisible = true, onAutomate }: { 
                   Save and run
                 </Button>
                 {onAutomate && (
-                  <Button type="submit" value="automation" variant="outline"
-                    disabled={busy || (form.source === "game" && !form.game_id)}>
+                  <Button
+                    type="submit"
+                    value="automation"
+                    variant="outline"
+                    disabled={busy || (form.source === "game" && !form.game_id)}
+                  >
                     Save and set up automation
                   </Button>
                 )}
@@ -1428,16 +1295,6 @@ export function TwitchDiscovery({ visible: panelVisible = true, onAutomate }: { 
                           {clip.state !== "new" && (
                             <Badge variant="outline">{clip.state}</Badge>
                           )}
-                          <Badge variant="outline">
-                            {clip.processing_eligible
-                              ? "Reuse rights saved"
-                              : "Discovery only"}
-                          </Badge>
-                          {clip.publishing_eligible && (
-                            <Badge variant="outline">
-                              Publishing rights saved
-                            </Badge>
-                          )}
                           {clip.intake_status && (
                             <Badge variant="outline">
                               {clip.intake_status === "project"
@@ -1453,11 +1310,11 @@ export function TwitchDiscovery({ visible: panelVisible = true, onAutomate }: { 
                             </Badge>
                           )}
                         </div>
-                        <p className="text-sm text-muted-foreground">
-                          {clip.processing_eligible
-                            ? "Download depends on Twitch editor access."
-                            : "Connect an editor and record reuse rights to prepare this clip."}
-                        </p>
+                        {!clip.can_request_download && (
+                          <p className="text-sm text-muted-foreground">
+                            Connect a Twitch editor to prepare this clip.
+                          </p>
+                        )}
                         <div className="flex flex-wrap gap-2">
                           <Button asChild variant="outline" size="sm">
                             <a
@@ -1484,28 +1341,15 @@ export function TwitchDiscovery({ visible: panelVisible = true, onAutomate }: { 
                             {preview === clip.id ? "Close preview" : "Preview"}
                           </Button>
                           <Button asChild variant="ghost" size="sm">
-                            <Link href="/projects/batch">
-                              Edit an authorized file
+                            <Link
+                              href={{
+                                pathname: "/projects/batch",
+                                query: { twitchClip: clip.id },
+                              }}
+                            >
+                              Download &amp; edit
                             </Link>
                           </Button>
-                          {list?.editor.profile && (
-                            <Button
-                              variant="ghost"
-                              size="sm"
-                              onClick={() =>
-                                setRights({
-                                  broadcaster: clip.broadcaster_id,
-                                  label: clip.broadcaster_name,
-                                  expires: "",
-                                  confirmed: false,
-                                  publish: false,
-                                  share: false,
-                                })
-                              }
-                            >
-                              Manage reuse rights
-                            </Button>
-                          )}
                         </div>
                         {preview === clip.id &&
                           (host ? (
@@ -1601,9 +1445,9 @@ export function TwitchDiscovery({ visible: panelVisible = true, onAutomate }: { 
                         </AlertDialogTitle>
                         <AlertDialogDescription>
                           This removes the intake record and local source data.
-                          Revoke reuse rights first if it should stay out of
-                          future scans. Publishing records remain available for
-                          reconciliation.
+                          Pause or update scans for this channel to prevent
+                          another automatic import. Publishing records remain
+                          available for reconciliation.
                         </AlertDialogDescription>
                       </AlertDialogHeader>
                       <AlertDialogFooter>

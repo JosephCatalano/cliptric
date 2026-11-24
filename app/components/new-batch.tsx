@@ -76,11 +76,13 @@ export function NewBatch({
   initialFiles = [],
   initialRecordings = [],
   initialMode = "highlights",
+  twitchClipUrl,
   onChooseSource,
 }: {
   initialFiles?: File[];
   initialRecordings?: Recording[];
   initialMode?: "keep" | "highlights";
+  twitchClipUrl?: string;
   onChooseSource?: () => void;
 } = {}) {
   const router = useRouter();
@@ -130,6 +132,7 @@ export function NewBatch({
   );
   const [busy, setBusy] = useState<"importing" | "saving" | null>(null);
   const [error, setError] = useState("");
+  const [copyStatus, setCopyStatus] = useState("");
   const [current, setCurrent] = useState<string | null>(null);
   const [progress, setProgress] = useState(0);
   const [sources, setSources] = useState<Recording[]>([]);
@@ -482,6 +485,56 @@ export function NewBatch({
           <FieldSet disabled={busy !== null}>
             <CreationPanel value={0} active={flow.step}>
               <h2>Add your videos</h2>
+              {twitchClipUrl && (
+                <FieldGroup>
+                  <Field>
+                    <FieldLabel htmlFor="batch-twitch-link">
+                      Twitch clip link
+                    </FieldLabel>
+                    <Input
+                      id="batch-twitch-link"
+                      value={twitchClipUrl}
+                      readOnly
+                      onFocus={(event) => event.currentTarget.select()}
+                    />
+                    <FieldDescription>
+                      Paste this link into StreamLadder, download the video, then
+                      select the saved file below. Use clips you have permission
+                      to download and edit.
+                    </FieldDescription>
+                  </Field>
+                  <div className="flex flex-wrap items-center gap-2">
+                    <Button
+                      type="button"
+                      variant="outline"
+                      onClick={async () => {
+                        try {
+                          await navigator.clipboard.writeText(twitchClipUrl);
+                          setCopyStatus("Link copied.");
+                        } catch {
+                          setCopyStatus(
+                            "Select the link above to copy it manually.",
+                          );
+                        }
+                      }}
+                    >
+                      Copy link
+                    </Button>
+                    <Button asChild variant="outline">
+                      <a
+                        href="https://www.streamladder.com/tools/clip-downloader"
+                        target="_blank"
+                        rel="noreferrer"
+                      >
+                        Open StreamLadder downloader
+                      </a>
+                    </Button>
+                    <span role="status" className="text-sm text-muted-foreground">
+                      {copyStatus}
+                    </span>
+                  </div>
+                </FieldGroup>
+              )}
               <Field>
                 <FieldLabel htmlFor="batch-title">Batch name</FieldLabel>
                 <Input

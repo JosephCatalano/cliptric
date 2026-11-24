@@ -143,36 +143,8 @@ class Autopilot:
             raise HTTPException(409, "Choose at least one saved Twitch scan.")
         if payload.mode != "prepare":
             return
-        stamp = time.time()
-        grants = {
-            row[0]: bool(row[1])
-            for row in db.execute(
-                "SELECT r.broadcaster_id,r.can_share FROM twitch_rights r JOIN twitch_editor a "
-                "ON a.editor_id=r.editor_id WHERE r.expires>? AND a.validated>?",
-                (stamp, stamp - 3600),
-            )
-        }
-        eligible = set()
-        editorial_budget = False
-        for scan in scans:
-            settings = json.loads(scan["settings"])
-            ids = json.loads(scan["source_ids"])
-            allowed = set(grants)
-            if settings["source"] == "streamers":
-                allowed &= {ids.get(name) for name in settings["streamers"]}
-            elif settings.get("include"):
-                allowed &= {ids.get(name) for name in settings["include"]}
-            allowed -= {ids.get(name) for name in settings.get("exclude", [])}
-            eligible |= allowed
-            cost = 1 + int(settings.get("ai_titles", False)) + int(settings.get("ai_copy", False))
-            editorial_budget |= (
-                any(grants[identifier] for identifier in allowed)
-                and settings.get("daily_ai_limit", 0) >= cost
-            )
-        if not eligible:
-            raise HTTPException(
-                409, "Connect a Twitch editor and record reuse rights for an enrolled source."
-            )
+        if not self.discovery.intake.editor.connected_id(db):
+            raise HTTPException(409, "Connect a Twitch editor to prepare drafts.")
         if payload.ai_review:
             prior_scope = dict(
                 db.execute("SELECT scan_id,scan_revision FROM autopilot_scans").fetchall()
@@ -182,10 +154,15 @@ class Autopilot:
                 scope_changed or not current["ai_review"] or not current["enabled"]
             ) and not payload.ai_consent:
                 raise HTTPException(422, "Approve transcript sharing and billed editorial review.")
+            editorial_budget = any(
+                (settings := json.loads(scan["settings"])).get("daily_ai_limit", 0)
+                >= 1 + int(settings.get("ai_titles", False)) + int(settings.get("ai_copy", False))
+                for scan in scans
+            )
             if not editorial_budget:
                 raise HTTPException(
                     409,
-                    "Editorial review needs a source with AI sharing rights and an adequate daily budget.",
+                    "Editorial review needs an enrolled scan with an adequate daily AI budget.",
                 )
             if not self.discovery.intake.settings.openai_api_key:
                 raise HTTPException(
@@ -263,11 +240,10 @@ class Autopilot:
 
     def job(self, db, row):
         from .projects import Projects
-        from .twitch_rights import active, autopilot_quality_error, source_rights
+        from .twitch_publishing import autopilot_quality_error, source_intake
 
         project = Project.model_validate_json(row["payload"]) if row["payload"] else None
-        source = source_rights(db, row["recording_id"])
-        permitted = bool(source and active(source) and source["can_publish"])
+        source = source_intake(db, row["recording_id"])
         clips = []
         if project:
             for item in project.items:
@@ -304,7 +280,7 @@ class Autopilot:
                         "revision": item.revision,
                         "checks": checks,
                         "quality": quality,
-                        "ready": bool(ready and permitted and project.status not in ACTIVE),
+                        "ready": bool(ready and project.status not in ACTIVE),
                         "reason": item.analysis_reason or item.selection_reason,
                         "review": item.review,
                         "warning": item.error
@@ -312,12 +288,7 @@ class Autopilot:
                         or item.post_copy_error
                         or item.transcription_warning
                         or (item.presentation_warnings or [None])[0]
-                        or ("Posting copy is stale. Review it in Projects." if stale else None)
-                        or (
-                            "Current source rights do not permit posting."
-                            if not permitted
-                            else None
-                        ),
+                        or ("Posting copy is stale. Review it in Projects." if stale else None),
                     }
                 )
         return {

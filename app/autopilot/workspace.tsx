@@ -395,7 +395,7 @@ export function AutopilotWorkspace({
                   ))}
                   <Button variant="link" className="w-fit px-0" asChild>
                     <Link href="/twitch">
-                      Manage Twitch scans and source rights
+                      Manage Twitch scans and editor access
                     </Link>
                   </Button>
                 </Field>

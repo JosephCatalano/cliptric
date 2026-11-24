@@ -16,7 +16,7 @@ from pydantic import BaseModel, Field
 from .autopilot import POLL_ENABLED, Autopilot
 from .twitch_editor import CALLBACK
 from .twitch_helix import ScanSettings, TwitchClip, TwitchError, TwitchHelix, clip_slug
-from .twitch_intake import EditorImportRequest, Grant, ImportRequest
+from .twitch_intake import EditorImportRequest, ImportRequest
 
 logger = logging.getLogger(__name__)
 PERIODS = {"24h": 1, "7d": 7, "30d": 30, "90d": 90}
@@ -285,7 +285,7 @@ class TwitchDiscovery:
                     current = self.require(db, row["id"])
                     allow = current["revision"] == row["revision"]
                 if allow:
-                    eligible = [clip for clip in ranked if not self.is_hidden(clip.id, stamp)]
+                    eligible = [clip for clip in clips if not self.is_hidden(clip.id, stamp)]
                     try:
                         processed = self.intake.enqueue(
                             row["id"],
@@ -301,7 +301,7 @@ class TwitchDiscovery:
                                     None,
                                     [
                                         detail,
-                                        f"Queued {processed} clips. Other clips were ineligible, already imported, or over a processing limit.",
+                                        f"Queued {processed} clips. Check editor access, import history, and processing budgets.",
                                     ],
                                 )
                             )
@@ -465,7 +465,7 @@ class TwitchDiscovery:
         )
         if not added:
             raise HTTPException(
-                409, "No clips could be queued. Check rights, history, and processing limits."
+                409, "No clips could be queued. Check editor access, import history, and processing budgets."
             )
         self.wake.set()
         return {"queued": added}
@@ -581,18 +581,6 @@ def create_twitch_discovery_router(service, editor, deletions, previews):
     @router.post("/disconnect", status_code=204)
     def disconnect():
         editor.disconnect()
-
-    @router.post("/rights", status_code=204)
-    def grant(request: Grant):
-        service.intake.grant(request)
-
-    @router.get("/rights")
-    def grants():
-        return service.intake.grants()
-
-    @router.delete("/rights/{broadcaster}", status_code=204)
-    def revoke(broadcaster: str):
-        service.intake.revoke(broadcaster)
 
     @router.get("/lookup")
     def lookup(kind: Literal["streamer", "game"], query: str = Query(min_length=1, max_length=120)):

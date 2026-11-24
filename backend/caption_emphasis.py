@@ -15,7 +15,6 @@ from .highlight_models import HighlightError
 from .highlight_provider import ENDPOINT, MAX_RESPONSE_BYTES, OpenAIHighlights
 from .prompt_settings import request_prompt
 from .transcription_models import TranscriptionError, validate_window
-from .twitch_rights import processing_error
 
 EMPHASIS_INSTRUCTIONS = """Select up to 12 individual transcript tokens for sparse caption emphasis.
 Prefer the revealing word in a punchline, a meaningful contrast, a key concept or an emotional
@@ -194,8 +193,6 @@ def create_emphasis_router(transcriptions, settings, provider=None):
                 job = transcriptions.transcripts.job(str(identifier))
                 if job is None:
                     raise HTTPException(404, "Transcript not found.")
-                if blocked := processing_error(transcriptions.store, job.recording_id, ai=True):
-                    raise HTTPException(403, blocked)
                 recording = transcriptions.store.recording(job.recording_id)
                 if recording is None:
                     raise HTTPException(404, "Recording not found.")

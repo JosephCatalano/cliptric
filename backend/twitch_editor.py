@@ -53,6 +53,15 @@ class TwitchEditor:
             "profile": dict(profile) if profile else None,
         }
 
+    def connected_id(self, db):
+        if not self.api.configured:
+            return None
+        row = db.execute(
+            "SELECT editor_id FROM twitch_editor WHERE slot=1 AND validated>?",
+            (time.time() - 3600,),
+        ).fetchone()
+        return row[0] if row else None
+
     def begin(self, origin):
         if not self.status()["available"]:
             raise TwitchError(503, "Twitch editor connection requires app credentials and Windows.")
@@ -216,19 +225,27 @@ class TwitchEditor:
                 ) from None
 
             def request():
-                return self.api._json(
-                    "GET",
-                    "https://api.twitch.tv/helix/clips/downloads",
-                    params=[
-                        ("editor_id", editor_id),
-                        ("broadcaster_id", broadcaster),
-                        *[("clip_id", clip_id) for clip_id in clip_ids],
-                    ],
-                    headers={
-                        "Client-Id": self.api.client_id,
-                        "Authorization": f"Bearer {token.access}",
-                    },
-                )
+                try:
+                    return self.api._json(
+                        "GET",
+                        "https://api.twitch.tv/helix/clips/downloads",
+                        params=[
+                            ("editor_id", editor_id),
+                            ("broadcaster_id", broadcaster),
+                            *[("clip_id", clip_id) for clip_id in clip_ids],
+                        ],
+                        headers={
+                            "Client-Id": self.api.client_id,
+                            "Authorization": f"Bearer {token.access}",
+                        },
+                    )
+                except TwitchError as exc:
+                    if exc.status == 403:
+                        raise TwitchError(
+                            403,
+                            "Twitch denied this download. Connect the broadcaster or a Twitch Editor for this channel.",
+                        ) from exc
+                    raise
 
             try:
                 result = request()

@@ -3,14 +3,12 @@
 import json
 import logging
 import time
-from datetime import UTC, datetime
-from typing import Literal
 from urllib.parse import urljoin, urlsplit
 from uuid import uuid4
 
 import httpx2
 from fastapi import HTTPException
-from pydantic import BaseModel, Field, field_validator
+from pydantic import BaseModel, Field
 
 from .autopilot import Autopilot
 from .files import remove_artifact, require_space
@@ -19,37 +17,15 @@ from .project_models import ProjectCreate, ProjectSettings
 from .project_workspace import PresetRequest
 from .storage import now
 from .transcription_models import clean_text
-from .twitch_helix import TwitchError
+from .twitch_helix import MAX_IMPORTS_PER_SCAN, TwitchError
 from .youtube_network import validate_destination
 
 logger = logging.getLogger(__name__)
 MAX_DOWNLOAD = 128 * 1024**2
 
 
-class Grant(BaseModel):
-    broadcaster_id: str = Field(pattern=r"^[0-9]{1,24}$")
-    rights: Literal[True]
-    expires: datetime
-    allow_publish: bool = Field(default=False, strict=True)
-    allow_external_ai: bool = Field(default=False, strict=True)
-
-    @field_validator("rights", mode="before")
-    @classmethod
-    def confirm(cls, value):
-        if value is not True:
-            raise ValueError("Explicitly confirm Twitch clip reuse rights.")
-        return value
-
-    @field_validator("expires")
-    @classmethod
-    def expiry(cls, expires):
-        if expires.utcoffset() is None or expires.timestamp() <= time.time():
-            raise ValueError("Choose a future rights expiry.")
-        return expires.astimezone(UTC)
-
-
 class ImportRequest(BaseModel):
-    ids: list[str] = Field(min_length=1, max_length=15)
+    ids: list[str] = Field(min_length=1, max_length=MAX_IMPORTS_PER_SCAN)
 
 
 class EditorImportRequest(BaseModel):
@@ -69,10 +45,6 @@ class TwitchIntake:
     def initialize(self):
         with self.store.connection() as db:
             db.executescript("""
-                CREATE TABLE IF NOT EXISTS twitch_rights (
-                    broadcaster_id TEXT PRIMARY KEY, editor_id TEXT NOT NULL, expires REAL NOT NULL,
-                    can_publish INTEGER NOT NULL, can_share INTEGER NOT NULL
-                );
                 CREATE TABLE IF NOT EXISTS twitch_intake (
                     clip_id TEXT PRIMARY KEY, broadcaster_id TEXT NOT NULL, editor_id TEXT NOT NULL,
                     scan_id TEXT, recording_id TEXT NOT NULL UNIQUE, project_id TEXT NOT NULL UNIQUE,
@@ -96,47 +68,9 @@ class TwitchIntake:
     def path(self, identifier):
         return self.store.root / "sources" / f"{identifier}.mp4"
 
-    def grant(self, request):
-        with self.store.connection() as db:
-            db.execute("BEGIN IMMEDIATE")
-            editor = db.execute(
-                "SELECT editor_id FROM twitch_editor WHERE slot=1 AND validated>?",
-                (time.time() - 3600,),
-            ).fetchone()
-            if not editor:
-                raise HTTPException(409, "Connect a Twitch editor before recording rights.")
-            db.execute(
-                "INSERT OR REPLACE INTO twitch_rights VALUES(?,?,?,?,?)",
-                (
-                    request.broadcaster_id,
-                    editor[0],
-                    request.expires.timestamp(),
-                    request.allow_publish,
-                    request.allow_external_ai,
-                ),
-            )
-
-    def revoke(self, broadcaster):
-        with self.store.connection() as db:
-            db.execute("DELETE FROM twitch_rights WHERE broadcaster_id=?", (broadcaster,))
-
-    def grants(self):
-        with self.store.connection() as db:
-            return [
-                dict(row)
-                for row in db.execute("SELECT * FROM twitch_rights ORDER BY broadcaster_id")
-            ]
-
     def statuses(self, scan_id, clips):
         with self.store.connection() as db:
-            grants = {
-                row["broadcaster_id"]: dict(row)
-                for row in db.execute(
-                    "SELECT r.* FROM twitch_rights r JOIN twitch_editor a ON r.editor_id=a.editor_id "
-                    "WHERE r.expires>? AND a.validated>?",
-                    (time.time(), time.time() - 3600),
-                )
-            }
+            editor_connected = self.editor.connected_id(db) is not None
             jobs = [
                 dict(row)
                 for row in db.execute(
@@ -147,9 +81,7 @@ class TwitchIntake:
                 )
             ]
             for clip in clips:
-                grant = grants.get(clip["broadcaster_id"])
-                clip["processing_eligible"] = bool(grant)
-                clip["publishing_eligible"] = bool(grant and grant["can_publish"])
+                clip["can_request_download"] = editor_connected
                 prior = db.execute(
                     "SELECT status FROM twitch_intake WHERE clip_id=?", (clip["id"],)
                 ).fetchone()
@@ -181,14 +113,6 @@ class TwitchIntake:
             ).fetchone()
         )
 
-    @staticmethod
-    def rights(db, broadcaster, editor, stamp):
-        return db.execute(
-            "SELECT r.* FROM twitch_rights r JOIN twitch_editor a ON r.editor_id=a.editor_id "
-            "WHERE r.broadcaster_id=? AND a.editor_id=? AND expires>? AND a.validated>?",
-            (broadcaster, editor, stamp, stamp - 3600),
-        ).fetchone()
-
     def enqueue(self, scan_id, settings, clips, *, automatic, revision=None, autopilot=None):
         stamp = time.time()
         with self.store.connection() as db:
@@ -214,7 +138,7 @@ class TwitchIntake:
                 raise HTTPException(
                     409, "Scan settings changed. Automatic preparation will use the next run."
                 )
-            editor = db.execute("SELECT editor_id FROM twitch_editor WHERE slot=1").fetchone()
+            editor_id = self.editor.connected_id(db)
             slots = min(
                 settings.import_limit,
                 60
@@ -240,7 +164,7 @@ class TwitchIntake:
                 ).fetchone()[0]
             )
             quota = max(0, min(slots, budget, ai_remaining // paid if paid else slots))
-            if not editor or not quota:
+            if not editor_id or not quota:
                 return 0
             preset = None
             if settings.preset_id:
@@ -265,9 +189,6 @@ class TwitchIntake:
             }
             count = 0
             for clip in clips:
-                grant = self.rights(db, clip.broadcaster_id, editor[0], stamp)
-                if not grant or (paid and not grant["can_share"]):
-                    continue
                 if automatic and self.same_moment(
                     db, clip.id, clip.broadcaster_id, clip.video_id, clip.vod_offset, clip.duration
                 ):
@@ -285,7 +206,7 @@ class TwitchIntake:
                     changed = db.execute(
                         "UPDATE twitch_intake SET scan_id=?,options=?,status='queued',queued=?,detail=NULL "
                         "WHERE clip_id=? AND editor_id=? AND broadcaster_id=? AND status='recording'",
-                        (scan_id, metadata, stamp, clip.id, editor[0], clip.broadcaster_id),
+                        (scan_id, metadata, stamp, clip.id, editor_id, clip.broadcaster_id),
                     ).rowcount
                     if changed:
                         count += changed
@@ -298,7 +219,7 @@ class TwitchIntake:
                     (
                         clip.id,
                         clip.broadcaster_id,
-                        editor[0],
+                        editor_id,
                         scan_id,
                         str(uuid4()),
                         str(uuid4()),
@@ -317,10 +238,6 @@ class TwitchIntake:
         job = db.execute("SELECT * FROM twitch_intake WHERE clip_id=?", (slug,)).fetchone()
         if not job:
             return None
-        if not self.rights(db, job["broadcaster_id"], job["editor_id"], time.time()):
-            raise HTTPException(
-                403, "Connect the authorized Twitch editor and check reuse rights in Discover."
-            )
         raw = db.execute("SELECT * FROM recordings WHERE id=?", (job["recording_id"],)).fetchone()
         recording = Recording.model_validate(dict(raw)) if raw else None
         if recording:
@@ -371,11 +288,16 @@ class TwitchIntake:
                     409, "The Twitch import queue is full. Try again after some work finishes."
                 )
             if existing:
-                db.execute(
+                changed = db.execute(
                     "UPDATE twitch_intake SET status='queued',detail=NULL,"
-                    "options=json_set(options,'$.attempts',0,'$.retry_at',0) WHERE clip_id=?",
-                    (slug,),
-                )
+                    "options=json_set(options,'$.attempts',0,'$.retry_at',0) "
+                    "WHERE clip_id=? AND editor_id=?",
+                    (slug, self.editor.connected_id(db)),
+                ).rowcount
+                if not changed:
+                    raise HTTPException(
+                        403, "Reconnect the original Twitch editor to retry this download."
+                    )
             else:
                 if clip is None:
                     raise HTTPException(
@@ -390,11 +312,11 @@ class TwitchIntake:
                     raise HTTPException(
                         429, "The Editor's daily Twitch import limit has been reached."
                     )
-                editor = db.execute("SELECT editor_id FROM twitch_editor WHERE slot=1").fetchone()
-                if not editor or not self.rights(db, clip.broadcaster_id, editor[0], stamp):
+                editor_id = self.editor.connected_id(db)
+                if not editor_id:
                     raise HTTPException(
                         403,
-                        "Connect a Twitch editor and record this broadcaster's reuse rights in Discover.",
+                        "Connect a Twitch editor in Find clips to request this download.",
                     )
                 options = {
                     "editor_only": True,
@@ -410,7 +332,7 @@ class TwitchIntake:
                     (
                         slug,
                         clip.broadcaster_id,
-                        editor[0],
+                        editor_id,
                         str(uuid4()),
                         str(uuid4()),
                         stamp,
@@ -488,15 +410,8 @@ class TwitchIntake:
             )
         return True
 
-    def check_rights(self, job, options):
-        with self.store.connection() as db:
-            grant = self.rights(db, job["broadcaster_id"], job["editor_id"], time.time())
-        if not grant or (options["paid"] and not grant["can_share"]):
-            raise TwitchError(403, "The saved Twitch reuse rights expired or were revoked.")
-
     def process(self, job, stop):
         options = json.loads(job["options"])
-        self.check_rights(job, options)
         recording = self.store.recording(job["recording_id"])
         if not recording:
             urls = self.editor.downloads(job["editor_id"], job["broadcaster_id"], [job["clip_id"]])
@@ -531,7 +446,6 @@ class TwitchIntake:
                     raise TwitchError(
                         422, "The downloaded file is outside the Twitch clip duration limit."
                     )
-                self.check_rights(job, options)
                 partial.replace(destination)
                 recording = Recording(
                     id=job["recording_id"],
@@ -549,7 +463,6 @@ class TwitchIntake:
                 remove_artifact(partial)
                 if not committed:
                     remove_artifact(destination)
-        self.check_rights(job, options)
         if options.get("editor_only"):
             return
         overrides = options.get("preset") or {"presentation_mode": "auto"}

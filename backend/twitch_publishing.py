@@ -1,7 +1,6 @@
-"""Rights and duplicate checks shared by Twitch processing and existing publishers."""
+"""Twitch export checks and duplicate protection shared by publishers."""
 
 import json
-import time
 from contextlib import nullcontext
 
 TABLES = {
@@ -13,36 +12,15 @@ TABLES = {
 }
 
 
-def source_rights(db, recording_id):
+def source_intake(db, recording_id):
     if not db.execute(
         "SELECT 1 FROM sqlite_master WHERE type='table' AND name='twitch_intake'"
     ).fetchone():
         return None
     return db.execute(
-        "SELECT j.clip_id,j.options,r.expires,r.can_publish,r.can_share,a.editor_id,a.validated "
-        "FROM twitch_intake j LEFT JOIN twitch_rights r ON r.broadcaster_id=j.broadcaster_id "
-        "AND r.editor_id=j.editor_id LEFT JOIN twitch_editor a ON a.slot=1 AND a.editor_id=j.editor_id "
-        "WHERE j.recording_id=?",
+        "SELECT clip_id,options FROM twitch_intake WHERE recording_id=?",
         (recording_id,),
     ).fetchone()
-
-
-def active(source):
-    stamp = time.time()
-    return bool(
-        source["editor_id"]
-        and source["expires"]
-        and source["expires"] > stamp
-        and source["validated"] > stamp - 3600
-    )
-
-
-def processing_error(store, recording_id, *, ai=False):
-    with store.connection() as db:
-        source = source_rights(db, recording_id)
-        if source and (not active(source) or (ai and not source["can_share"])):
-            return "Current Twitch reuse rights do not permit this processing."
-    return None
 
 
 def autopilot_quality_error(db, source, clip):
@@ -71,11 +49,9 @@ def publishing_error(store, export_id, platform, account_id, job_id, *, reserve=
         clip = connection.execute(
             "SELECT id,recording_id,duration FROM clips WHERE id=?", (str(export_id),)
         ).fetchone()
-        source = source_rights(connection, clip["recording_id"]) if clip else None
+        source = source_intake(connection, clip["recording_id"]) if clip else None
         if not source:
             return None
-        if not active(source) or not source["can_publish"]:
-            return "Current Twitch reuse rights do not permit publishing this clip."
         if quality := autopilot_quality_error(connection, source, clip):
             return quality
         destination = "*" if platform == "x" else account_id

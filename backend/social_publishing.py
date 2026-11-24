@@ -20,7 +20,7 @@ from .social_accounts import Accounts
 from .social_security import CredentialError, protect_secret
 from .social_transport import Credentials, SocialError, identifier
 from .storage import now
-from .twitch_rights import publishing_error
+from .twitch_publishing import publishing_error
 
 logger = logging.getLogger(__name__)
 

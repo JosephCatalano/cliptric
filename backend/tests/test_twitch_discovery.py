@@ -4,7 +4,7 @@ import shutil
 import subprocess
 import time
 from dataclasses import replace
-from datetime import UTC, datetime, timedelta
+from datetime import UTC, datetime
 from uuid import uuid4
 
 from fastapi.testclient import TestClient
@@ -14,7 +14,7 @@ from backend.tests.test_pipeline import recordings as recordings
 from backend.tests.test_pipeline import settings as settings
 from backend.tests.test_pipeline import tools as tools
 from backend.twitch_helix import TwitchClip, TwitchError
-from backend.twitch_rights import publishing_error
+from backend.twitch_publishing import publishing_error
 
 ROOT = "/api/twitch-discovery"
 
@@ -70,6 +70,29 @@ def run_scan(client, saved):
         f"{ROOT}/scans/{saved['id']}",
         lambda value: value["runs"] and value["runs"][0]["status"] not in {"queued", "running"},
     )
+
+
+def test_automatic_preparation_uses_only_the_top_20_results(settings, monkeypatch):
+    with TestClient(create_app(settings), base_url="http://127.0.0.1:8765") as client:
+        service = setup_api(
+            client.app,
+            monkeypatch,
+            lambda _: ([clip(f"clip-{rank}", views=rank) for rank in range(1, 26)], None, 0),
+        )
+        attempted = []
+
+        def enqueue(_scan, _settings, candidates, **_):
+            attempted.extend(item.id for item in candidates)
+            return len(candidates)
+
+        monkeypatch.setattr(service.intake, "enqueue", enqueue)
+        scan = client.post(
+            f"{ROOT}/scans", json=scan_config(auto_prepare=True, limit=20, import_limit=20)
+        )
+        assert scan.status_code == 201, scan.text
+        result = run_scan(client, scan.json())
+        assert attempted == [row["id"] for row in result["clips"]]
+        assert attempted == [f"clip-{rank}" for rank in range(25, 5, -1)]
 
 
 def test_routes_resolve_edit_filter_review_and_persist(settings, monkeypatch):
@@ -193,18 +216,6 @@ def test_authorized_intake_makes_real_silent_portrait_and_guards_publishing(
                 "INSERT INTO twitch_editor VALUES(1,'42','fixture',?,?)",
                 (b"test credential", time.time()),
             )
-        assert (
-            client.post(
-                f"{ROOT}/rights",
-                json={
-                    "broadcaster_id": "42",
-                    "rights": True,
-                    "allow_publish": True,
-                    "expires": (datetime.now(UTC) + timedelta(days=1)).isoformat(),
-                },
-            ).status_code
-            == 204
-        )
         saved = client.post(f"{ROOT}/scans", json=scan_config()).json()
         run_scan(client, saved)
         path = f"{ROOT}/scans/{saved['id']}"
@@ -232,8 +243,8 @@ def test_authorized_intake_makes_real_silent_portrait_and_guards_publishing(
         assert "already" in publishing_error(
             service.store, export_id, "youtube", destination, uuid4()
         )
-        assert client.delete(f"{ROOT}/rights/42").status_code == 204
-        assert "rights" in publishing_error(service.store, export_id, "youtube", destination, owner)
+        assert client.post(f"{ROOT}/disconnect").status_code == 204
+        assert publishing_error(service.store, export_id, "youtube", destination, owner) is None
         recording_id = created["items"][0]["recording_id"]
         source = service.store.source_path(recording_id)
         project_removed = client.delete(f"/api/projects/{created['id']}")
@@ -295,7 +306,7 @@ def test_editor_oauth_binds_callback_and_expires_revoked_session(settings, monke
         assert client.get(ROOT).json()["editor"]["profile"] is None
 
 
-def test_editor_link_import_requires_rights_and_reuses_one_recording(
+def test_editor_link_import_requires_twitch_download_access_and_reuses_recording(
     settings, recordings, monkeypatch
 ):
     app = create_app(settings)
@@ -326,20 +337,7 @@ def test_editor_link_import_requires_rights_and_reuses_one_recording(
                 "INSERT INTO twitch_editor VALUES(1,'42','fixture',?,?)",
                 (b"test credential", time.time()),
             )
-        assert (
-            client.post(
-                f"{ROOT}/rights",
-                json={
-                    "broadcaster_id": "42",
-                    "rights": True,
-                    "expires": (datetime.now(UTC) + timedelta(days=1)).isoformat(),
-                },
-            ).status_code
-            == 204
-        )
-        monkeypatch.setattr(
-            intake.editor, "downloads", lambda *_: {"test-clip": "https://example.test/media"}
-        )
+        monkeypatch.setattr(intake.editor, "downloads", lambda *_: {})
 
         def download(_url, dest, _limit, _stop):
             downloads.append(dest)
@@ -349,6 +347,13 @@ def test_editor_link_import_requires_rights_and_reuses_one_recording(
         monkeypatch.setattr(intake, "download", download)
         queued = client.post(endpoint, json={"url": share_url})
         assert queued.status_code == 202, queued.text
+        denied = poll(client, f"{endpoint}/test-clip", lambda data: data["status"] == "failed")
+        assert "Twitch did not authorize" in denied["detail"]
+        assert not downloads
+        monkeypatch.setattr(
+            intake.editor, "downloads", lambda *_: {"test-clip": "https://example.test/media"}
+        )
+        assert client.post(endpoint, json={"url": share_url}).status_code == 202
         ready = poll(client, f"{endpoint}/test-clip", lambda data: data["status"] == "ready")
         recording = ready["recording"]
         reused = client.post(endpoint, json={"url": "https://www.twitch.tv/fixture/clip/test-clip"})
@@ -359,5 +364,5 @@ def test_editor_link_import_requires_rights_and_reuses_one_recording(
         with service.store.connection() as db:
             assert db.execute("SELECT count(*) FROM projects").fetchone()[0] == 0
             assert db.execute("SELECT count(*) FROM transcriptions").fetchone()[0] == 0
-        assert client.delete(f"{ROOT}/rights/42").status_code == 204
-        assert client.get(f"{endpoint}/test-clip").status_code == 403
+        assert client.post(f"{ROOT}/disconnect").status_code == 204
+        assert client.get(f"{endpoint}/test-clip").json()["recording"]["id"] == recording["id"]

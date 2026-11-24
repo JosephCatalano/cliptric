@@ -50,3 +50,65 @@ test("Discover saves, edits, pauses, clones and deletes a Twitch scan", async ({
     page.getByRole("button", { name: /Gaming clips Manual/ }),
   ).toBeVisible();
 });
+
+test("A connected Twitch editor can prepare a clip directly", async ({
+  page,
+  request,
+}) => {
+  const saved = await request.post("/api/twitch-discovery/scans", {
+    data: { name: "Download test scan", source: "game", game_id: "32982" },
+  });
+  expect(saved.ok()).toBeTruthy();
+  const scan = await saved.json();
+  await page.route("**/api/twitch-discovery", (route) =>
+    route.fulfill({
+      json: {
+        configured: true,
+        scans: [scan],
+        editor: {
+          available: true,
+          profile: { editor_id: "12", login: "editor" },
+        },
+        intake: [],
+      },
+    }),
+  );
+  await page.route(`**/api/twitch-discovery/scans/${scan.id}`, (route) =>
+    route.fulfill({
+      json: {
+        ...scan,
+        runs: [],
+        intake: [],
+        clips: [
+          {
+            id: "TestClip",
+            broadcaster_id: "34",
+            broadcaster_name: "Test Channel",
+            title: "Test clip",
+            duration: 25,
+            view_count: 10,
+            created_at: "2026-11-23T12:00:00Z",
+            state: "new",
+            rank: 1,
+            can_request_download: true,
+          },
+        ],
+      },
+    }),
+  );
+  await page.route(
+    `**/api/twitch-discovery/scans/${scan.id}/prepare`,
+    (route) => {
+      expect(route.request().postDataJSON()).toEqual({ ids: ["TestClip"] });
+      return route.fulfill({ status: 202, json: { queued: 1 } });
+    },
+  );
+
+  await page.goto("/twitch");
+  await page.getByRole("button", { name: /Download test scan/ }).click();
+  await page.getByRole("checkbox", { name: "Select Test clip" }).check();
+  await page.getByRole("button", { name: "Prepare selected" }).click();
+  await expect(
+    page.getByRole("status").getByText("Queued 1 clip."),
+  ).toBeVisible();
+});
